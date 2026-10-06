@@ -1,10 +1,11 @@
 import { useState } from "preact/hooks";
 import { BANKS, formatBpm, padName } from "../sp404";
 import {
-  conn, connect, hasGrant, importFiles, jobs, pads, project, reconnect, reload, selectPad, selectedBank, selectedPad, status,
+  conn, connect, hasGrant, importFiles, jobs, pads, project, reconnect, reload, selectPad, selectedBank, selectedPad, setBankTempo, status,
   waveforms,
 } from "./store";
 import { IconLock, IconRefresh } from "./icons";
+import { TempoField } from "./TempoField";
 
 const hasFiles = (e: DragEvent) => !!e.dataTransfer?.types.includes("Files");
 
@@ -19,7 +20,14 @@ export function PadGrid() {
       <div class="pad-head">
         <div>
           <span class="bank-big">{BANKS[b]}</span>
-          <span class="muted">{bank ? `${formatBpm(bank.tempoX100)} BPM · ` : ""}{filled} / 16 занято</span>
+          {bank && (
+            <span class="tempo-group">
+              <TempoField value={bank.tempoX100} label={`Темп банка ${BANKS[b]}`} onSave={(x) => setBankTempo(b, x)} dim={project.value?.useProjectTempo}
+                hint={project.value?.useProjectTempo ? "Сейчас действует темп проекта" : undefined} />
+              <span class="muted">BPM ·</span>
+            </span>
+          )}
+          <span class="muted">{filled} / 16 занято</span>
           {bank?.protected && <span class="chip chip-warn"><IconLock /> защищён</span>}
         </div>
         {c === "ready" && <button class="btn btn-ghost" onClick={reload} title="Перечитать проект с SP"><IconRefresh /> Обновить</button>}

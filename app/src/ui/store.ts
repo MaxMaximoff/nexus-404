@@ -343,9 +343,35 @@ export const setLevel = (pad: number, level: number) => editPad(pad, `Level ${le
 export const setGate = (pad: number, on: boolean) => editPad(pad, `Gate ${onOff(on)}`, (d, p1) => d.setGate(p1, pad, on));
 export const setLoop = (pad: number, on: boolean) => editPad(pad, `Loop ${onOff(on)}`, (d, p1) => d.setLoop(p1, pad, on));
 export const setBpmSync = (pad: number, on: boolean) => editPad(pad, `BPM Sync ${onOff(on)}`, (d, p1) => d.setBpmSync(p1, pad, on));
+export const setVinyl = (pad: number, on: boolean) => editPad(pad, `Vinyl ${onOff(on)}`, (d, p1) => d.setVinyl(p1, pad, on));
+export const setTimeStretch = (pad: number, x100: number) =>
+  editPad(pad, `Time Stretch ${(x100 / 100).toFixed(2)} %`, (d, p1) => d.setTimeStretch(p1, pad, x100));
+export const setPitch = (pad: number, coarse: number, fine: number) =>
+  editPad(pad, `Pitch ${coarse} st ${fine} ct`, (d, p1) => d.setPitch(p1, pad, coarse, fine));
 export const setOneShot = (pad: number, on: boolean) => editPad(pad, `One Shot ${onOff(on)}`, (d, p1) => d.setOneShot(p1, pad, on));
 export const setRange = (pad: number, start: number, end: number) =>
   editPad(pad, `Start/End ${start}–${end} кадров`, (d, p1) => d.setRange(p1, pad, start, end));
+
+/** Run one project-wide edit (tempos) and show the settings it returns. */
+async function editProject(what: string, fn: (d: SP404Device, p1: number) => Promise<ProjectSettings & { names: string[] }>): Promise<boolean> {
+  const d = device;
+  if (!d) return false;
+  try {
+    project.value = await d.exclusive((x) => fn(x, project1.value));
+    log("info", `Проект ${project1.value}: ${what}`);
+    return true;
+  } catch (e) {
+    fail(e, `Проект ${project1.value}, ${what}`);
+    return false;
+  }
+}
+
+const bpmText = (x100: number) => `${(x100 / 100).toFixed(2)} BPM`;
+export const setProjectTempo = (x100: number) => editProject(`темп проекта ${bpmText(x100)}`, (d, p1) => d.setProjectTempo(p1, x100));
+export const setBankTempo = (bank: number, x100: number) =>
+  editProject(`темп банка ${padName(bank * 16)[0]} ${bpmText(x100)}`, (d, p1) => d.setBankTempo(p1, bank, x100));
+export const setTempoSelect = (useProject: boolean) =>
+  editProject(`действует темп ${useProject ? "проекта" : "банков"}`, (d, p1) => d.setTempoSelect(p1, useProject));
 
 export async function preview(pad: number, on: boolean): Promise<void> {
   const d = device;

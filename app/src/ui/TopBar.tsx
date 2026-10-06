@@ -1,5 +1,9 @@
-import { conn, connect, disconnect, freeKb, hasGrant, loadProgress, project, reconnect, status } from "./store";
-import { formatBpm } from "../sp404";
+import { useState } from "preact/hooks";
+import {
+  conn, connect, disconnect, freeKb, hasGrant, loadProgress, project, reconnect, selectedBank, setBankTempo, setProjectTempo, setTempoSelect,
+  status, writeBlockReason,
+} from "./store";
+import { TempoField } from "./TempoField";
 import { IconPlug, IconUnplug } from "./icons";
 
 const LABEL: Record<string, string> = {
@@ -10,6 +14,46 @@ const LABEL: Record<string, string> = {
   ready: "Подключено",
   lost: "Связь потеряна — ждём SP",
 };
+
+/** Which tempo plays: the project's, or each bank's own. */
+function TempoSelect({ useProject }: { useProject: boolean }) {
+  const [busy, setBusy] = useState(false);
+  const blocked = writeBlockReason.value;
+  const pick = async (v: boolean) => {
+    if (v === useProject || busy) return;
+    setBusy(true);
+    await setTempoSelect(v);
+    setBusy(false);
+  };
+  return (
+    <span class="segmented" role="group" aria-label="Какой темп действует" title={blocked ?? "Какой темп действует на SP"}>
+      <button type="button" aria-pressed={useProject} class={useProject ? "on" : ""} disabled={!!blocked || busy} onClick={() => pick(true)}>Проект</button>
+      <button type="button" aria-pressed={!useProject} class={useProject ? "" : "on"} disabled={!!blocked || busy} onClick={() => pick(false)}>Банки</button>
+    </span>
+  );
+}
+
+/**
+ * The tempo that plays: the project's when Tempo Select is Project, otherwise that of the bank
+ * open in the app. Whichever is shown is the one the field edits.
+ */
+function TempoControl() {
+  const ps = project.value!;
+  const b = selectedBank.value;
+  const bank = ps.banks[b];
+  return (
+    <span class="tempo-group">
+      {ps.useProjectTempo || !bank
+        ? <TempoField key="project" value={ps.projectTempoX100} label="Темп проекта" onSave={setProjectTempo} />
+        : <>
+          <span class="muted">банк {bank.letter}</span>
+          <TempoField key={`bank-${b}`} value={bank.tempoX100} label={`Темп банка ${bank.letter}`} onSave={(x) => setBankTempo(b, x)} />
+        </>}
+      <span class="muted">BPM</span>
+      <TempoSelect useProject={ps.useProjectTempo} />
+    </span>
+  );
+}
 
 export function TopBar() {
   const c = conn.value;
@@ -33,7 +77,7 @@ export function TopBar() {
         <div class="project-info">
           <span class="chip">Проект {st.project + 1}</span>
           <span class="project-name">{ps.name || ps.names[st.project] || "без имени"}</span>
-          <span class="muted">{formatBpm(ps.projectTempoX100)} BPM · темп {ps.useProjectTempo ? "проекта" : "банка"}</span>
+          <TempoControl />
           {freeKb.value !== null && <span class="muted">· свободно {(freeKb.value / 1048576).toFixed(1)} GB</span>}
         </div>
       )}

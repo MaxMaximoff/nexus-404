@@ -1,12 +1,16 @@
 import { signal } from "@preact/signals";
 import { useEffect, useRef, useState } from "preact/hooks";
-import { LEVEL_MAX, byteToFrame, findSound, formatBpm, padName, parseBpmInput } from "../sp404";
 import {
-  channelsOf, conn, importFiles, loadWaveform, pads, preview, project, selectedPad, setBpm, setBpmSync, setGate, setLevel, setLoop, setOneShot,
+  LEVEL_MAX, PITCH_COARSE_MAX, PITCH_FINE_MAX, STRETCH_MAX_X100, STRETCH_MIN_X100, byteToFrame, findSound, formatBpm, padName, padSpeed,
+  parseBpmInput,
+} from "../sp404";
+import {
+  channelsOf, conn, importFiles, loadWaveform, pads, preview, project, selectedPad, setBpm, setBpmSync, setGate, setLevel, setLoop, setOneShot, setPitch, setTimeStretch, setVinyl,
   setRange, waveLoading, waveforms, writeBlockReason,
 } from "./store";
 import { Waveform, type Range } from "./Waveform";
 import type { Waveform as Wave } from "./store";
+import { ValueField, intIn, signed, type Parse } from "./ValueField";
 import { IconCheck, IconPlay, IconUpload, IconWave } from "./icons";
 
 const RATE = 48000;
@@ -38,45 +42,56 @@ function FilledPad({ pad, ready }: { pad: number; ready: boolean }) {
   const total = channels ? byteToFrame(p.size, channels) : null;
   const range = channels && total ? { start: byteToFrame(p.startByte, channels) / total, end: byteToFrame(p.endByte, channels) / total } : undefined;
   const frames = channels ? (p.endByte - p.startByte) / (2 * channels) : null;
+  const speed = speedOf(pad);
+  const sec = (f: number) => (f / RATE).toFixed(2);
   return (
     <>
-      {wave ? <Waveform wave={wave} range={range} onCommit={total && !writeBlockReason.value ? (r) => commitDrag(pad, r, total) : undefined} /> : (
-        <div class="wave-box">
-          <div class="wave-placeholder">
-            {loading ? (
-              <>
-                <span>Читаю сэмпл с SP… {Math.round(loading.progress * 100)} %</span>
-                <span class="bar"><span style={{ width: `${loading.progress * 100}%` }} /></span>
-              </>
-            ) : (
-              <button class="btn" disabled={!ready} onClick={() => loadWaveform(pad)}>
-                <IconWave /> Показать волну ({(p.size / 1048576).toFixed(1)} MB)
-              </button>
-            )}
+      <Section id="sample" title="Сэмпл" summary={channels && total ? `${sec(byteToFrame(p.startByte, channels))}–${sec(byteToFrame(p.endByte, channels))} s из ${sec(total)} s` : undefined}>
+        {wave ? <Waveform wave={wave} range={range} onCommit={total && !writeBlockReason.value ? (r) => commitDrag(pad, r, total) : undefined} /> : (
+          <div class="wave-box">
+            <div class="wave-placeholder">
+              {loading ? (
+                <>
+                  <span>Читаю сэмпл с SP… {Math.round(loading.progress * 100)} %</span>
+                  <span class="bar"><span style={{ width: `${loading.progress * 100}%` }} /></span>
+                </>
+              ) : (
+                <button class="btn" disabled={!ready} onClick={() => loadWaveform(pad)}>
+                  <IconWave /> Показать волну ({(p.size / 1048576).toFixed(1)} MB)
+                </button>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        )}
+        {channels ? <RangeEditor pad={pad} channels={channels} wave={wave} /> : <div class="range-editor muted">Start/End: читаю заголовок сэмпла…</div>}
+      </Section>
 
-      <BpmEditor pad={pad} />
+      <Section id="tempo" title="Темп и высота"
+        summary={[`${formatBpm(p.bpmX100)} BPM`, speed && `×${speed.ratio.toFixed(2)}`, p.bpmSync && "Sync", p.vinyl && "Vinyl"].filter(Boolean).join(" · ")}>
+        <BpmEditor pad={pad} />
+        <TempoPitch pad={pad} />
+      </Section>
 
-      <section class="params" aria-label="Параметры pad'а">
+      <Section id="play" title="Воспроизведение"
+        summary={[`Level ${p.level}`, p.gate && "Gate", p.loop && "Loop", p.oneShot && "One Shot"].filter(Boolean).join(" · ")}>
         <LevelControl pad={pad} />
         <div class="toggles">
           <Toggle label="Gate" on={p.gate} onChange={(on) => setGate(pad, on)} />
           <Toggle label="Loop" on={p.loop} onChange={(on) => setLoop(pad, on)} />
           <Toggle label="One Shot" on={p.oneShot} onChange={(on) => setOneShot(pad, on)}
             hint="Как в официальном App: при включении One Shot выключаются Gate и Loop" />
-          <Toggle label="BPM Sync" on={p.bpmSync} onChange={(on) => setBpmSync(pad, on)} />
         </div>
-        {channels ? <RangeEditor pad={pad} channels={channels} wave={wave} /> : <div class="range-editor muted">Start/End: читаю заголовок сэмпла…</div>}
-      </section>
+      </Section>
 
-      <dl class="facts">
-        <div><dt>Звучит</dt><dd>{frames !== null ? `${(frames / RATE).toFixed(2)} s` : "—"}</dd></div>
-        <div><dt>Весь сэмпл</dt><dd>{total !== null ? `${(total / RATE).toFixed(2)} s` : "—"}</dd></div>
-        <div><dt>Каналы</dt><dd>{channels ? (channels === 1 ? "mono" : "stereo") : "—"}</dd></div>
-        <div><dt>Размер</dt><dd>{(p.size / 1048576).toFixed(2)} MB</dd></div>
-      </dl>
+      <Section id="file" title="Файл"
+        summary={[frames !== null && `${sec(frames)} s`, channels && (channels === 1 ? "mono" : "stereo"), `${(p.size / 1048576).toFixed(2)} MB`].filter(Boolean).join(" · ")}>
+        <dl class="facts">
+          <div><dt>Звучит</dt><dd>{frames !== null ? `${sec(frames)} s` : "—"}</dd></div>
+          <div><dt>Весь сэмпл</dt><dd>{total !== null ? `${sec(total)} s` : "—"}</dd></div>
+          <div><dt>Каналы</dt><dd>{channels ? (channels === 1 ? "mono" : "stereo") : "—"}</dd></div>
+          <div><dt>Размер</dt><dd>{(p.size / 1048576).toFixed(2)} MB</dd></div>
+        </dl>
+      </Section>
 
       <button
         class="btn btn-wide"
@@ -90,6 +105,56 @@ function FilledPad({ pad, ready }: { pad: number; ready: boolean }) {
       </button>
     </>
   );
+}
+
+// ------------------------------------------------------------------ accordion
+
+const OPEN_KEY = "nexus404.inspector.open";
+const DEFAULT_OPEN = ["sample", "tempo", "play"];
+
+function loadOpen(): Set<string> {
+  try {
+    const v = JSON.parse(localStorage.getItem(OPEN_KEY) ?? "null");
+    if (Array.isArray(v)) return new Set(v.filter((x) => typeof x === "string"));
+  } catch { /* storage blocked or broken: use the default */ }
+  return new Set(DEFAULT_OPEN);
+}
+
+/** Which inspector sections are open; kept per browser, the same for every pad. */
+const openSections = signal(loadOpen());
+
+function toggleSection(id: string): void {
+  const next = new Set(openSections.value);
+  if (!next.delete(id)) next.add(id);
+  openSections.value = next;
+  try { localStorage.setItem(OPEN_KEY, JSON.stringify([...next])); } catch { /* not kept: fine */ }
+}
+
+/** A collapsible inspector section; a collapsed one shows `summary` in its header. */
+function Section({ id, title, summary, children }: { id: string; title: string; summary?: string; children: preact.ComponentChildren }) {
+  const open = openSections.value.has(id);
+  return (
+    <section class={`acc ${open ? "open" : ""}`}>
+      <button type="button" class="acc-head" aria-expanded={open} aria-controls={`acc-${id}`} onClick={() => toggleSection(id)}>
+        <span class="acc-title">{title}</span>
+        {!open && summary && <span class="acc-sum">{summary}</span>}
+        <svg class="acc-chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M6 9l6 6 6-6" />
+        </svg>
+      </button>
+      {open && <div class="acc-body" id={`acc-${id}`}>{children}</div>}
+    </section>
+  );
+}
+
+/** The tempo playing now for this pad (project or its bank, by Tempo Select) and the speed that gives. */
+function speedOf(pad: number) {
+  const p = pads.value[pad], ps = project.value;
+  if (!p || !ps) return null;
+  const bank = ps.banks[pad >> 4];
+  const useProject = ps.useProjectTempo || !bank;
+  const tempo = useProject ? ps.projectTempoX100 : bank.tempoX100;
+  return { ...padSpeed(p, tempo), tempo, tempoOf: useProject ? "проекта" : `банка ${bank.letter}` };
 }
 
 /** A switch that writes to the SP and then shows the state the device reports back. */
@@ -160,6 +225,68 @@ function parseSec(text: string, total: number): number | null {
   if (!/^(\d+(\.\d*)?|\.\d+)$/.test(t)) return null;
   const f = Math.round(parseFloat(t) * RATE);
   return Math.abs(f - total) < RATE / 1000 ? total : f;
+}
+
+const parseStretch: Parse = (text) => {
+  const t = text.trim().replace(",", ".").replace(/%$/, "").trim();
+  if (!t) return null;
+  if (!/^\d{1,3}(\.\d{1,2})?$/.test(t)) return { error: "проценты, например 100 или 97.5" };
+  const x100 = Math.round(parseFloat(t) * 100);
+  return x100 < STRETCH_MIN_X100 || x100 > STRETCH_MAX_X100 ? { error: "от 50 до 150 %" } : { value: x100 };
+};
+const formatStretch = (x100: number) => (x100 / 100).toFixed(2).replace(/\.?0+$/, "");
+
+const fmtSt = (st: number) => (Math.abs(st) < 0.05 ? "без изменений" : `${st > 0 ? "+" : "−"}${Math.abs(st).toFixed(1)} st`);
+
+/** The speed and pitch the SP plays the pad at, with the tempo playing now. */
+function SpeedLine({ pad }: { pad: number }) {
+  const s = speedOf(pad);
+  if (!s) return null;
+  const why = s.source === "stretch"
+    ? "по Stretch, BPM Sync выключен"
+    : `${formatBpm(s.tempo)} BPM ${s.tempoOf} / ${formatBpm(s.syncedBpmX100)} BPM pad'а`;
+  const fold = s.fold > 0 ? `темп pad'а ×${2 ** s.fold}, чтобы уложиться в 150 %`
+    : s.fold < 0 ? `темп pad'а ÷${2 ** -s.fold}, чтобы уложиться в 50 %` : null;
+  return (
+    <div class={`speed ${s.fold ? "folded" : ""}`} title="Расчёт по правилам, проверенным на SP: BPM Sync держит скорость в 50–150 %">
+      <b>×{s.ratio.toFixed(2)}</b>
+      <span>{why}</span>
+      {fold && <span class="fold">{fold}</span>}
+      <span class="pitch">высота {fmtSt(s.pitchSt)}</span>
+    </div>
+  );
+}
+
+/** How the pad follows tempo changes, and its pitch (Pitch is greyed out with Vinyl on, as in the official app). */
+function TempoPitch({ pad }: { pad: number }) {
+  const p = pads.value[pad]!;
+  const pitchOff = p.vinyl ? "Pitch меняется при выключенном Vinyl" : null;
+  return (
+    <div class="tempo-pitch">
+      <div class="toggles">
+        <Toggle label="BPM Sync" on={p.bpmSync} onChange={(on) => setBpmSync(pad, on)} hint="Сэмпл следует темпу банка или проекта" />
+        <Toggle label="Vinyl" on={p.vinyl} onChange={(on) => setVinyl(pad, on)} hint="Смена темпа меняет и высоту, как у пластинки; без Vinyl высота сохраняется" />
+      </div>
+      <SpeedLine pad={pad} />
+      <div class="tp-row">
+        <span>Stretch</span>
+        <ValueField value={p.timeStretchX100} format={formatStretch} parse={parseStretch} label="Time Stretch" width={64}
+          onSave={(v) => setTimeStretch(pad, v)} />
+        <span class="unit">%</span>
+        <span class="note">скорость, 50–150, по умолчанию 100</span>
+      </div>
+      <div class="tp-row">
+        <span>Pitch</span>
+        <ValueField value={p.pitchCoarse} format={signed} parse={intIn(-PITCH_COARSE_MAX, PITCH_COARSE_MAX)} label="Pitch, полутоны" width={52}
+          disabled={pitchOff} dim={p.vinyl} onSave={(v) => setPitch(pad, v, p.pitchFine)} />
+        <span class="unit">st</span>
+        <ValueField value={p.pitchFine} format={signed} parse={intIn(-PITCH_FINE_MAX, PITCH_FINE_MAX)} label="Pitch, центы" width={58}
+          disabled={pitchOff} dim={p.vinyl} onSave={(v) => setPitch(pad, p.pitchCoarse, v)} />
+        <span class="unit">ct</span>
+        {pitchOff && <span class="note">{pitchOff}</span>}
+      </div>
+    </div>
+  );
 }
 
 /** Dropped markers (fractions of the sample) → frames on the device. */

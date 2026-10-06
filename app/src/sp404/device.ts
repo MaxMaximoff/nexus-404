@@ -6,8 +6,9 @@ import {
   BULK_READ, CHUNK, FileReq, O_CREAT_TRUNC_RDWR, O_RDONLY, ROOT, WRITE_BATCH, parseFileReply, samplePath,
 } from "./fileApi";
 import {
-  BPM_MAX_X100, BPM_MIN_X100, FLAG_ONE_SHOT, LEVEL_MAX, PAD_COUNT, PARAM_BPM, PARAM_CLEARED_BY_ONE_SHOT, PARAM_END,
-  PARAM_FLAGS, PARAM_GATE, PARAM_LEVEL, PARAM_LOOP, PARAM_BPM_SYNC, PARAM_START, assignSampleBlock, byteToFrame, deviceErrorText, padName,
+  BPM_MAX_X100, BPM_MIN_X100, FLAG_ONE_SHOT, GLOBAL, PARAM_BANK_TEMPO, PARAM_PROJECT_TEMPO, PARAM_TEMPO_SELECT, LEVEL_MAX, PAD_COUNT, PARAM_BPM, PARAM_CLEARED_BY_ONE_SHOT, PARAM_END,
+  PARAM_FLAGS, PARAM_GATE, PARAM_PITCH_COARSE, PARAM_PITCH_FINE, PARAM_TIME_STRETCH, PARAM_VINYL, PITCH_COARSE_MAX, PITCH_FINE_MAX,
+  STRETCH_MAX_X100, STRETCH_MIN_X100, PARAM_LEVEL, PARAM_LOOP, PARAM_BPM_SYNC, PARAM_START, assignSampleBlock, byteToFrame, deviceErrorText, padName,
   parsePadBlock, parseProjectSettings, parseStatus, setParamPayload,
   type DeviceStatus, type PadBlock, type ProjectSettings,
 } from "./control";
@@ -195,9 +196,9 @@ export class SP404Device {
 
   // ------------------------------------------------------------------ control, write
 
-  /** Send one per-pad set-parameter and wait for the device's echo. */
-  private async setPadParam(pad: number, id: number, value: number): Promise<void> {
-    const p = setParamPayload(id, pad, value);
+  /** Send one set-parameter (`target` = pad, or GLOBAL) and wait for the device's echo. */
+  private async setParam(target: number, id: number, value: number): Promise<void> {
+    const p = setParamPayload(id, target, value);
     await this.transact(CH_CONTROL, p, false,
       (m) => m.channel === CH_CONTROL && m.payload[0] === 0x01 && m.payload[1] === id && m.payload[3] === p[3] && m.payload[4] === p[4],
       `set param ${id.toString(16)}`);
@@ -217,25 +218,45 @@ export class SP404Device {
 
   /** Set a pad's BPM (× 100). `project1` must be the current project, checked first. */
   async setBpm(project1: number, pad: number, bpmX100: number): Promise<PadBlock> {
-    if (!(bpmX100 >= BPM_MIN_X100 && bpmX100 <= BPM_MAX_X100)) throw new DeviceError("BPM должен быть от 40 до 200");
-    return this.editPad(project1, pad, () => this.setPadParam(pad, PARAM_BPM, bpmX100));
+    checkBpm(bpmX100);
+    return this.editPad(project1, pad, () => this.setParam(pad, PARAM_BPM, bpmX100));
   }
 
   async setLevel(project1: number, pad: number, level: number): Promise<PadBlock> {
     if (!(Number.isInteger(level) && level >= 0 && level <= LEVEL_MAX)) throw new DeviceError(`Level должен быть от 0 до ${LEVEL_MAX}`);
-    return this.editPad(project1, pad, () => this.setPadParam(pad, PARAM_LEVEL, level));
+    return this.editPad(project1, pad, () => this.setParam(pad, PARAM_LEVEL, level));
   }
 
   setGate(project1: number, pad: number, on: boolean): Promise<PadBlock> {
-    return this.editPad(project1, pad, () => this.setPadParam(pad, PARAM_GATE, on ? 1 : 0));
+    return this.editPad(project1, pad, () => this.setParam(pad, PARAM_GATE, on ? 1 : 0));
   }
 
   setLoop(project1: number, pad: number, on: boolean): Promise<PadBlock> {
-    return this.editPad(project1, pad, () => this.setPadParam(pad, PARAM_LOOP, on ? 1 : 0));
+    return this.editPad(project1, pad, () => this.setParam(pad, PARAM_LOOP, on ? 1 : 0));
   }
 
   setBpmSync(project1: number, pad: number, on: boolean): Promise<PadBlock> {
-    return this.editPad(project1, pad, () => this.setPadParam(pad, PARAM_BPM_SYNC, on ? 1 : 0));
+    return this.editPad(project1, pad, () => this.setParam(pad, PARAM_BPM_SYNC, on ? 1 : 0));
+  }
+
+  /** Vinyl on: tempo changes shift pitch, like a record (checked on the unit); the official app greys out Pitch. */
+  setVinyl(project1: number, pad: number, on: boolean): Promise<PadBlock> {
+    return this.editPad(project1, pad, () => this.setParam(pad, PARAM_VINYL, on ? 1 : 0));
+  }
+
+  async setTimeStretch(project1: number, pad: number, x100: number): Promise<PadBlock> {
+    if (!(Number.isInteger(x100) && x100 >= STRETCH_MIN_X100 && x100 <= STRETCH_MAX_X100)) throw new DeviceError("Time Stretch должен быть от 50 до 150 %");
+    return this.editPad(project1, pad, () => this.setParam(pad, PARAM_TIME_STRETCH, x100));
+  }
+
+  /** Pitch in semitones (±12) and cents (±100); only the changed one is sent. */
+  async setPitch(project1: number, pad: number, coarse: number, fine: number): Promise<PadBlock> {
+    if (!(Number.isInteger(coarse) && Math.abs(coarse) <= PITCH_COARSE_MAX)) throw new DeviceError(`Pitch: полутоны от −${PITCH_COARSE_MAX} до ${PITCH_COARSE_MAX}`);
+    if (!(Number.isInteger(fine) && Math.abs(fine) <= PITCH_FINE_MAX)) throw new DeviceError(`Pitch: центы от −${PITCH_FINE_MAX} до ${PITCH_FINE_MAX}`);
+    return this.editPad(project1, pad, async (b) => {
+      if (coarse !== b.pitchCoarse) await this.setParam(pad, PARAM_PITCH_COARSE, coarse);
+      if (fine !== b.pitchFine) await this.setParam(pad, PARAM_PITCH_FINE, fine);
+    });
   }
 
   /**
@@ -244,9 +265,35 @@ export class SP404Device {
    */
   setOneShot(project1: number, pad: number, on: boolean): Promise<PadBlock> {
     return this.editPad(project1, pad, async (b) => {
-      await this.setPadParam(pad, PARAM_FLAGS, on ? b.flags | FLAG_ONE_SHOT : b.flags & ~FLAG_ONE_SHOT);
-      if (on && !b.oneShot) for (const id of [PARAM_GATE, PARAM_LOOP, PARAM_CLEARED_BY_ONE_SHOT]) await this.setPadParam(pad, id, 0);
+      await this.setParam(pad, PARAM_FLAGS, on ? b.flags | FLAG_ONE_SHOT : b.flags & ~FLAG_ONE_SHOT);
+      if (on && !b.oneShot) for (const id of [PARAM_GATE, PARAM_LOOP, PARAM_CLEARED_BY_ONE_SHOT]) await this.setParam(pad, id, 0);
     });
+  }
+
+  /**
+   * Edit project-wide settings of the current project: checks the project and the menu, runs
+   * `fn`, and returns the settings re-read afterwards.
+   */
+  private async editProject(project1: number, fn: () => Promise<void>): Promise<ProjectSettings & { names: string[] }> {
+    const st = await this.requireCurrent(project1);
+    await fn();
+    return this.projectSettings(st.project);
+  }
+
+  async setProjectTempo(project1: number, bpmX100: number) {
+    checkBpm(bpmX100);
+    return this.editProject(project1, () => this.setParam(GLOBAL, PARAM_PROJECT_TEMPO, bpmX100));
+  }
+
+  async setBankTempo(project1: number, bank: number, bpmX100: number) {
+    checkBpm(bpmX100);
+    if (!(Number.isInteger(bank) && bank >= 0 && bank < 10)) throw new DeviceError(`нет банка ${bank}`);
+    return this.editProject(project1, () => this.setParam(GLOBAL, PARAM_BANK_TEMPO + bank, bpmX100));
+  }
+
+  /** `true`: the project tempo applies to every bank; `false`: each bank plays at its own tempo. */
+  setTempoSelect(project1: number, useProjectTempo: boolean) {
+    return this.editProject(project1, () => this.setParam(GLOBAL, PARAM_TEMPO_SELECT, useProjectTempo ? 1 : 0));
   }
 
   /** Channel count from the SMP header on the card. */
@@ -271,7 +318,7 @@ export class SP404Device {
       if (start !== byteToFrame(b.startByte, ch)) steps.push([PARAM_START, start]);
       if (end !== oldEnd) steps.push([PARAM_END, end]);
       if (start >= oldEnd) steps.reverse(); // new Start would pass the old End: move End first
-      for (const [id, v] of steps) await this.setPadParam(pad, id, v);
+      for (const [id, v] of steps) await this.setParam(pad, id, v);
     });
   }
 
@@ -424,6 +471,10 @@ export class SP404Device {
     }
     return this.padBlock(pad);
   }
+}
+
+function checkBpm(x100: number): void {
+  if (!(Number.isInteger(x100) && x100 >= BPM_MIN_X100 && x100 <= BPM_MAX_X100)) throw new DeviceError("BPM должен быть от 40 до 200");
 }
 
 function concat(parts: Uint8Array[]): Uint8Array {

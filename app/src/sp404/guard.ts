@@ -1,11 +1,12 @@
 // Last line of defence: every outgoing message passes through a guard. Read traffic and preview are
 // always allowed; writes are limited to the import sequence for the one pad being imported and to
-// the per-pad parameters in PAD_PARAM_RANGE (Start, End, Level, Gate, Loop, BPM Sync, BPM, flags).
+// the per-pad parameters in PAD_PARAM_RANGE (Start, End, Level, Gate, Loop, BPM Sync, BPM, flags)
+// and the tempos in GLOBAL_PARAM_RANGE (project, banks, tempo select).
 // Init (92), delete (91 … 00 00), move (95), renames, mkdir/rmdir/rename on the card can never
 // leave the page.
 
 import { CH_CONTROL, CH_FILE, hex } from "./frame";
-import { PAD_PARAM_RANGE, PAD_WRITE_LEN, PAD_COUNT } from "./control";
+import { GLOBAL_PARAM_RANGE, PAD_PARAM_RANGE, PAD_WRITE_LEN, PAD_COUNT } from "./control";
 import { describeFileRequest, O_CREAT_TRUNC_RDWR, O_RDONLY, Op, remotePath, samplePath } from "./fileApi";
 
 export interface WritePolicy {
@@ -33,6 +34,12 @@ export function makeGuard(policy: WritePolicy): Guard {
       if (c === 0x01 && p.length === 9 && p[2] === 0 && (p[3] | (p[4] << 8)) < PAD_COUNT) {
         // Set a per-pad parameter: only the ids and values in PAD_PARAM_RANGE.
         const range = PAD_PARAM_RANGE.get(p[1]);
+        const value = new DataView(p.buffer, p.byteOffset).getInt32(5, true);
+        if (range && value >= range[0] && value <= range[1]) return;
+      }
+      if (c === 0x01 && p.length === 9 && p[2] === 0 && p[3] === 0xff && p[4] === 0xff) {
+        // Project and bank tempos, tempo select: only the ids and values in GLOBAL_PARAM_RANGE.
+        const range = GLOBAL_PARAM_RANGE.get(p[1]);
         const value = new DataView(p.buffer, p.byteOffset).getInt32(5, true);
         if (range && value >= range[0] && value <= range[1]) return;
       }

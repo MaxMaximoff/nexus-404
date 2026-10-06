@@ -23,8 +23,10 @@ export function App() {
         </div>
       )}
       <main class="layout">
-        <BankRail />
-        <PadGrid />
+        <div class="workspace">
+          <PadGrid />
+          <BankRail />
+        </div>
         <Inspector />
       </main>
       <div class="bottom">

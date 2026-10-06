@@ -60,6 +60,10 @@ export interface PadBlock {
   bpmX100: number;
   flags: number;
   oneShot: boolean;
+  pitchCoarse: number;
+  pitchFine: number;
+  timeStretchX100: number;
+  vinyl: boolean;
   name: string;
   raw: Uint8Array;
 }
@@ -81,6 +85,10 @@ export function parsePadBlock(p: Uint8Array): PadBlock {
     bpmX100: f(9),
     flags: f(10),
     oneShot: (f(10) & 32) !== 0,
+    pitchCoarse: dv.getInt32(3 + 13 * 4, true),
+    pitchFine: dv.getInt32(3 + 14 * 4, true),
+    timeStretchX100: f(16),
+    vinyl: f(17) !== 0,
     name: new TextDecoder("latin1").decode(nameBytes.subarray(0, end < 0 ? NAME_LEN : end)).trimEnd(),
     raw: p.slice(),
   };
@@ -127,13 +135,21 @@ export const PARAM_BPM = 0x6f;
 export const PARAM_FLAGS = 0x70;
 /** Meaning unknown; the official app sends 0 here when One Shot is turned on. */
 export const PARAM_CLEARED_BY_ONE_SHOT = 0x72;
+export const PARAM_PITCH_COARSE = 0x73; // semitones; the official app edits it only with Vinyl off
+export const PARAM_PITCH_FINE = 0x74; // cents
+export const PARAM_TIME_STRETCH = 0x76; // percent × 100
+export const PARAM_VINYL = 0x77;
+export const PITCH_COARSE_MAX = 12;
+export const PITCH_FINE_MAX = 100;
+export const STRETCH_MIN_X100 = 5000;
+export const STRETCH_MAX_X100 = 15000;
 export const FLAG_ONE_SHOT = 32;
 export const BPM_MIN_X100 = 4000;
 export const BPM_MAX_X100 = 20000;
 export const LEVEL_MAX = 127;
 
 /** Per-pad parameters the client may set, with the values it may send (inclusive). */
-export const PAD_PARAM_RANGE: ReadonlyMap<number, readonly [number, number]> = new Map([
+export const PAD_PARAM_RANGE: ReadonlyMap<number, readonly [number, number]> = new Map<number, readonly [number, number]>([
   [PARAM_START, [0, 0x7fffffff]],
   [PARAM_END, [1, 0x7fffffff]],
   [PARAM_LEVEL, [0, LEVEL_MAX]],
@@ -143,6 +159,23 @@ export const PAD_PARAM_RANGE: ReadonlyMap<number, readonly [number, number]> = n
   [PARAM_BPM, [BPM_MIN_X100, BPM_MAX_X100]],
   [PARAM_FLAGS, [0, 0xff]],
   [PARAM_CLEARED_BY_ONE_SHOT, [0, 0]],
+  [PARAM_PITCH_COARSE, [-PITCH_COARSE_MAX, PITCH_COARSE_MAX]],
+  [PARAM_PITCH_FINE, [-PITCH_FINE_MAX, PITCH_FINE_MAX]],
+  [PARAM_TIME_STRETCH, [STRETCH_MIN_X100, STRETCH_MAX_X100]],
+  [PARAM_VINYL, [0, 1]],
+]);
+
+export const GLOBAL = 0xffff; // set-parameter target for project-wide parameters
+export const PARAM_PROJECT_TEMPO = 0x0a;
+/** 0 = each bank plays at its own tempo, 1 = the project tempo applies to all banks. */
+export const PARAM_TEMPO_SELECT = 0x0b;
+export const PARAM_BANK_TEMPO = 0x21; // + bank (0..9)
+
+/** Global parameters the client may set, with the values it may send (inclusive). Bank protect and volume are not here. */
+export const GLOBAL_PARAM_RANGE: ReadonlyMap<number, readonly [number, number]> = new Map<number, readonly [number, number]>([
+  [PARAM_PROJECT_TEMPO, [BPM_MIN_X100, BPM_MAX_X100]],
+  [PARAM_TEMPO_SELECT, [0, 1]],
+  ...Array.from({ length: 10 }, (_, b) => [PARAM_BANK_TEMPO + b, [BPM_MIN_X100, BPM_MAX_X100]] as const),
 ]);
 
 /** Block byte offset ↔ sample frame (SMP header is 512 bytes, 16-bit PCM). */
