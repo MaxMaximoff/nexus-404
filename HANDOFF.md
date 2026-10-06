@@ -52,6 +52,12 @@ nexus-404/
   .claude/launch.json                конфиги app (npm run dev) и poc (python http.server 8000)
 ```
 
+## Репозиторий
+
+- Приватный GitHub: https://github.com/MaxMaximoff/nexus-404, ветка `main` (создан 2026-10-06).
+- Не в git: `SparkyMK2/` (GPL, отдельный клон, см. «Структура»), `node_modules`, `dist`.
+- Коммиты — только когда пользователь просит.
+
 ## Запуск
 
 ```bash
