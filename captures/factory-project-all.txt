@@ -1,0 +1,5 @@
+status   : 7e 03 00 05 00 01 00 00 ff ff ff ff 00 02 01 00 00 0b 33
+           project 4, selected F2, working mode 0
+project  : 'PROJECT_04'  tempo 90  tempo select bank
+banks    : A:101 B:90 C:90 D:90 E:90 F:93 G:94 H:90 I:90 J:90
+projects : 1=PROJECT_01, 2=PROJECT_01, 3=PROJECT_03, 4=PROJECT_04, 5=PROJECT_05, 6=PROJECT_06, 7=PROJECT_07, 8=PROJECT_08, 9=HandPan, 10=PROJECT_10, 11=, 12=, 13=, 14=PROJECT_14, 15=PROJECT_15, 16=PROJECT_16

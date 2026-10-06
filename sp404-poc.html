@@ -1,0 +1,552 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SP-404MKII Web Serial PoC</title>
+<style>
+  :root { --bg:#f6f6f4; --fg:#1d1d1b; --muted:#6b6b66; --line:#d9d9d4; --card:#fff; --accent:#c8102e; --ok:#1f7a3a; --warn:#a15c00; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#161615; --fg:#ececea; --muted:#9a9a94; --line:#33332f; --card:#1f1f1d; --accent:#ff4d5e; --ok:#58c47a; --warn:#e0a040; } }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:16px; background:var(--bg); color:var(--fg); font:14px/1.45 system-ui, sans-serif; }
+  h1 { font-size:18px; margin:0 0 4px; } p.note { color:var(--muted); margin:0 0 12px; max-width:900px; }
+  .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:8px 0; }
+  button, select { font:inherit; padding:6px 12px; border:1px solid var(--line); background:var(--card); color:var(--fg); border-radius:6px; cursor:pointer; }
+  button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+  button:disabled { opacity:.45; cursor:default; }
+  #state { font-weight:600; } .ok { color:var(--ok); } .warn { color:var(--warn); }
+  #pads { display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:8px; max-width:900px; margin:12px 0; }
+  .pad { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:8px; min-height:92px; font-size:12px; overflow:hidden; }
+  .pad b { font-size:13px; } .pad .name { font-family:ui-monospace, monospace; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .pad.empty { color:var(--muted); }
+  pre { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:8px; font:12px/1.35 ui-monospace, monospace; max-height:340px; overflow:auto; white-space:pre-wrap; word-break:break-all; }
+  @media (max-width:600px) { #pads { grid-template-columns:repeat(2, minmax(0,1fr)); } }
+</style>
+</head>
+<body>
+<h1>SP-404MKII — Web Serial proof of concept (только чтение)</h1>
+<p class="note">Протокол взят из <a href="https://github.com/TuscanPL/SparkyMK2/tree/3007b5d/docs/re">SparkyMK2 docs/re</a>.
+Страница отправляет только команды из белого списка read-only: status poll, project settings, pad block, а в файловом API — open с флагом 0 (только чтение), read, close, stat, opendir/readdir/closedir и free space.
+Прежде чем подключаться, закройте официальное приложение Roland и SparkyMK2: COM-порт может открыть только одна программа. Нужен Chrome или Edge на десктопе, страницу открывайте через https:// или http://localhost.</p>
+
+<div class="row">
+  <button class="primary" id="btnConnect">Connect SP-404MKII</button>
+  <button id="btnReconnect" disabled>Reconnect (без диалога)</button>
+  <button id="btnDisconnect" disabled>Disconnect</button>
+  <span id="state">не подключено</span>
+</div>
+<div class="row">
+  <button id="btnStatus" disabled>Status + project</button>
+  <label>Bank <select id="bank" disabled></select></label>
+  <button id="btnBank" disabled>Read 16 pads</button>
+  <button id="btnHeaders" disabled>Read SMP headers (bank)</button>
+  <button id="btnList" disabled>List SMPL dir</button>
+  <button id="btnFree" disabled>Free space</button>
+  <button id="btnExit" disabled title="3A 00 00 00 — так официальный app отпускает устройство. Данные не меняет.">MKII EXIT</button>
+</div>
+<div class="row">
+  <button id="btnUsbProbe">WebUSB: показать дескрипторы (диагностика)</button>
+  <label><input type="checkbox" id="usbClaim"> также попробовать open()+claimInterface()</label>
+</div>
+
+<div id="summary"></div>
+<div id="pads"></div>
+<pre id="log"></pre>
+
+<script type="module">
+// ============================================================================
+// Constants (SparkyMK2 docs/re/00-findings.md, crates/sp404-device/src/lib.rs)
+// ============================================================================
+const VID = 0x0582;
+const PID_SERIAL = 0x02E7;   // CDC-ACM "Roland SP-404MKII"
+const PID_AUDIO  = 0x0281;   // USB Audio + MIDI composite
+const BAUD = 921600;
+const SETTLE_MS = 350;
+
+const KIND_SHORT = 0x12, KIND_LONG = 0x13;
+const ADDR_HOST = 0x60, ADDR_DEVICE = 0xE0;
+const CH_CONTROL = 0x05, CH_FILE = 0x06;
+
+const BANKS = "ABCDEFGHIJ";
+const hex = (a, max = 64) => {
+  const s = Array.from(a.slice(0, max), b => b.toString(16).padStart(2, "0")).join(" ");
+  return a.length > max ? `${s} … (+${a.length - max} B)` : s;
+};
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// ============================================================================
+// SP404Protocol: framing (crates/sp404-proto/src/frame.rs)
+// ============================================================================
+const Frame = {
+  short(channel, payload) {
+    if (payload.length > 7) throw new Error("short payload > 7 bytes");
+    const b = new Uint8Array(12);
+    b.set([KIND_SHORT, ADDR_HOST, ADDR_DEVICE, channel]);
+    b.set(payload, 4);
+    b[11] = payload.length;            // the device ignores a short message with length 0
+    return b;
+  },
+  long(channel, payload) {
+    const b = new Uint8Array(16 + payload.length);
+    b.set([KIND_LONG, ADDR_HOST, ADDR_DEVICE, channel]);
+    new DataView(b.buffer).setUint32(12, payload.length, true);
+    b.set(payload, 16);
+    return b;
+  },
+};
+
+class FrameDecoder {
+  constructor() { this.buf = new Uint8Array(0); this.skipped = 0; }
+  push(chunk) {
+    const n = new Uint8Array(this.buf.length + chunk.length);
+    n.set(this.buf); n.set(chunk, this.buf.length); this.buf = n;
+  }
+  *messages() {
+    for (;;) {
+      const b = this.buf;
+      if (b.length === 0) return;
+      let total;
+      if (b[0] === KIND_SHORT) total = 12;
+      else if (b[0] === KIND_LONG) {
+        if (b.length < 16) return;
+        const len = new DataView(b.buffer, b.byteOffset).getUint32(12, true);
+        if (len > (1 << 24)) { this.buf = b.subarray(1); this.skipped++; continue; }
+        total = 16 + len;
+      } else { this.buf = b.subarray(1); this.skipped++; continue; }
+      if (b.length < total) return;
+      const f = b.slice(0, total);
+      this.buf = b.subarray(total);
+      const short = f[0] === KIND_SHORT;
+      yield {
+        short, source: f[1], destination: f[2], channel: f[3],
+        payload: short ? f.slice(4, 4 + Math.min(f[11], 7)) : f.slice(16),
+        raw: f,
+      };
+    }
+  }
+}
+
+// ============================================================================
+// Septets: 35-bit ints as 5 x 7-bit, big-endian (crates/sp404-proto/src/septet.rs)
+// ============================================================================
+const FLAG_LAST = 0x40, FLAG_MULTI = 0x20, CHUNK = 0x5000;
+function septEnc(v, flags = 0) {
+  const raw = BigInt.asUintN(35, BigInt(v));
+  const out = [];
+  for (let i = 0; i < 5; i++) out.push(Number((raw >> BigInt(7 * (4 - i))) & 0x7Fn));
+  out[0] |= flags;
+  return out;
+}
+function septDec(bytes, at) {
+  let raw = 0n;
+  for (let i = 0; i < 5; i++) {
+    const b = bytes[at + i];
+    if (b === undefined || b & 0x80) throw new Error("bad septet");
+    raw = (raw << 7n) | BigInt(b);
+  }
+  return { i32: Number(BigInt.asIntN(32, raw)), u32: Number(BigInt.asUintN(32, raw)), high: Number(raw >> 32n) };
+}
+
+// ============================================================================
+// File API, channel 6 (crates/sp404-proto/src/fileapi.rs). READ-ONLY subset.
+// ============================================================================
+const Op = { Open: 0x00, Close: 0x03, Read: 0x04, OpenDir: 0x0C, CloseDir: 0x0D, ReadDir: 0x0E, Stat: 0x12, FStat: 0x13, FreeKb: 0x18 };
+const READ_ONLY_FILE_OPS = new Set(Object.values(Op));
+const ROOT = "/SP404REMOTE//";
+const remotePath = p => p.startsWith(ROOT) ? p : p.startsWith("SD:") ? "/" + p.slice(3).replace(/^[\/\\]+/, "") : `${ROOT}/${p.replace(/^[\/\\]+/, "")}`;
+
+const FileApi = {
+  request(op, first, second, tail) { return Uint8Array.from([0xF0, 0x41, 0x7A, 0x03, op, ...first, ...second, ...tail, 0xF7]); },
+  pathReq(op, first, path) {
+    const bytes = [...new TextEncoder().encode(remotePath(path)), 0];
+    return this.request(op, septEnc(first), septEnc(bytes.length), bytes);
+  },
+  handleReq(op, handle, arg) { return this.request(op, septEnc(handle), arg, [0]); },
+  openReadOnly: path => FileApi.pathReq(Op.Open, 0 /* O_RDONLY */, path),
+  close: h => FileApi.handleReq(Op.Close, h, septEnc(0)),
+  read: (h, n) => FileApi.handleReq(Op.Read, h, septEnc(n, n > CHUNK ? FLAG_MULTI : 0)),
+  stat: path => FileApi.pathReq(Op.Stat, 0, path),
+  fstat: h => FileApi.handleReq(Op.FStat, h, septEnc(0)),
+  opendir: path => FileApi.pathReq(Op.OpenDir, 0, path),
+  readdir: h => FileApi.handleReq(Op.ReadDir, h, septEnc(0)),
+  closedir: h => FileApi.handleReq(Op.CloseDir, h, septEnc(0)),
+  freeKb: path => FileApi.pathReq(Op.FreeKb, 0, path),
+  parseReply(p) {
+    if (p.length < 5 || p[0] !== 0xF0 || p[1] !== 0x41 || p[2] !== 0x7A || p[p.length - 1] !== 0xF7) throw new Error("not a file API payload");
+    const body = p.subarray(3, p.length - 1);
+    const a = septDec(body, 1), b = septDec(body, 6);
+    if (body[0] === 0x7A) return { kind: "status", result: a.i32, extra: b.i32 };
+    if (body[0] === 0x02) return { kind: "data", handle: a.i32, last: (b.high & 0b100) !== 0, data: body.slice(11, 11 + b.u32) };
+    throw new Error("unexpected file reply 0x" + body[0].toString(16));
+  },
+};
+
+// ============================================================================
+// Pad block / project settings (docs/re/03-parameters.md, crates/sp404-proto/src/pad.rs)
+// ============================================================================
+function parsePadBlock(p) {
+  const dv = new DataView(p.buffer, p.byteOffset, p.byteLength);
+  const f = n => dv.getUint32(3 + n * 4, true);
+  const name = new TextDecoder("latin1").decode(p.subarray(175, 199)).replace(/[\0 ]+$/, "");
+  const chops = [];
+  for (let i = 0; i < 16; i++) { const v = dv.getInt32(199 + i * 4, true); if (v !== -1) chops.push(v); }
+  return {
+    index: dv.getUint16(1, true),
+    size: f(0), startByte: f(1), endByte: f(2),
+    level: f(3), gate: f(4), loop: f(5) !== 0, bpmSync: f(8), bpmX100: f(9),
+    flags: f(10), oneShot: (f(10) & 32) !== 0, timeStretch: f(16),
+    name, chops, raw: p,
+  };
+}
+function parseProjectSettings(p) {
+  const dv = new DataView(p.buffer, p.byteOffset, p.byteLength);
+  const w = n => dv.getUint32(3 + n * 4, true);
+  const banks = [];
+  for (let b = 0; b < 10; b++) {
+    const word = w(12 + b), vol = (w(23 + (b >> 1)) >>> ((b & 1) ? 16 : 0)) & 0xFFFF;
+    banks.push({ letter: BANKS[b], protected: !!(word & 1), tempoX100: (word >>> 1) & 0xFFFF, volume: 127 - vol });
+  }
+  return {
+    project: p[1],
+    projectTempoX100: w(0) & 0xFFFF, useProjectTempo: !!((w(0) >>> 16) & 1),
+    banks, name: new TextDecoder("latin1").decode(p.subarray(115, 147)).replace(/[\0 ]+$/, ""),
+  };
+}
+
+// ============================================================================
+// Read-only guard: nothing outside this list leaves the page.
+// ============================================================================
+const READ_ONLY_CONTROL = new Set([0xFE /* status */, 0xFD /* project settings */, 0x9E /* pad block */, 0x3A /* MKII EXIT */]);
+function assertReadOnly(channel, payload) {
+  if (channel === CH_CONTROL && READ_ONLY_CONTROL.has(payload[0])) return;
+  if (channel === CH_FILE && payload[3] === 0x03 && READ_ONLY_FILE_OPS.has(payload[4])) {
+    if (payload[4] === Op.Open && septDec(payload, 5).i32 !== 0) throw new Error("PoC guard: open is only allowed read-only");
+    return;
+  }
+  throw new Error(`PoC guard: blocked ch${channel} ${hex(payload, 8)}`);
+}
+
+// ============================================================================
+// WebSerialTransport: byte stream in/out
+// ============================================================================
+class WebSerialTransport {
+  constructor(port, log) { this.port = port; this.log = log; this.onBytes = () => {}; this.onClose = () => {}; }
+  async open() {
+    // bufferSize defaults to 255 B; reads arrive in 20 KB file chunks, so raise it.
+    await this.port.open({ baudRate: BAUD, dataBits: 8, stopBits: 1, parity: "none", flowControl: "none", bufferSize: 1 << 20 });
+    // The official app asserts DTR+RTS (control line state 0x0003) and waits ~350 ms.
+    await this.port.setSignals({ dataTerminalReady: true, requestToSend: true });
+    await sleep(SETTLE_MS);
+    this.writer = this.port.writable.getWriter();
+    this.loopDone = this.readLoop();
+  }
+  async readLoop() {
+    try {
+      while (this.port.readable) {
+        this.reader = this.port.readable.getReader();
+        try {
+          for (;;) {
+            const { value, done } = await this.reader.read();
+            if (done) break;
+            if (value?.length) this.onBytes(value);
+          }
+        } finally { this.reader.releaseLock(); this.reader = null; }
+        if (this.closing) break;
+      }
+    } catch (e) { this.log(`read error: ${e.message}`, "warn"); }
+    if (!this.closing) this.onClose();
+  }
+  async write(bytes) { await this.writer.write(bytes); }
+  async close() {
+    this.closing = true;
+    try { await this.reader?.cancel(); } catch {}
+    try { await this.loopDone; } catch {}   // the reader lock must be released before close()
+    try { this.writer?.releaseLock(); } catch {}
+    try { await this.port.setSignals({ dataTerminalReady: false, requestToSend: false }); } catch {}
+    try { await this.port.close(); } catch {}
+  }
+}
+
+// ============================================================================
+// SP404Device: request/reply on top of the stream, one operation at a time
+// ============================================================================
+class SP404Device {
+  constructor(transport, log) {
+    this.t = transport; this.log = log;
+    this.decoder = new FrameDecoder();
+    this.inbox = [];        // unmatched messages
+    this.waiter = null;     // { pred, resolve, reject, timer }
+    this.queue = Promise.resolve();
+    transport.onBytes = bytes => this.onBytes(bytes);
+  }
+  onBytes(bytes) {
+    this.decoder.push(bytes);
+    for (const m of this.decoder.messages()) {
+      this.log(`< ch${m.channel.toString(16).padStart(2, "0")} ${m.short ? "S" : "L"} ${hex(m.payload)}`, "rx");
+      if (m.channel === CH_CONTROL && m.payload[0] === 0x32 && m.payload.length >= 5) {
+        const code = new DataView(m.payload.buffer, m.payload.byteOffset).getInt32(1, true);
+        this.log(`device error notification: ${code}`, "warn");
+      }
+      if (this.waiter && this.waiter.pred(m)) {
+        const w = this.waiter; this.waiter = null; clearTimeout(w.timer); w.resolve(m);
+      } else {
+        this.inbox.push(m); if (this.inbox.length > 256) this.inbox.shift();
+      }
+    }
+  }
+  waitFor(pred, ms, what) {
+    const i = this.inbox.findIndex(pred);
+    if (i >= 0) return Promise.resolve(this.inbox.splice(i, 1)[0]);
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { this.waiter = null; reject(new Error(`timeout: ${what}`)); }, ms);
+      this.waiter = { pred, resolve, reject, timer };
+    });
+  }
+  async send(channel, payload, short) {
+    assertReadOnly(channel, payload);
+    const frame = short ? Frame.short(channel, payload) : Frame.long(channel, payload);
+    this.log(`> ch${channel.toString(16).padStart(2, "0")} ${short ? "S" : "L"} ${hex(payload)}`, "tx");
+    await this.t.write(frame);
+  }
+  /** Serialise whole operations, like Device::exclusive in SparkyMK2. */
+  exclusive(fn) { const r = this.queue.then(() => fn(this)); this.queue = r.catch(() => {}); return r; }
+
+  async transact(channel, payload, short, pred, what, ms = 5000) {
+    this.inbox.length = 0;
+    const reply = this.waitFor(pred, ms, what);
+    await this.send(channel, payload, short);
+    return reply;
+  }
+
+  // ---- control channel, read-only ----
+  async status() {
+    const m = await this.transact(CH_CONTROL, [0xFE, 0x66, 0x00], true, m => m.channel === CH_CONTROL && m.payload[0] === 0x7E, "status");
+    const p = m.payload;
+    return { project: p[1], bank: p[3], pad: p[5], workingMode: p[12], raw: p };
+  }
+  async projectSettings(project) {
+    const m = await this.transact(CH_CONTROL, [0xFD, project, 0x00], true,
+      m => m.channel === CH_CONTROL && m.payload[0] === 0x7D && m.payload[1] === project, "project settings");
+    const settings = parseProjectSettings(m.payload);
+    const names = [];
+    const deadline = Date.now() + 1500;
+    while (names.length < 16 && Date.now() < deadline) {
+      try {
+        const n = await this.waitFor(m => m.channel === CH_CONTROL && m.payload[0] === 0x35, deadline - Date.now(), "project names");
+        names[n.payload[1]] = new TextDecoder("latin1").decode(n.payload.subarray(2)).replace(/[\0 ]+$/, "").trim();
+      } catch { break; }
+    }
+    return { ...settings, names };
+  }
+  async padBlock(index) {
+    const lo = index & 0xFF, hi = index >> 8;
+    const m = await this.transact(CH_CONTROL, [0x9E, lo, hi], true,
+      m => m.channel === CH_CONTROL && m.payload[0] === 0x1E && m.payload[1] === lo && m.payload[2] === hi && !m.short, `pad block ${index}`);
+    return parsePadBlock(m.payload);
+  }
+  async mkiiExit() { await this.send(CH_CONTROL, [0x3A, 0x00, 0x00, 0x00], true); }
+
+  // ---- file channel, read-only ----
+  async fileCall(payload, what, ms = 5000) {
+    const m = await this.transact(CH_FILE, payload, false, m => m.channel === CH_FILE && !m.short, what, ms);
+    return FileApi.parseReply(m.payload);
+  }
+  async statusCall(payload, what) {
+    const r = await this.fileCall(payload, what);
+    if (r.kind !== "status") throw new Error(`${what}: unexpected data`);
+    if (r.result === -1) throw new Error(`${what}: refused (errno ${r.extra})`);
+    return r.result;
+  }
+  async stat(path) {
+    const r = await this.fileCall(FileApi.stat(path), `stat ${path}`);
+    if (r.kind === "status") return null; // -1 / ENOENT
+    const dv = new DataView(r.data.buffer, r.data.byteOffset);
+    return { mode: dv.getUint32(0, true), size: dv.getUint32(4, true) };
+  }
+  async read(handle, count) {
+    const chunks = [];
+    this.inbox.length = 0;
+    let first = this.waitFor(m => m.channel === CH_FILE && !m.short, 5000, "read");
+    await this.send(CH_FILE, FileApi.read(handle, count), false);
+    for (let got = 0;;) {
+      const r = FileApi.parseReply((await first).payload);
+      if (r.kind === "status") { if (r.result === -1) throw new Error("read refused"); break; }
+      chunks.push(r.data); got += r.data.length;
+      if (r.last) break;
+      first = this.waitFor(m => m.channel === CH_FILE && !m.short, 5000, "read");
+    }
+    const out = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+    let o = 0; for (const c of chunks) { out.set(c, o); o += c.length; }
+    return out;
+  }
+  async readPrefix(path, n) {
+    if (!(await this.stat(path))) return null;
+    const h = await this.statusCall(FileApi.openReadOnly(path), `open ${path}`);
+    try { return await this.read(h, n); }
+    finally { await this.statusCall(FileApi.close(h), "close"); }
+  }
+  async listDir(path) {
+    const dir = await this.statusCall(FileApi.opendir(path), `opendir ${path}`);
+    const entries = [];
+    for (;;) {
+      const r = await this.fileCall(FileApi.readdir(dir), "readdir");
+      if (r.kind !== "data") break;
+      const len = r.data[4], type = r.data[5];
+      const name = new TextDecoder().decode(r.data.subarray(6, 6 + len));
+      if (name !== "." && name !== "..") entries.push({ name, dir: type === 4 });
+    }
+    try { await this.statusCall(FileApi.closedir(dir), "closedir"); } catch {}
+    return entries;
+  }
+  async freeKb() { return this.statusCall(FileApi.freeKb(ROOT), "free space"); }
+}
+
+function parseSmpHeader(h) {
+  if (!h || h.length < 20 || new TextDecoder().decode(h.subarray(0, 4)) !== "RFWV") return null;
+  const dv = new DataView(h.buffer, h.byteOffset);
+  return { pcmBytes: dv.getUint32(4) - 504, rate: dv.getUint32(8), channels: dv.getUint32(12), bits: dv.getUint32(16) };
+}
+
+// ============================================================================
+// UI
+// ============================================================================
+const $ = id => document.getElementById(id);
+const logEl = $("log");
+function log(text, kind = "") {
+  const line = `[${new Date().toISOString().slice(11, 23)}] ${text}\n`;
+  logEl.textContent += line;
+  if (logEl.textContent.length > 200000) logEl.textContent = logEl.textContent.slice(-150000);
+  logEl.scrollTop = logEl.scrollHeight;
+  if (kind === "warn") console.warn(text);
+}
+for (let b = 0; b < 10; b++) $("bank").add(new Option(BANKS[b], b));
+
+let dev = null, transport = null, project = 0, pads = [], smpInfo = {};
+const connectedButtons = ["btnDisconnect", "btnStatus", "bank", "btnBank", "btnHeaders", "btnList", "btnFree", "btnExit"];
+function setConnected(on, label) {
+  connectedButtons.forEach(id => $(id).disabled = !on);
+  $("btnConnect").disabled = on;
+  $("state").textContent = label; $("state").className = on ? "ok" : "";
+  refreshReconnect();
+}
+async function refreshReconnect() {
+  if (!("serial" in navigator)) { $("btnReconnect").disabled = true; return; }
+  const granted = (await navigator.serial.getPorts()).filter(isSp404);
+  $("btnReconnect").disabled = !!dev || granted.length === 0;
+  $("btnReconnect").title = `ранее разрешённых портов SP-404MKII: ${granted.length}`;
+}
+const guarded = fn => async () => {
+  try { await fn(); } catch (e) { log(`ERROR: ${e.message}`, "warn"); $("state").textContent = e.message; $("state").className = "warn"; }
+};
+const isSp404 = p => { const i = p.getInfo(); return i.usbVendorId === VID && i.usbProductId === PID_SERIAL; };
+
+async function openPort(port) {
+  transport = new WebSerialTransport(port, log);
+  transport.onClose = () => { log("port closed", "warn"); dev = null; setConnected(false, "соединение потеряно"); };
+  await transport.open();
+  dev = new SP404Device(transport, log);
+  const i = port.getInfo();
+  setConnected(true, `открыт порт ${i.usbVendorId.toString(16)}:${i.usbProductId.toString(16)}`);
+  await refreshStatus();
+}
+async function refreshStatus() {
+  await dev.exclusive(async d => {
+    const st = await d.status();
+    project = st.project;
+    const ps = await d.projectSettings(project);
+    $("bank").value = st.bank;
+    $("summary").innerHTML =
+      `<b>Project ${project + 1}</b> “${ps.name || ps.names[project] || "?"}” · ` +
+      `tempo ${(ps.projectTempoX100 / 100).toFixed(2)} (${ps.useProjectTempo ? "project" : "bank"}) · ` +
+      `selected ${BANKS[st.bank]}${st.pad + 1} · working mode byte ${st.workingMode}<br>` +
+      `<small>Banks: ${ps.banks.map(b => `${b.letter}:${(b.tempoX100 / 100).toFixed(2)}${b.protected ? "🔒" : ""}`).join(" ")}</small>`;
+    log(`projects: ${ps.names.map((n, i) => `${i + 1}=${n}`).join(", ")}`);
+  });
+}
+function renderPads(bank) {
+  const el = $("pads"); el.innerHTML = "";
+  for (let p = 0; p < 16; p++) {
+    const idx = bank * 16 + p, b = pads[idx], d = document.createElement("div");
+    d.className = "pad" + (b && b.size ? "" : " empty");
+    if (!b) d.innerHTML = `<b>${BANKS[bank]}${p + 1}</b><br>—`;
+    else if (!b.size) d.innerHTML = `<b>${BANKS[bank]}${p + 1}</b><br>пусто`;
+    else {
+      const h = smpInfo[idx], ch = h ? h.channels : null;
+      const secs = ch ? ((b.endByte - b.startByte) / (2 * ch) / 48000).toFixed(2) + " s" : "? s";
+      d.innerHTML = `<b>${BANKS[bank]}${p + 1}</b> <span class="name">${b.name || "(no name)"}</span><br>` +
+        `BPM ${(b.bpmX100 / 100).toFixed(2)}${b.bpmSync ? " sync" : ""} · lvl ${b.level}<br>` +
+        `${b.oneShot ? "one-shot" : b.gate ? "gate" : "—"}${b.loop ? " · loop" : ""} · ${secs}${ch ? ` · ${ch === 1 ? "mono" : "st"}` : ""}<br>` +
+        `<small>${(b.size / 1024).toFixed(0)} KB · chops ${b.chops.length}</small>`;
+    }
+    el.appendChild(d);
+  }
+}
+
+$("btnConnect").onclick = guarded(async () => {
+  if (!("serial" in navigator)) throw new Error("Web Serial недоступен: нужен Chrome/Edge на десктопе и https:// или localhost");
+  const port = await navigator.serial.requestPort({ filters: [{ usbVendorId: VID, usbProductId: PID_SERIAL }] });
+  await openPort(port);
+});
+$("btnReconnect").onclick = guarded(async () => {
+  const port = (await navigator.serial.getPorts()).find(isSp404);
+  if (!port) throw new Error("нет ранее разрешённого порта SP-404MKII");
+  await openPort(port);
+});
+$("btnDisconnect").onclick = guarded(async () => { const t = transport; dev = null; transport = null; await t?.close(); setConnected(false, "отключено"); });
+$("btnStatus").onclick = guarded(refreshStatus);
+$("btnBank").onclick = guarded(async () => {
+  const bank = +$("bank").value;
+  await dev.exclusive(async d => { for (let p = 0; p < 16; p++) pads[bank * 16 + p] = await d.padBlock(bank * 16 + p); });
+  renderPads(bank);
+});
+$("bank").onchange = () => renderPads(+$("bank").value);
+$("btnHeaders").onclick = guarded(async () => {
+  const bank = +$("bank").value;
+  await dev.exclusive(async d => {
+    for (let p = 0; p < 16; p++) {
+      const path = `ROLAND/SP-404MKII/PROJECT_${String(project + 1).padStart(2, "0")}/SMPL/BANK${bank + 1}-${String(p + 1).padStart(2, "0")}.SMP`;
+      const h = parseSmpHeader(await d.readPrefix(path, 512));
+      if (h) { smpInfo[bank * 16 + p] = h; log(`${BANKS[bank]}${p + 1}: ${JSON.stringify(h)}`); }
+    }
+  });
+  renderPads(bank);
+});
+$("btnList").onclick = guarded(async () => {
+  const path = `ROLAND/SP-404MKII/PROJECT_${String(project + 1).padStart(2, "0")}/SMPL`;
+  const entries = await dev.exclusive(d => d.listDir(path));
+  log(`${path}: ${entries.map(e => e.name + (e.dir ? "/" : "")).join(", ") || "(пусто)"}`);
+});
+$("btnFree").onclick = guarded(async () => { const kb = await dev.exclusive(d => d.freeKb()); log(`free: ${kb} KB (${(kb / 1048576).toFixed(2)} GB)`); });
+$("btnExit").onclick = guarded(async () => { await dev.exclusive(d => d.mkiiExit()); log("MKII EXIT sent"); });
+
+// ---- WebUSB diagnostics: descriptors only, nothing is sent to the device ----
+$("btnUsbProbe").onclick = guarded(async () => {
+  if (!("usb" in navigator)) throw new Error("WebUSB недоступен");
+  const d = await navigator.usb.requestDevice({ filters: [{ vendorId: VID, productId: PID_SERIAL }, { vendorId: VID, productId: PID_AUDIO }] });
+  log(`WebUSB ${d.vendorId.toString(16)}:${d.productId.toString(16)} "${d.productName}" USB ${d.usbVersionMajor}.${d.usbVersionMinor}`);
+  for (const c of d.configurations) for (const i of c.interfaces) for (const a of i.alternates)
+    log(`  cfg ${c.configurationValue} if ${i.interfaceNumber} alt ${a.alternateSetting} class ${a.interfaceClass}/${a.interfaceSubclass}/${a.interfaceProtocol} ` +
+        `eps [${a.endpoints.map(e => `${e.direction} ${e.endpointNumber} ${e.type} ${e.packetSize}`).join(", ")}]`);
+  if (!$("usbClaim").checked) return;
+  try {
+    await d.open(); log("  open(): OK");
+    for (const i of (d.configuration?.interfaces ?? [])) {
+      try { await d.claimInterface(i.interfaceNumber); log(`  claimInterface(${i.interfaceNumber}): OK`); await d.releaseInterface(i.interfaceNumber); }
+      catch (e) { log(`  claimInterface(${i.interfaceNumber}): ${e.name}: ${e.message}`); }
+    }
+  } catch (e) { log(`  open(): ${e.name}: ${e.message}`); }
+  finally { try { await d.close(); } catch {} }
+});
+
+// ---- reconnect without the chooser ----
+if ("serial" in navigator) {
+  navigator.serial.addEventListener("connect", () => { log("serial connect event"); refreshReconnect(); });
+  navigator.serial.addEventListener("disconnect", () => { log("serial disconnect event", "warn"); refreshReconnect(); });
+  navigator.serial.getPorts().then(ps => log(`getPorts() на старте: ${ps.filter(isSp404).length} разрешённых SP-404MKII`));
+  refreshReconnect();
+} else {
+  log("navigator.serial отсутствует — откройте в Chrome/Edge desktop через https:// или http://localhost", "warn");
+}
+</script>
+</body>
+</html>

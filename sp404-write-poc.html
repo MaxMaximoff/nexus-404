@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SP-404MKII Write PoC</title>
+<style>
+  :root { --bg:#f6f6f4; --fg:#1d1d1b; --muted:#6b6b66; --line:#d9d9d4; --card:#fff; --accent:#c8102e; --ok:#1f7a3a; --warn:#a15c00; --sel:#2b6cb0; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#161615; --fg:#ececea; --muted:#9a9a94; --line:#33332f; --card:#1f1f1d; --accent:#ff4d5e; --ok:#58c47a; --warn:#e0a040; --sel:#63a4ff; } }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:16px; background:var(--bg); color:var(--fg); font:14px/1.45 system-ui, sans-serif; }
+  h1 { font-size:18px; margin:0 0 4px; } p.note { color:var(--muted); margin:0 0 12px; max-width:900px; }
+  .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:8px 0; }
+  button, select, input { font:inherit; padding:6px 10px; border:1px solid var(--line); background:var(--card); color:var(--fg); border-radius:6px; }
+  button { cursor:pointer; } button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+  button:disabled { opacity:.45; cursor:default; }
+  input[type=number] { width:70px; } #bpm { width:90px; }
+  .ok { color:var(--ok); } .warn { color:var(--warn); } #state { font-weight:600; }
+  fieldset { border:1px solid var(--line); border-radius:8px; max-width:900px; margin:10px 0; } legend { color:var(--muted); }
+  #pads { display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:8px; max-width:900px; margin:12px 0; }
+  .pad { background:var(--card); border:2px solid var(--line); border-radius:8px; padding:8px; min-height:84px; font-size:12px; cursor:pointer; overflow:hidden; text-align:left; }
+  .pad .name { font-family:ui-monospace, monospace; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block; }
+  .pad.empty { color:var(--muted); } .pad.sel { border-color:var(--sel); } .pad.drop { border-style:dashed; border-color:var(--accent); }
+  progress { width:min(600px, 100%); height:14px; }
+  pre { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:8px; font:12px/1.35 ui-monospace, monospace; max-height:320px; overflow:auto; white-space:pre-wrap; word-break:break-all; max-width:100%; }
+  @media (max-width:600px) { #pads { grid-template-columns:repeat(2, minmax(0,1fr)); } }
+</style>
+</head>
+<body>
+<h1>SP-404MKII — запись (песочница)</h1>
+<p class="note">Импорт WAV на <b>пустой</b> pad и смена BPM. Запись работает только в проекте-песочнице, только пока он текущий на SP и только при включённой галочке. Остальные команды записи (Init, delete, move, rename и т.д.) страница не отправит: их блокирует guard в <code>lib/sp404.js</code>. Перед подключением закройте официальный App.</p>
+
+<div class="row">
+  <button class="primary" id="btnConnect">Connect SP-404MKII</button>
+  <button id="btnReconnect" disabled>Reconnect</button>
+  <button id="btnDisconnect" disabled>Disconnect</button>
+  <span id="state">не подключено</span>
+</div>
+
+<fieldset>
+  <legend>Песочница</legend>
+  <div class="row">
+    <label>Проект-песочница № <input type="number" id="sandbox" min="1" max="16" placeholder="—"></label>
+    <label><input type="checkbox" id="writeEnabled"> разрешить запись</label>
+    <span id="sandboxState" class="warn">запись выключена</span>
+  </div>
+</fieldset>
+
+<div class="row">
+  <label>Bank <select id="bank"></select></label>
+  <button id="btnRefresh" disabled>Обновить pad'ы</button>
+  <span>Выбран: <b id="selPad">—</b></span>
+</div>
+<div id="pads"></div>
+
+<fieldset>
+  <legend>Импорт и BPM</legend>
+  <div class="row">
+    <input type="file" id="files" accept="audio/*,.wav,.aif,.aiff,.flac,.mp3" multiple>
+    <button id="btnImport" disabled>Импортировать в выбранный pad</button>
+  </div>
+  <div class="row">
+    <label>BPM <input type="text" id="bpm" inputmode="decimal" placeholder="120.00" autocomplete="off"></label>
+    <label><input type="checkbox" id="bpmAfterImport" checked> задать после импорта</label>
+    <button id="btnSetBpm" disabled>Применить BPM к выбранному pad</button>
+  </div>
+  <p class="note">Несколько файлов (через выбор файлов или перетаскивание на pad) раскладываются по выбранному pad и следующим пустым pad'ам этого банка.</p>
+  <div class="row"><progress id="progress" max="1" value="0"></progress> <span id="progressText"></span></div>
+</fieldset>
+
+<pre id="log"></pre>
+
+<script type="module">
+import { VID, PID_SERIAL, BANKS, padName, samplePath, parseSmpHeader, buildSmp, decodeAudio,
+         WebSerialTransport, SP404Device, sandboxGuard } from "./lib/sp404.js";
+
+const $ = id => document.getElementById(id);
+function log(text, kind = "") {
+  $("log").textContent += `[${new Date().toISOString().slice(11, 23)}] ${text}\n`;
+  if ($("log").textContent.length > 300000) $("log").textContent = $("log").textContent.slice(-200000);
+  $("log").scrollTop = $("log").scrollHeight;
+  if (kind === "warn") console.warn(text);
+}
+const isSp404 = p => { const i = p.getInfo(); return i.usbVendorId === VID && i.usbProductId === PID_SERIAL; };
+for (let b = 0; b < 10; b++) $("bank").add(new Option(BANKS[b], b));
+
+const state = { project: 0, currentProject: 0, importPad: null, writableHandles: null };
+let dev = null, transport = null, pads = [], selected = null, busy = false;
+
+function writeAllowed() {
+  const n = +$("sandbox").value;
+  return $("writeEnabled").checked && n >= 1 && n <= 16 && n === state.currentProject;
+}
+function updateUi() {
+  const n = +$("sandbox").value;
+  state.project = $("writeEnabled").checked && n >= 1 && n <= 16 ? n : 0;
+  const on = !!dev;
+  $("btnConnect").disabled = on; $("btnDisconnect").disabled = !on; $("btnRefresh").disabled = !on || busy;
+  const canWrite = on && !busy && writeAllowed() && selected !== null;
+  $("btnImport").disabled = !canWrite || $("files").files.length === 0;
+  $("btnSetBpm").disabled = !canWrite || !pads[selected]?.size;
+  $("sandboxState").textContent = !$("writeEnabled").checked ? "запись выключена"
+    : !(n >= 1 && n <= 16) ? "укажите номер проекта"
+    : !on ? `песочница ${n}, не подключено`
+    : n !== state.currentProject ? `текущий проект ${state.currentProject}, а не ${n}: запись заблокирована`
+    : `запись разрешена в проект ${n}`;
+  $("sandboxState").className = writeAllowed() && on ? "ok" : "warn";
+  $("selPad").textContent = selected === null ? "—" : padName(selected);
+  refreshReconnect();
+}
+async function refreshReconnect() {
+  if (!("serial" in navigator)) return;
+  const granted = (await navigator.serial.getPorts()).filter(isSp404);
+  $("btnReconnect").disabled = !!dev || granted.length === 0;
+}
+["sandbox", "writeEnabled", "files"].forEach(id => { $(id).addEventListener("input", updateUi); $(id).addEventListener("change", updateUi); });
+
+function setProgress(done, total, text) {
+  $("progress").max = total || 1; $("progress").value = done;
+  $("progressText").textContent = text ?? (total ? `${Math.round(done / total * 100)} %` : "");
+}
+const guarded = fn => async () => {
+  if (busy) return;
+  busy = true; updateUi();
+  try { await fn(); }
+  catch (e) { log(`ERROR: ${e.message}`, "warn"); $("state").textContent = e.message; $("state").className = "warn"; }
+  finally { busy = false; updateUi(); }
+};
+
+function renderPads() {
+  const bank = +$("bank").value, el = $("pads");
+  el.innerHTML = "";
+  for (let p = 0; p < 16; p++) {
+    const idx = bank * 16 + p, b = pads[idx], d = document.createElement("button");
+    d.className = "pad" + (b?.size ? "" : " empty") + (selected === idx ? " sel" : "");
+    d.innerHTML = !b ? `<b>${padName(idx)}</b><br>…`
+      : !b.size ? `<b>${padName(idx)}</b><br>пусто`
+      : `<b>${padName(idx)}</b> <span class="name">${b.name || "(без имени)"}</span>BPM ${(b.bpmX100 / 100).toFixed(2)}${b.bpmSync ? " sync" : ""}<br><small>${(b.size / 1024).toFixed(0)} KB</small>`;
+    d.onclick = () => { selected = idx; renderPads(); updateUi(); };
+    d.ondragover = e => { e.preventDefault(); d.classList.add("drop"); };
+    d.ondragleave = () => d.classList.remove("drop");
+    d.ondrop = e => { e.preventDefault(); d.classList.remove("drop"); selected = idx; renderPads(); importFiles([...e.dataTransfer.files], idx); };
+    el.appendChild(d);
+  }
+}
+async function readStatus(d) {
+  const st = await d.status();
+  state.currentProject = st.project + 1;
+  return st;
+}
+async function readBank(d, bank) {
+  for (let p = 0; p < 16; p++) pads[bank * 16 + p] = await d.padBlock(bank * 16 + p);
+}
+async function refresh() {
+  await dev.exclusive(async d => {
+    const st = await readStatus(d);
+    const ps = await d.projectSettings(st.project);
+    $("state").textContent = `проект ${st.project + 1} “${ps.name || ps.names[st.project] || "?"}”, tempo ${(ps.projectTempoX100 / 100).toFixed(2)}`;
+    $("state").className = "ok";
+    await readBank(d, +$("bank").value);
+  });
+  renderPads(); updateUi();
+}
+$("bank").onchange = guarded(async () => { await dev?.exclusive(d => readBank(d, +$("bank").value)); renderPads(); });
+
+async function openPort(port) {
+  transport = new WebSerialTransport(port, log);
+  transport.onClose = () => { log("port closed", "warn"); dev = null; $("state").textContent = "соединение потеряно"; $("state").className = "warn"; updateUi(); };
+  await transport.open();
+  dev = new SP404Device(transport, log, sandboxGuard(state));
+  state.writableHandles = dev.writableHandles;
+  const st = await dev.exclusive(readStatus);
+  $("bank").value = st.bank; selected = st.bank * 16 + st.pad;
+  await refresh();
+}
+$("btnConnect").onclick = guarded(async () => {
+  if (!("serial" in navigator)) throw new Error("Web Serial недоступен: Chrome/Edge desktop, https:// или localhost");
+  await openPort(await navigator.serial.requestPort({ filters: [{ usbVendorId: VID, usbProductId: PID_SERIAL }] }));
+});
+$("btnReconnect").onclick = guarded(async () => {
+  const port = (await navigator.serial.getPorts()).find(isSp404);
+  if (!port) throw new Error("нет ранее разрешённого порта SP-404MKII");
+  await openPort(port);
+});
+$("btnDisconnect").onclick = guarded(async () => { const t = transport; dev = null; transport = null; await t?.close(); $("state").textContent = "отключено"; $("state").className = ""; });
+$("btnRefresh").onclick = guarded(refresh);
+
+function parseBpm() {
+  const s = $("bpm").value.trim().replace(",", ".");
+  if (!s) return null;
+  if (!/^\d{1,3}(\.\d{1,2})?$/.test(s)) throw new Error(`BPM "${$("bpm").value}": ожидается число вида 120 или 93.25`);
+  const x100 = Math.round(parseFloat(s) * 100);
+  if (x100 < 4000 || x100 > 20000) throw new Error("BPM должен быть от 40.00 до 200.00");
+  return x100;
+}
+$("bpm").addEventListener("keydown", e => { if (e.key === "Enter" && !$("btnSetBpm").disabled) $("btnSetBpm").click(); });
+$("btnSetBpm").onclick = guarded(async () => {
+  const x100 = parseBpm();
+  if (x100 === null) throw new Error("введите BPM");
+  const pad = selected;
+  await dev.exclusive(async d => {
+    await readStatus(d);
+    if (!writeAllowed()) throw new Error("запись не разрешена (см. «Песочница»)");
+    await d.setBpm(pad, x100);
+    pads[pad] = await d.padBlock(pad);
+  });
+  log(`${padName(pad)}: BPM → ${(pads[pad].bpmX100 / 100).toFixed(2)}`);
+  renderPads();
+});
+
+$("btnImport").onclick = () => importFiles([...$("files").files], selected);
+
+function importFiles(files, startPad) {
+  if (!files.length) return;
+  guarded(async () => {
+    if (!dev) throw new Error("не подключено");
+    const bpmX100 = $("bpmAfterImport").checked ? parseBpm() : null;
+    const bank = startPad >> 4;
+    await dev.exclusive(async d => {
+      await readStatus(d);
+      if (!writeAllowed()) throw new Error("запись не разрешена (см. «Песочница»)");
+      await readBank(d, bank);
+      // Target pads: the chosen one, then the next empty ones in the same bank.
+      const targets = [];
+      for (let i = startPad; i < (bank + 1) * 16 && targets.length < files.length; i++) if (!pads[i].size) targets.push(i);
+      if (pads[startPad].size) throw new Error(`${padName(startPad)} не пустой — выберите пустой pad`);
+      if (targets.length < files.length) throw new Error(`в банке ${BANKS[bank]} начиная с ${padName(startPad)} только ${targets.length} пустых pad'ов для ${files.length} файлов`);
+      for (let k = 0; k < files.length; k++) {
+        const file = files[k], pad = targets[k], label = `[${k + 1}/${files.length}] ${file.name} → ${padName(pad)}`;
+        setProgress(0, 1, `${label}: декодирование…`);
+        const audio = await decodeAudio(file);
+        const smp = buildSmp(audio.samples, audio.channels);
+        const secs = audio.samples.length / audio.channels / 48000;
+        log(`${label}: ${audio.note}, ${secs.toFixed(2)} s, SMP ${smp.length} B`);
+        const name = file.name.replace(/\.[^.]+$/, "");
+        const t0 = performance.now();
+        pads[pad] = await d.importSmp(state.project, pad, smp, name, (done, total) => setProgress(done, total, `${label}: ${Math.round(done / total * 100)} %`), state);
+        const ms = performance.now() - t0;
+        log(`${label}: записано ${smp.length} B за ${(ms / 1000).toFixed(2)} s (${(smp.length / 1024 / 1024 / (ms / 1000)).toFixed(2)} MB/s)`);
+        const h = parseSmpHeader(await d.readPrefix(samplePath(state.project, pad), 512));
+        log(`${label}: проверка заголовка на устройстве: ${JSON.stringify(h)}`, h?.digestOk ? "" : "warn");
+        if (bpmX100 !== null) { await d.setBpm(pad, bpmX100); pads[pad] = await d.padBlock(pad); }
+        const b = pads[pad];
+        log(`${label}: pad "${b.name}", size ${b.size}, start ${b.startByte}, end ${b.endByte}, BPM ${(b.bpmX100 / 100).toFixed(2)}`);
+        renderPads();
+      }
+    });
+    setProgress(1, 1, `готово: ${files.length} файл(ов)`);
+  })();
+}
+
+if ("serial" in navigator) {
+  navigator.serial.addEventListener("connect", () => { log("serial connect event"); updateUi(); });
+  navigator.serial.addEventListener("disconnect", () => { log("serial disconnect event", "warn"); updateUi(); });
+} else log("navigator.serial отсутствует — нужен Chrome/Edge desktop и https:// или http://localhost", "warn");
+renderPads(); updateUi();
+</script>
+</body>
+</html>

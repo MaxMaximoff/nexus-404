@@ -1,0 +1,17 @@
+// Small inline icons (stroke = currentColor).
+
+const svg = (d: string, size = 16) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d={d} />
+  </svg>
+);
+
+export const IconPlug = () => svg("M9 2v6M15 2v6M6 8h12v3a6 6 0 0 1-12 0V8zM12 17v5");
+export const IconUnplug = () => svg("M18 6 6 18M9 2v4M15 2v4M7 8h10v3a5 5 0 0 1-1 3M12 17v5");
+export const IconRefresh = () => svg("M21 12a9 9 0 1 1-3-6.7L21 8M21 3v5h-5");
+export const IconPlay = () => svg("M7 4.5v15l12-7.5-12-7.5z");
+export const IconUpload = () => svg("M12 16V4M6 10l6-6 6 6M4 20h16");
+export const IconLock = () => svg("M6 11h12v9H6zM8.5 11V8a3.5 3.5 0 0 1 7 0v3", 12);
+export const IconWave = () => svg("M2 12h2l2-6 3 12 3-15 3 18 3-12 2 3h2");
+export const IconX = () => svg("M18 6 6 18M6 6l12 12", 14);
+export const IconCheck = () => svg("M5 12l5 5 9-10", 14);

@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.vite/
+*.log
+.claude/settings.local.json
+
+# Reference clone (GPL-3.0, its own git repo): see HANDOFF.md for how to restore it
+SparkyMK2/
