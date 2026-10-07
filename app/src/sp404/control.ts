@@ -67,6 +67,16 @@ export interface PadBlock {
   pitchFine: number;
   timeStretchX100: number;
   vinyl: boolean;
+  fixedVelocity: boolean;
+  muteGroup: number;
+  playMode: number;
+  balance: number;
+  padLink: number;
+  busFx: number;
+  roll: number;
+  attack: number;
+  hold: number;
+  release: number;
   name: string;
   raw: Uint8Array;
 }
@@ -93,6 +103,16 @@ export function parsePadBlock(p: Uint8Array): PadBlock {
     pitchFine: dv.getInt32(3 + 14 * 4, true),
     timeStretchX100: f(16),
     vinyl: f(17) !== 0,
+    fixedVelocity: (f(10) & 1) !== 0,
+    muteGroup: f(7),
+    playMode: f(15),
+    balance: f(18),
+    padLink: f(19),
+    busFx: f(20),
+    roll: f(21),
+    attack: f(22),
+    hold: f(23),
+    release: f(24),
     name: new TextDecoder("latin1").decode(nameBytes.subarray(0, end < 0 ? NAME_LEN : end)).trimEnd(),
     raw: p.slice(),
   };
@@ -143,6 +163,19 @@ export const PARAM_PITCH_COARSE = 0x73; // semitones; the official app edits it 
 export const PARAM_PITCH_FINE = 0x74; // cents
 export const PARAM_TIME_STRETCH = 0x76; // percent × 100
 export const PARAM_VINYL = 0x77;
+// Ids and ranges from the SparkyMK2 spec (03-parameters.md); each checked on our unit before use.
+export const PARAM_MUTE_GROUP = 0x6d; // 0 Off, 1–10
+export const PARAM_PLAY_MODE = 0x75; // 0 Forward, 1 Reverse, 2 Ping-Pong, 3 Reverse Ping-Pong
+export const PARAM_BALANCE = 0x78; // 13–115, centre 64
+export const PARAM_PAD_LINK = 0x79; // 0 Off, 1–10
+export const PARAM_BUS_FX = 0x7a; // 0–2, BUS 1 = 1
+export const PARAM_ROLL = 0x7b; // 0–10, 1/4 = 2
+export const PARAM_ATTACK = 0x7d;
+export const PARAM_HOLD = 0x7e;
+export const PARAM_RELEASE = 0x7f;
+export const BALANCE_CENTRE = 64;
+export const PLAY_MODES = ["Forward", "Reverse", "Ping-Pong", "Rev Ping-Pong"] as const;
+export const FLAG_FIXED_VELOCITY = 1;
 export const PITCH_COARSE_MAX = 12;
 export const PITCH_FINE_MAX = 100;
 export const STRETCH_MIN_X100 = 5000;
@@ -170,7 +203,24 @@ export const PAD_PARAM_RANGE: ReadonlyMap<number, readonly [number, number]> = n
   [PARAM_PITCH_FINE, [-PITCH_FINE_MAX, PITCH_FINE_MAX]],
   [PARAM_TIME_STRETCH, [STRETCH_MIN_X100, STRETCH_MAX_X100]],
   [PARAM_VINYL, [0, 1]],
+  [PARAM_MUTE_GROUP, [0, 10]],
+  [PARAM_PLAY_MODE, [0, 3]],
+  [PARAM_BALANCE, [13, 115]],
+  [PARAM_PAD_LINK, [0, 10]],
+  [PARAM_BUS_FX, [0, 2]],
+  [PARAM_ROLL, [0, 10]],
+  [PARAM_ATTACK, [0, 127]],
+  [PARAM_HOLD, [1, 100]],
+  [PARAM_RELEASE, [0, 127]],
 ]);
+
+/**
+ * The pad block field that holds parameter `id`: field = id − 0x66 up to Roll (`7B`); Attack,
+ * Hold and Release (`7D`–`7F`) follow in fields 22–24, as there is no field for `7C`.
+ */
+export function padFieldOf(id: number): number {
+  return id >= 0x7d ? id - 0x67 : id - 0x66;
+}
 
 export const GLOBAL = 0xffff; // set-parameter target for project-wide parameters
 export const PARAM_PROJECT_TEMPO = 0x0a;

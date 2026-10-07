@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   CH_CONTROL, CH_FILE, FileReq, FrameDecoder, O_CREAT_TRUNC_RDWR, SP404Device, assignSampleBlock, bpmFromFileName,
-  padSpeed, computePeaks, computeEnvelope, findSound, ENVELOPE_BLOCK, encodeLong, encodeShort, makeGuard, md5, parseBpmInput, parseFileReply, parsePadBlock, parseSmpHeader,
+  padSpeed, padFieldOf, bpmFromLength, computePeaks, computeEnvelope, findSound, ENVELOPE_BLOCK, encodeLong, encodeShort, makeGuard, md5, parseBpmInput, parseFileReply, parsePadBlock, parseSmpHeader,
   samplePath, septDec, septEnc, smpHeader, buildSmp, SampleUploader, newJob, type ImportJob, smpToPcm, deviceErrorText, frameToByte, remotePath, type SP404Transport,
 } from "./index";
 
@@ -90,6 +90,9 @@ describe("guard", () => {
     [CH_CONTROL, [1, 0x69, 0, 159, 0, 127, 0, 0, 0]], [CH_CONTROL, [1, 0x6a, 0, 33, 0, 1, 0, 0, 0]], [CH_CONTROL, [1, 0x6b, 0, 33, 0, 0, 0, 0, 0]],
     [CH_CONTROL, [1, 0x70, 0, 33, 0, 0x24, 0, 0, 0]], [CH_CONTROL, [1, 0x72, 0, 33, 0, 0, 0, 0, 0]],
     [CH_CONTROL, [1, 0x6e, 0, 33, 0, 1, 0, 0, 0]],
+    [CH_CONTROL, [1, 0x6d, 0, 33, 0, 10, 0, 0, 0]], [CH_CONTROL, [1, 0x75, 0, 33, 0, 3, 0, 0, 0]], [CH_CONTROL, [1, 0x78, 0, 33, 0, 13, 0, 0, 0]],
+    [CH_CONTROL, [1, 0x79, 0, 33, 0, 0, 0, 0, 0]], [CH_CONTROL, [1, 0x7a, 0, 33, 0, 2, 0, 0, 0]], [CH_CONTROL, [1, 0x7b, 0, 33, 0, 10, 0, 0, 0]],
+    [CH_CONTROL, [1, 0x7d, 0, 33, 0, 127, 0, 0, 0]], [CH_CONTROL, [1, 0x7e, 0, 33, 0, 1, 0, 0, 0]], [CH_CONTROL, [1, 0x7f, 0, 33, 0, 0, 0, 0, 0]],
     [CH_CONTROL, [1, 0x73, 0, 33, 0, 0xf4, 0xff, 0xff, 0xff]], [CH_CONTROL, [1, 0x74, 0, 33, 0, 100, 0, 0, 0]], // −12 st, +100 ct
     [CH_CONTROL, [1, 0x76, 0, 33, 0, 0x88, 0x13, 0, 0]], [CH_CONTROL, [1, 0x77, 0, 33, 0, 0, 0, 0, 0]], // 50 %, Vinyl off
     [CH_CONTROL, [1, 0x67, 0, 33, 0, 0xe8, 0x03, 0, 0]], [CH_CONTROL, [1, 0x68, 0, 33, 0, 0, 0x77, 0x01, 0]],
@@ -105,7 +108,10 @@ describe("guard", () => {
     [CH_CONTROL, [0x95, 33, 0, 34, 0, 2, 0]], [CH_CONTROL, [0x95, 33, 0, 34, 0, 1]], [CH_CONTROL, [0x35, 3, 65]], [CH_CONTROL, [0x02, 33, 0, 65]],
     [CH_CONTROL, [0x9a, 16, 0]], [CH_CONTROL, [0x9a, 1, 1]], [CH_CONTROL, [0x9a, 1]], [CH_CONTROL, [0xb1, 3, 0]],
     // per-pad parameters: unknown ids, values out of range, a pad past J16
-    [CH_CONTROL, [1, 0x6d, 0, 33, 0, 1, 0, 0, 0]], [CH_CONTROL, [1, 0x6e, 0, 33, 0, 2, 0, 0, 0]], [CH_CONTROL, [1, 0x75, 0, 33, 0, 1, 0, 0, 0]],
+    [CH_CONTROL, [1, 0x6d, 0, 33, 0, 11, 0, 0, 0]], [CH_CONTROL, [1, 0x6e, 0, 33, 0, 2, 0, 0, 0]], [CH_CONTROL, [1, 0x75, 0, 33, 0, 4, 0, 0, 0]],
+    [CH_CONTROL, [1, 0x78, 0, 33, 0, 12, 0, 0, 0]], [CH_CONTROL, [1, 0x78, 0, 33, 0, 116, 0, 0, 0]], [CH_CONTROL, [1, 0x7a, 0, 33, 0, 3, 0, 0, 0]],
+    [CH_CONTROL, [1, 0x7b, 0, 33, 0, 11, 0, 0, 0]], [CH_CONTROL, [1, 0x7c, 0, 33, 0, 0, 0, 0, 0]], [CH_CONTROL, [1, 0x7e, 0, 33, 0, 0, 0, 0, 0]],
+    [CH_CONTROL, [1, 0x7f, 0, 33, 0, 128, 0, 0, 0]], [CH_CONTROL, [1, 0x8a, 0, 33, 0, 1, 0, 0, 0]],
     [CH_CONTROL, [1, 0x73, 0, 33, 0, 13, 0, 0, 0]], [CH_CONTROL, [1, 0x74, 0, 33, 0, 0x9b, 0xff, 0xff, 0xff]], // +13 st, −101 ct
     [CH_CONTROL, [1, 0x76, 0, 33, 0, 0x87, 0x13, 0, 0]], [CH_CONTROL, [1, 0x76, 0, 33, 0, 0x99, 0x3a, 0, 0]], // 49.99 %, 150.01 %
     [CH_CONTROL, [1, 0x77, 0, 33, 0, 2, 0, 0, 0]], [CH_CONTROL, [1, 0x8e, 0, 33, 0, 0, 0, 0, 0]],
@@ -211,7 +217,7 @@ describe("device against a scripted SP", () => {
             const b = block(pad), bv = new DataView(b.buffer);
             const ch = parseSmpHeader(files.get(remotePath(samplePath(4, pad))) ?? null)?.channels ?? 2;
             if (p[1] === 0x67 || p[1] === 0x68) bv.setUint32(3 + (p[1] - 0x66) * 4, frameToByte(v, ch), true);
-            else if (p[1] >= 0x69 && p[1] <= 0x7b) bv.setUint32(3 + (p[1] - 0x66) * 4, v, true);
+            else if ((p[1] >= 0x69 && p[1] <= 0x7b) || (p[1] >= 0x7d && p[1] <= 0x7f)) bv.setUint32(3 + padFieldOf(p[1]) * 4, p[1] === 0x6b && v ? 0x7fffffff : v, true); // Loop on reads 7FFFFFFF
             blocks.set(pad, b);
           }
           reply(ch, p);
@@ -414,6 +420,34 @@ describe("device against a scripted SP", () => {
     await expect(dev.exclusive((d) => d.copyPad(4, 33, 50))).rejects.toThrow(/занят/);
     await expect(dev.exclusive((d) => d.copyPad(4, 34, 51))).rejects.toThrow(/пуст/);
   });
+  it("sets the plain pad parameters and Fixed Velocity, and reads them back from the block", async () => {
+    const { dev } = await loaded();
+    const set = (id: number, v: number) => dev.exclusive((d) => d.setPadParam(4, 33, id, v));
+    expect((await set(0x6d, 3)).muteGroup).toBe(3);
+    expect((await set(0x75, 2)).playMode).toBe(2);
+    expect((await set(0x78, 40)).balance).toBe(40);
+    expect((await set(0x79, 10)).padLink).toBe(10);
+    expect((await set(0x7a, 2)).busFx).toBe(2);
+    expect((await set(0x7b, 5)).roll).toBe(5);
+    expect(await set(0x7d, 12)).toMatchObject({ attack: 12, hold: 0, release: 0 });
+    expect((await set(0x7e, 55)).hold).toBe(55);
+    expect((await set(0x7f, 99)).release).toBe(99);
+    await expect(set(0x78, 12)).rejects.toThrow(/вне/);
+    await expect(set(0x69, 50)).rejects.toThrow(/так не задаётся/); // Level has its own setter
+    await dev.exclusive((d) => d.setVari(4, 33, 1));
+    const fv = await dev.exclusive((d) => d.setFixedVelocity(4, 33, true));
+    expect(fv).toMatchObject({ fixedVelocity: true, vari: 1 });
+    expect((await dev.exclusive((d) => d.setFixedVelocity(4, 33, false))).flags).toBe(2);
+  });
+  it("copies Loop on (the block reads 7FFFFFFF) and the new parameters", async () => {
+    const { dev } = await loaded();
+    await dev.exclusive((d) => d.setLoop(4, 33, true));
+    await dev.exclusive((d) => d.setPadParam(4, 33, 0x7e, 42));
+    await dev.exclusive((d) => d.setPadParam(4, 33, 0x78, 100));
+    const r = await dev.exclusive((d) => d.copyPad(4, 33, 60));
+    expect(r.differs).toEqual([]);
+    expect(r.block).toMatchObject({ loop: true, hold: 42, balance: 100 });
+  });
   it("selects another project, and nothing when it is already current", async () => {
     const sp = fakeSp();
     const dev = new SP404Device(sp.t);
@@ -504,5 +538,22 @@ describe("helpers", () => {
     expect(deviceErrorText(-119)).toBe("Invalid Format");
     expect(deviceErrorText(-111)).toBe("Not Found Empty Pad");
     expect(deviceErrorText(-92)).toBe("BANK Protected");
+  });
+});
+
+describe("Set BPM by St/End", () => {
+  it("matches the spec example: 512,000 frames at 172.30 → 32 beats, 180.00", () => {
+    expect(bpmFromLength(512000, 17230)).toEqual({ beats: 32, x100: 18000 });
+  });
+  it("prefers fewer beats on a tie and uses 96.00 for a pad without BPM", () => {
+    // 4 s: 8 beats = 120.00, 4 beats = 60.00; 90.00 is exactly between them
+    expect(bpmFromLength(192000, 9000)).toEqual({ beats: 4, x100: 6000 });
+    expect(bpmFromLength(192000, 0)).toEqual({ beats: 8, x100: 12000 });
+  });
+  it("uses powers of two for short regions and rejects more than 300 BPM", () => {
+    // 0.25 s: 1/4 beat = 60.00, 1/2 beat = 120.00, 1 beat = 240.00, 2 beats = 480.00
+    expect(bpmFromLength(12000, 13000)).toEqual({ beats: 0.5, x100: 12000 });
+    expect(bpmFromLength(12000, 23000)).toEqual({ beats: 1, x100: 24000 });
+    expect(bpmFromLength(12000, 40000)).toEqual({ beats: 1, x100: 24000 });
   });
 });

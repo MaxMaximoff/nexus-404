@@ -1,13 +1,15 @@
 import { signal } from "@preact/signals";
 import { useEffect, useRef, useState } from "preact/hooks";
 import {
-  BPM_RANGES, LEVEL_MAX, PITCH_COARSE_MAX, PITCH_FINE_MAX, STRETCH_MAX_X100, STRETCH_MIN_X100, VARI_MODES, byteToFrame, findSound, formatBpm, padName, padSpeed,
+  BALANCE_CENTRE, BPM_MAX_X100, BPM_MIN_X100, BPM_RANGES, LEVEL_MAX, PARAM_ATTACK, PARAM_BALANCE, PARAM_BUS_FX, PARAM_HOLD, PARAM_MUTE_GROUP, PARAM_PAD_LINK,
+  PARAM_PLAY_MODE, PARAM_RELEASE, PARAM_ROLL, PLAY_MODES, bpmFromLength, PITCH_COARSE_MAX, PITCH_FINE_MAX, STRETCH_MAX_X100, STRETCH_MIN_X100, VARI_MODES, byteToFrame, findSound, formatBpm, padName, padSpeed,
   parseBpmInput,
 } from "../sp404";
 import {
-  bpmRange, channelsOf, confirmDelete, conn, deletePad, detectPadBpm, importFiles, loadWaveform, pads, playing, preview, project, selectedPad, setBpm, setBpmSync, setGate, setLevel, setLoop, setOneShot, setPitch, setTimeStretch, setVari, setVinyl,
-  setRange, stopPlaying, waveLoading, waveforms, writeBlockReason,
+  bpmRange, channelsOf, confirmDelete, conn, deletePad, detectPadBpm, importFiles, loadWaveform, pads, playing, preview, project, selectedPad, setBpm, setBpmSync, setGate, setLevel, setLoop, setFixedVelocity, setOneShot, setPadParam, setPitch, setTimeStretch, setVari, setVinyl,
+  setRange, stopPlaying, waveLoading, waveforms, writeBlockReason, editGroup, pickedList,
 } from "./store";
+import type { PadBlock } from "../sp404";
 import { Waveform, type Range } from "./Waveform";
 import type { Waveform as Wave } from "./store";
 import { ValueField, intIn, signed, type Parse } from "./ValueField";
@@ -19,6 +21,7 @@ const TRIM_THRESHOLDS = [-60, -48, -36, -24];
 const trimDb = signal(-36);
 
 export function Inspector() {
+  if (pickedList.value.length > 1) return <GroupInspector />;
   const pad = selectedPad.value;
   const p = pads.value[pad];
   const ready = conn.value === "ready";
@@ -97,14 +100,41 @@ function FilledPad({ pad, ready }: { pad: number; ready: boolean }) {
       </Section>
 
       <Section id="play" title="Воспроизведение"
-        summary={[`Level ${p.level}`, p.gate && "Gate", p.loop && "Loop", p.oneShot && "One Shot"].filter(Boolean).join(" · ")}>
-        <LevelControl pad={pad} />
+        summary={[`Level ${p.level}`, p.balance !== BALANCE_CENTRE && `Balance ${fmtBalance(p.balance)}`, p.gate && "Gate", p.loop && "Loop", p.oneShot && "One Shot",
+          p.fixedVelocity && "Fixed Vel", p.playMode && PLAY_MODES[p.playMode]].filter(Boolean).join(" · ")}>
+        <Slider pad={pad} label="Level" value={p.level} min={0} max={LEVEL_MAX} commit={(v) => setLevel(pad, v)} />
+        <Slider pad={pad} label="Balance" value={p.balance} min={13} max={115} show={fmtBalance} centre={BALANCE_CENTRE}
+          commit={(v) => setPadParam(pad, PARAM_BALANCE, v, `Balance ${fmtBalance(v)}`)}
+          hint="Баланс стерео: громкость левого и правого канала (L51 … C … R51); двойной клик — в центр. На моно-сэмпл не действует (проверено на SP)" />
+        {channels === 1 && <span class="note slider-note">Моно-сэмпл: Balance на него не действует</span>}
         <div class="toggles">
           <Toggle label="Gate" on={p.gate} onChange={(on) => setGate(pad, on)} />
           <Toggle label="Loop" on={p.loop} onChange={(on) => setLoop(pad, on)} />
           <Toggle label="One Shot" on={p.oneShot} onChange={(on) => setOneShot(pad, on)}
             hint="Как в официальном App: при включении One Shot выключаются Gate и Loop" />
+          <Toggle label="Fixed Velocity" on={p.fixedVelocity} onChange={(on) => setFixedVelocity(pad, on)}
+            hint="Громкость не зависит от силы удара по pad'у" />
         </div>
+        <Choice label="Play" value={p.playMode} options={PLAY_MODES.map((n, i) => [i, n])} kind="segmented"
+          pick={(v) => setPadParam(pad, PARAM_PLAY_MODE, v, `Play Mode ${PLAY_MODES[v]}`)} hint="Направление воспроизведения" />
+      </Section>
+
+      <Section id="ahr" title="Огибающая" summary={`A ${p.attack} · H ${p.hold} · R ${p.release}`}>
+        <Slider pad={pad} label="Attack" value={p.attack} min={0} max={127} commit={(v) => setPadParam(pad, PARAM_ATTACK, v, `Attack ${v}`)} hint="Нарастание в начале" />
+        <Slider pad={pad} label="Hold" value={p.hold} min={1} max={100} commit={(v) => setPadParam(pad, PARAM_HOLD, v, `Hold ${v}`)} hint="Сколько держится полная громкость" />
+        <Slider pad={pad} label="Release" value={p.release} min={0} max={127} commit={(v) => setPadParam(pad, PARAM_RELEASE, v, `Release ${v}`)} hint="Затухание в конце" />
+      </Section>
+
+      <Section id="mix" title="Микс"
+        summary={[p.muteGroup && `Mute ${OFF_A_J[p.muteGroup]?.[1] ?? p.muteGroup}`, p.padLink && `Link ${OFF_A_J[p.padLink]?.[1] ?? p.padLink}`, BUS_FX[p.busFx] ?? `BUS ${p.busFx}`, `Roll ${ROLL[p.roll] ?? p.roll}`].filter(Boolean).join(" · ")}>
+        <Choice label="Mute Group" value={p.muteGroup} options={OFF_A_J} pick={(v) => setPadParam(pad, PARAM_MUTE_GROUP, v, `Mute Group ${OFF_A_J[v][1]}`)}
+          hint="Pad'ы одной группы глушат друг друга" />
+        <Choice label="PAD Link" value={p.padLink} options={OFF_A_J} pick={(v) => setPadParam(pad, PARAM_PAD_LINK, v, `PAD Link ${OFF_A_J[v][1]}`)}
+          hint="Pad'ы одной группы звучат вместе" />
+        <Choice label="BUS FX" value={p.busFx} options={BUS_FX.map((n, i) => [i, n])} kind="segmented"
+          pick={(v) => setPadParam(pad, PARAM_BUS_FX, v, `BUS FX ${BUS_FX[v]}`)} hint="Через какую шину эффектов идёт pad" />
+        <Choice label="Roll" value={p.roll} options={ROLL.map((n, i) => [i, n])} pick={(v) => setPadParam(pad, PARAM_ROLL, v, `Roll ${ROLL[v]}`)}
+          hint="Шаг повтора при Roll" />
       </Section>
 
       <Section id="file" title="Файл"
@@ -194,20 +224,20 @@ function speedOf(pad: number) {
 }
 
 /** A switch that writes to the SP and then shows the state the device reports back. */
-function Toggle({ label, on, hint, onChange }: { label: string; on: boolean; hint?: string; onChange: (on: boolean) => Promise<boolean> }) {
+function Toggle({ label, on, mixed, hint, onChange }: { label: string; on: boolean; mixed?: boolean; hint?: string; onChange: (on: boolean) => Promise<boolean> }) {
   const [busy, setBusy] = useState(false);
   const blocked = writeBlockReason.value;
   return (
     <button
       type="button"
       role="switch"
-      aria-checked={on}
-      class={`toggle ${on ? "on" : ""} ${busy ? "busy" : ""}`}
+      aria-checked={mixed ? "mixed" : on}
+      class={`toggle ${on ? "on" : ""} ${mixed ? "mixed" : ""} ${busy ? "busy" : ""}`}
       disabled={!!blocked || busy}
       title={blocked ?? hint}
       onClick={async () => {
         setBusy(true);
-        await onChange(!on);
+        await onChange(mixed ? true : !on); // mixed: switch them all on
         setBusy(false);
       }}
     >
@@ -217,38 +247,82 @@ function Toggle({ label, on, hint, onChange }: { label: string; on: boolean; hin
   );
 }
 
-/** Level slider: shows the value while dragging, writes once on release (or per arrow key). */
-function LevelControl({ pad }: { pad: number }) {
-  const p = pads.value[pad]!;
-  const [value, setValue] = useState(p.level);
-  const [busy, setBusy] = useState(false);
-  useEffect(() => setValue(p.level), [pad, p.level]);
-  const blocked = writeBlockReason.value;
+const fmtBalance = (v: number) => (v === BALANCE_CENTRE ? "C" : v < BALANCE_CENTRE ? `L${BALANCE_CENTRE - v}` : `R${v - BALANCE_CENTRE}`);
+/** Mute Group and PAD Link groups are lettered A–J (1–10 on the wire). */
+const OFF_A_J: [number, string][] = Array.from({ length: 11 }, (_, i) => [i, i ? "ABCDEFGHIJ"[i - 1] : "Off"]);
+// Labels from SparkyMK2: only BUS 1 = 1 and Roll 2 = 1/4 are confirmed there. To be checked against the official app.
+const BUS_FX = ["Off", "BUS 1", "BUS 2"];
+const ROLL = Array.from({ length: 11 }, (_, i) => (i === 2 ? "1/4" : String(i)));
 
-  const commit = async (v: number) => {
-    if (v === p.level) return;
+/**
+ * A parameter slider: shows the value while dragging, writes once on release (or per arrow key).
+ * With `centre`, the fill grows from the centre and a double click returns there.
+ */
+function Slider({ pad, label, value: saved, min, max, show = String, centre, hint, mixed, commit }: {
+  pad: number; label: string; value: number; min: number; max: number; show?: (v: number) => string; centre?: number; hint?: string;
+  mixed?: boolean; commit: (v: number) => Promise<boolean>;
+}) {
+  const [value, setValue] = useState(saved);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => setValue(saved), [pad, saved]);
+  const blocked = writeBlockReason.value;
+  const id = `slider-${label.toLowerCase()}`;
+  const [touched, setTouched] = useState(false);
+  useEffect(() => setTouched(false), [pad, saved, mixed]);
+  const write = async (v: number) => {
+    if (v === saved && !mixed) return;
+    setValue(v);
     setBusy(true);
-    if (!(await setLevel(pad, v))) setValue(pads.value[pad]?.level ?? p.level);
+    if (!(await commit(v))) setValue(saved);
     setBusy(false);
   };
-
+  const at = (v: number) => ((v - min) / (max - min)) * 100;
+  const fill = centre === undefined ? { "--fill": `${at(value)}%` }
+    : { "--from": `${Math.min(at(value), at(centre))}%`, "--to": `${Math.max(at(value), at(centre))}%` };
   return (
-    <div class={`level ${busy ? "busy" : ""}`}>
-      <label for="level-input">Level</label>
-      <input
-        id="level-input"
-        type="range"
-        min={0}
-        max={LEVEL_MAX}
-        step={1}
-        value={value}
-        disabled={!!blocked}
-        title={blocked ?? undefined}
-        style={{ "--fill": `${(value / LEVEL_MAX) * 100}%` }}
-        onInput={(e) => setValue(+(e.target as HTMLInputElement).value)}
-        onChange={(e) => commit(+(e.target as HTMLInputElement).value)}
-      />
-      <output for="level-input">{value}</output>
+    <div class={`level ${busy ? "busy" : ""} ${centre !== undefined ? "centred" : ""}`} title={blocked ?? hint}>
+      <label for={id}>{label}</label>
+      <input id={id} type="range" min={min} max={max} step={1} value={value} disabled={!!blocked} style={fill}
+        onInput={(e) => { setTouched(true); setValue(+(e.target as HTMLInputElement).value); }}
+        onChange={(e) => write(+(e.target as HTMLInputElement).value)}
+        onDblClick={() => centre !== undefined && write(centre)} />
+      <output for={id}>{mixed && !touched ? "разн." : show(value)}</output>
+    </div>
+  );
+}
+
+/** Pick one of a few values: a dropdown, or a segmented control for short lists; written on pick. */
+function Choice({ label, value, options, kind = "select", hint, mixed, disabled, pick }: {
+  label: string; value: number; options: [number, string][]; kind?: "select" | "segmented"; hint?: string; mixed?: boolean; disabled?: string | null;
+  pick: (v: number) => Promise<boolean>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const blocked = writeBlockReason.value ?? disabled ?? null;
+  const run = async (v: number) => {
+    if ((v === value && !mixed) || busy) return;
+    setBusy(true);
+    await pick(v);
+    setBusy(false);
+  };
+  const known = mixed || options.some(([v]) => v === value);
+  return (
+    <div class="tp-row choice" title={blocked ?? hint}>
+      <span>{label}</span>
+      {kind === "segmented" ? (
+        <span class="segmented" role="group" aria-label={label}>
+          {options.map(([v, name]) => (
+            <button key={v} type="button" aria-pressed={!mixed && v === value} class={!mixed && v === value ? "on" : ""} disabled={!!blocked || busy} onClick={() => run(v)}>{name}</button>
+          ))}
+        </span>
+      ) : (
+        <select value={mixed ? -1 : value} disabled={!!blocked || busy} aria-label={label} onChange={(e) => run(+(e.target as HTMLSelectElement).value)}>
+          {mixed && <option value={-1}>разные</option>}
+          {!known && <option value={value}>{value} ?</option>}
+          {options.map(([v, name]) => <option key={v} value={v}>{name}</option>)}
+        </select>
+      )}
+      {!known && kind === "segmented" && <span class="note">неизвестное значение {value}</span>}
+      {mixed && kind === "segmented" && <span class="note">у pad'ов разные</span>}
     </div>
   );
 }
@@ -437,6 +511,120 @@ function RangeEditor({ pad, channels, wave }: { pad: number; channels: number; w
   );
 }
 
+// ------------------------------------------------------------------ several pads
+
+/**
+ * Several picked pads: the settings that make sense for a group, written to every picked pad.
+ * A setting the pads don't share shows as "разные"; Start/End, the wave and the name stay per pad.
+ */
+function GroupInspector() {
+  const list = pickedList.value;
+  const blocks = list.map((i) => pads.value[i]!);
+  const anchor = list.includes(selectedPad.value) ? selectedPad.value : list[0];
+  /** The value all picked pads share, or null when they differ. */
+  const same = <T,>(get: (b: PadBlock) => T): T | null => (blocks.every((b) => get(b) === get(blocks[0])) ? get(blocks[0]) : null);
+  const num = (get: (b: PadBlock) => number) => same(get) ?? Number.NaN;
+  const toggle = (label: string, get: (b: PadBlock) => boolean, set: (d: Dev, p1: number, pad: number, on: boolean) => Promise<PadBlock>, hint?: string) => {
+    const v = same(get);
+    return <Toggle label={label} on={v === true} mixed={v === null} hint={hint}
+      onChange={(on) => editGroup(`${label} ${on ? "вкл" : "выкл"}`, (d, p1, pad) => set(d, p1, pad, on), (b) => get(b) === on)} />;
+  };
+  const param = (id: number, what: (v: number) => string, get: (b: PadBlock) => number) => (v: number) =>
+    editGroup(what(v), (d, p1, pad) => d.setPadParam(p1, pad, id, v), (b) => get(b) === v);
+  const anyVinyl = blocks.some((b) => b.vinyl);
+  const playMode = same((b) => b.playMode), vari = same((b) => b.vari), bus = same((b) => b.busFx);
+  const mute = same((b) => b.muteGroup), link = same((b) => b.padLink), roll = same((b) => b.roll);
+  return (
+    <aside class="inspector glass">
+      <div class="insp-head">
+        <span class="chip chip-accent">{list.length}</span>
+        <span class="insp-name" title={list.map(padName).join(", ")}>Выбрано: {list.map(padName).join(", ")}</span>
+      </div>
+      <div class="insp-scroll">
+        <p class="group-note">Изменения записываются во все выбранные pad'ы. Start/End, волна и имя — по одному pad'у: снимите выделение (Esc).</p>
+
+        <Section id="tempo" title="Темп и высота">
+          <div class="tempo-pitch">
+            <div class="tp-row">
+              <span>BPM</span>
+              <ValueField value={num((b) => b.bpmX100)} format={formatBpm} parse={parseBpmField} label="BPM" width={84} placeholder="разные"
+                onSave={(v) => editGroup(`BPM ${formatBpm(v)}`, (d, p1, pad) => d.setBpm(p1, pad, v), (b) => b.bpmX100 === v)} />
+              <span class="note">40–200, Enter — записать во все</span>
+            </div>
+            <div class="toggles">
+              {toggle("BPM Sync", (b) => b.bpmSync, (d, p1, pad, on) => d.setBpmSync(p1, pad, on), "Сэмплы следуют темпу банка или проекта")}
+              {toggle("Vinyl", (b) => b.vinyl, (d, p1, pad, on) => d.setVinyl(p1, pad, on), "Смена темпа меняет и высоту, как у пластинки")}
+            </div>
+            <Choice label="VARI" value={vari ?? -1} mixed={vari === null} kind="segmented" options={VARI_MODES.map((n, i) => [i, n])}
+              disabled={anyVinyl ? "VARI MODE работает при выключенном Vinyl — у части pad'ов Vinyl включён" : null}
+              pick={(v) => editGroup(`VARI MODE ${VARI_MODES[v]}`, (d, p1, pad) => d.setVari(p1, pad, v), (b) => b.vari === v)} />
+            <div class="tp-row">
+              <span>Stretch</span>
+              <ValueField value={num((b) => b.timeStretchX100)} format={formatStretch} parse={parseStretch} label="Time Stretch" width={64} placeholder="разн."
+                onSave={(v) => editGroup(`Time Stretch ${formatStretch(v)} %`, (d, p1, pad) => d.setTimeStretch(p1, pad, v), (b) => b.timeStretchX100 === v)} />
+              <span class="unit">%</span>
+            </div>
+            <div class="tp-row">
+              <span>Pitch</span>
+              <ValueField value={num((b) => b.pitchCoarse)} format={signed} parse={intIn(-PITCH_COARSE_MAX, PITCH_COARSE_MAX)} label="Pitch, полутоны" width={52} placeholder="разн."
+                disabled={anyVinyl ? "Pitch меняется при выключенном Vinyl" : null}
+                onSave={(v) => editGroup(`Pitch ${signed(v)} st`, (d, p1, pad) => d.setPitch(p1, pad, v, pads.value[pad]!.pitchFine), (b) => b.pitchCoarse === v)} />
+              <span class="unit">st</span>
+              <ValueField value={num((b) => b.pitchFine)} format={signed} parse={intIn(-PITCH_FINE_MAX, PITCH_FINE_MAX)} label="Pitch, центы" width={58} placeholder="разн."
+                disabled={anyVinyl ? "Pitch меняется при выключенном Vinyl" : null}
+                onSave={(v) => editGroup(`Pitch ${signed(v)} ct`, (d, p1, pad) => d.setPitch(p1, pad, pads.value[pad]!.pitchCoarse, v), (b) => b.pitchFine === v)} />
+              <span class="unit">ct</span>
+              {anyVinyl && <span class="note">при выключенном Vinyl</span>}
+            </div>
+          </div>
+        </Section>
+
+        <Section id="play" title="Воспроизведение">
+          <Slider pad={anchor} label="Level" value={same((b) => b.level) ?? blocks[0].level} mixed={same((b) => b.level) === null} min={0} max={LEVEL_MAX}
+            commit={(v) => editGroup(`Level ${v}`, (d, p1, pad) => d.setLevel(p1, pad, v), (b) => b.level === v)} />
+          <Slider pad={anchor} label="Balance" value={same((b) => b.balance) ?? BALANCE_CENTRE} mixed={same((b) => b.balance) === null} min={13} max={115}
+            show={fmtBalance} centre={BALANCE_CENTRE} hint="Баланс стерео; на моно-сэмплы не действует"
+            commit={param(PARAM_BALANCE, (v) => `Balance ${fmtBalance(v)}`, (b) => b.balance)} />
+          <div class="toggles">
+            {toggle("Gate", (b) => b.gate, (d, p1, pad, on) => d.setGate(p1, pad, on))}
+            {toggle("Loop", (b) => b.loop, (d, p1, pad, on) => d.setLoop(p1, pad, on))}
+            {toggle("One Shot", (b) => b.oneShot, (d, p1, pad, on) => d.setOneShot(p1, pad, on), "При включении One Shot выключаются Gate и Loop")}
+            {toggle("Fixed Velocity", (b) => b.fixedVelocity, (d, p1, pad, on) => d.setFixedVelocity(p1, pad, on))}
+          </div>
+          <Choice label="Play" value={playMode ?? -1} mixed={playMode === null} options={PLAY_MODES.map((n, i) => [i, n])} kind="segmented"
+            pick={param(PARAM_PLAY_MODE, (v) => `Play Mode ${PLAY_MODES[v]}`, (b) => b.playMode)} />
+        </Section>
+
+        <Section id="ahr" title="Огибающая">
+          {([["Attack", PARAM_ATTACK, 0, 127, (b: PadBlock) => b.attack], ["Hold", PARAM_HOLD, 1, 100, (b: PadBlock) => b.hold],
+            ["Release", PARAM_RELEASE, 0, 127, (b: PadBlock) => b.release]] as const).map(([label, id, min, max, get]) => (
+            <Slider key={label} pad={anchor} label={label} value={same(get) ?? get(blocks[0])} mixed={same(get) === null} min={min} max={max}
+              commit={param(id, (v) => `${label} ${v}`, get)} />
+          ))}
+        </Section>
+
+        <Section id="mix" title="Микс">
+          <Choice label="Mute Group" value={mute ?? -1} mixed={mute === null} options={OFF_A_J}
+            pick={param(PARAM_MUTE_GROUP, (v) => `Mute Group ${OFF_A_J[v][1]}`, (b) => b.muteGroup)} />
+          <Choice label="PAD Link" value={link ?? -1} mixed={link === null} options={OFF_A_J}
+            pick={param(PARAM_PAD_LINK, (v) => `PAD Link ${OFF_A_J[v][1]}`, (b) => b.padLink)} />
+          <Choice label="BUS FX" value={bus ?? -1} mixed={bus === null} options={BUS_FX.map((n, i) => [i, n])} kind="segmented"
+            pick={param(PARAM_BUS_FX, (v) => `BUS FX ${BUS_FX[v]}`, (b) => b.busFx)} />
+          <Choice label="Roll" value={roll ?? -1} mixed={roll === null} options={ROLL.map((n, i) => [i, n])}
+            pick={param(PARAM_ROLL, (v) => `Roll ${ROLL[v]}`, (b) => b.roll)} />
+        </Section>
+      </div>
+    </aside>
+  );
+}
+
+type Dev = Parameters<Parameters<typeof editGroup>[1]>[0];
+
+const parseBpmField: Parse = (text) => {
+  const r = parseBpmInput(text);
+  return !r ? null : "error" in r ? { error: r.error } : { value: r.x100 };
+};
+
 function BpmEditor({ pad }: { pad: number }) {
   const p = pads.value[pad]!;
   const saved = formatBpm(p.bpmX100);
@@ -449,6 +637,19 @@ function BpmEditor({ pad }: { pad: number }) {
   useEffect(() => { setText(saved); setState("idle"); }, [pad, p.bpmX100]);
   useEffect(() => setDetect({ busy: false, note: null }), [pad]);
   const canDetect = conn.value === "ready" || !!waveforms.value.get(pad)?.samples;
+  const ch = channelsOf(pad);
+
+  // "Set BPM by St/End", as the official app: whole beats between Start and End, nearest to the pad's BPM.
+  const byRange = () => {
+    if (!ch) return;
+    const frames = byteToFrame(p.endByte, ch) - byteToFrame(p.startByte, ch);
+    const r = bpmFromLength(frames, p.bpmX100);
+    if (!r) return setDetect({ busy: false, note: "Слишком короткий участок" });
+    const beats = r.beats >= 1 ? String(r.beats) : `1/${1 / r.beats}`;
+    if (r.x100 < BPM_MIN_X100 || r.x100 > BPM_MAX_X100) return setDetect({ busy: false, note: `Выходит ${formatBpm(r.x100)} (${beats} долей) — вне 40–200` });
+    setText(formatBpm(r.x100));
+    setDetect({ busy: false, note: `Start–End = ${beats} долей при ${formatBpm(r.x100)} BPM` });
+  };
 
   const runDetect = async () => {
     setDetect({ busy: true, note: null });
@@ -503,6 +704,11 @@ function BpmEditor({ pad }: { pad: number }) {
         <button class="btn" disabled={detect.busy || !canDetect} onClick={runDetect}
           title="Определить темп по звуку между Start и End, как BPM SET AUTO на SP; результат попадёт в поле, записывается кнопкой «Сохранить»">
           {detect.busy ? "Анализ…" : "Определить"}
+        </button>
+        <button class="btn" disabled={!ch} onClick={byRange}
+          title={ch ? "BPM, при котором между Start и End целое число долей (ближайшее к текущему BPM), как «Set BPM by St/End» в App; записывается кнопкой «Сохранить»"
+            : "Нужен заголовок сэмпла: откройте секцию «Сэмпл»"}>
+          По Start/End
         </button>
         <label title="Темп сворачивается в этот диапазон удвоением или делением, как на SP">
           <span>диапазон</span>

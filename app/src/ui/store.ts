@@ -604,6 +604,38 @@ async function editPad(pad: number, what: string, fn: (d: SP404Device, p1: numbe
   }
 }
 
+/**
+ * Apply one edit to every picked pad, one by one, with progress above the grid; stops at the first
+ * error. `skip` leaves out pads that already have the value (nothing is sent to them).
+ */
+export async function editGroup(what: string, fn: (d: SP404Device, p1: number, pad: number) => Promise<PadBlock>, skip?: (b: PadBlock) => boolean): Promise<boolean> {
+  const d = device, list = pickedList.value.filter((i) => !skip?.(pads.value[i]!));
+  if (!d || groupProgress.value) return false;
+  if (writeBlockReason.value) {
+    notice.value = { kind: "error", text: writeBlockReason.value };
+    return false;
+  }
+  if (!list.length) return true;
+  let done = 0;
+  groupProgress.value = { done, total: list.length, verb: "Меняю" };
+  try {
+    for (const pad of list) {
+      try {
+        setPad(await d.exclusive((x) => fn(x, project1.value, pad)));
+      } catch (e) {
+        fail(e, `${padName(pad)}, ${what}`);
+        if (done) log("warn", `${what}: изменено ${done} из ${list.length}, остановлено на ${padName(pad)}`);
+        return false;
+      }
+      groupProgress.value = { done: ++done, total: list.length, verb: "Меняю" };
+    }
+    log("info", `${what}: ${list.map(padName).join(", ")}`);
+    return true;
+  } finally {
+    groupProgress.value = null;
+  }
+}
+
 const onOff = (on: boolean) => (on ? "вкл" : "выкл");
 
 export const setBpm = (pad: number, x100: number) => editPad(pad, `BPM ${(x100 / 100).toFixed(2)}`, (d, p1) => d.setBpm(p1, pad, x100));
@@ -611,6 +643,8 @@ export const setLevel = (pad: number, level: number) => editPad(pad, `Level ${le
 export const setGate = (pad: number, on: boolean) => editPad(pad, `Gate ${onOff(on)}`, (d, p1) => d.setGate(p1, pad, on));
 export const setLoop = (pad: number, on: boolean) => editPad(pad, `Loop ${onOff(on)}`, (d, p1) => d.setLoop(p1, pad, on));
 export const setBpmSync = (pad: number, on: boolean) => editPad(pad, `BPM Sync ${onOff(on)}`, (d, p1) => d.setBpmSync(p1, pad, on));
+export const setPadParam = (pad: number, id: number, value: number, what: string) => editPad(pad, what, (d, p1) => d.setPadParam(p1, pad, id, value));
+export const setFixedVelocity = (pad: number, on: boolean) => editPad(pad, `Fixed Velocity ${onOff(on)}`, (d, p1) => d.setFixedVelocity(p1, pad, on));
 export const setVinyl = (pad: number, on: boolean) => editPad(pad, `Vinyl ${onOff(on)}`, (d, p1) => d.setVinyl(p1, pad, on));
 export const setTimeStretch = (pad: number, x100: number) =>
   editPad(pad, `Time Stretch ${(x100 / 100).toFixed(2)} %`, (d, p1) => d.setTimeStretch(p1, pad, x100));

@@ -179,7 +179,13 @@ function PadCard({ index }: { index: number }) {
         importFiles([...(e.dataTransfer?.files ?? [])], index);
       }}
     >
-      <span class="pad-label">{padName(index)}{onDevice && <span class="here" title="Выбран на SP" />}</span>
+      <span class="pad-label">
+        {padName(index)}{onDevice && <span class="here" title="Выбран на SP" />}
+      </span>
+      <span class="pad-tags">
+        {!!p?.size && p.muteGroup > 0 && <span class="pad-tag tag-mute" title={`Mute Group ${BANKS[p.muteGroup - 1]}: pad'ы группы глушат друг друга`}>M {BANKS[p.muteGroup - 1] ?? p.muteGroup}</span>}
+        {!!p?.size && p.padLink > 0 && <span class="pad-tag tag-link" title={`PAD Link ${BANKS[p.padLink - 1]}: pad'ы группы звучат вместе`}>L {BANKS[p.padLink - 1] ?? p.padLink}</span>}
+      </span>
       {p?.size ? (
         <>
           <span class="pad-name">{p.name || "без имени"}</span>

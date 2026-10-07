@@ -7,11 +7,12 @@ export type Parse = (text: string) => { value: number } | { error: string } | nu
  * Inline number field that writes to the SP: Enter saves, Esc or leaving the field puts the saved
  * value back. `parse` turns the text into the value sent (or an error shown in red).
  */
-export function ValueField({ value, format, parse, label, dim, hint, disabled, width = 64, onSave }: {
+export function ValueField({ value, format, parse, label, dim, hint, disabled, width = 64, placeholder, onSave }: {
   value: number; format: (v: number) => string; parse: Parse; label: string;
-  dim?: boolean; hint?: string; disabled?: string | null; width?: number; onSave: (v: number) => Promise<boolean>;
+  dim?: boolean; hint?: string; disabled?: string | null; width?: number; placeholder?: string; onSave: (v: number) => Promise<boolean>;
 }) {
-  const saved = format(value);
+  // NaN = no common value (several pads): the field starts empty and shows the placeholder.
+  const saved = Number.isNaN(value) ? "" : format(value);
   const [text, setText] = useState(saved);
   const [busy, setBusy] = useState(false);
   useEffect(() => setText(saved), [saved]);
@@ -38,6 +39,7 @@ export function ValueField({ value, format, parse, label, dim, hint, disabled, w
       title={blocked ?? error ?? `${label}: Enter — сохранить на SP, Esc — отменить${hint ? `. ${hint}` : ""}`}
       disabled={!!blocked || busy}
       value={text}
+      placeholder={placeholder}
       onInput={(e) => setText((e.target as HTMLInputElement).value)}
       onKeyDown={(e) => {
         if (e.key === "Enter") save();

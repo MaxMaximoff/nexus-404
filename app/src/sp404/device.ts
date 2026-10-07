@@ -9,7 +9,8 @@ import {
   BANKS, BPM_MAX_X100, BPM_MIN_X100, FLAG_ONE_SHOT, GLOBAL, PARAM_BANK_TEMPO, PARAM_PROJECT_TEMPO, PARAM_TEMPO_SELECT, LEVEL_MAX, PAD_COUNT, PROJECT_COUNT, PARAM_BPM, PARAM_CLEARED_BY_ONE_SHOT, PARAM_END,
   PARAM_FLAGS, PARAM_GATE, PARAM_PITCH_COARSE, PARAM_PITCH_FINE, PARAM_TIME_STRETCH, PARAM_VINYL, PITCH_COARSE_MAX, PITCH_FINE_MAX,
   STRETCH_MAX_X100, STRETCH_MIN_X100, VARI_MASK, VARI_MODES, PARAM_LEVEL, PARAM_LOOP, PARAM_BPM_SYNC, PARAM_START, assignSampleBlock, byteToFrame, deviceErrorText, padName,
-  PAD_PARAM_RANGE, parsePadBlock, parseProjectSettings, parseStatus, setParamPayload,
+  FLAG_FIXED_VELOCITY, PARAM_ATTACK, PARAM_BALANCE, PARAM_BUS_FX, PARAM_HOLD, PARAM_MUTE_GROUP, PARAM_PAD_LINK, PARAM_PLAY_MODE, PARAM_RELEASE, PARAM_ROLL,
+  PAD_PARAM_RANGE, padFieldOf, parsePadBlock, parseProjectSettings, parseStatus, setParamPayload,
   type DeviceStatus, type PadBlock, type ProjectSettings,
 } from "./control";
 import { SMP_HEADER_LEN, parseSmpHeader } from "./smp";
@@ -346,6 +347,22 @@ export class SP404Device {
   }
 
   /**
+   * Set one of the plain per-pad parameters (Mute Group, Play Mode, Balance, PAD Link, BUS FX,
+   * Roll, Attack, Hold, Release): an integer within its PAD_PARAM_RANGE.
+   */
+  setPadParam(project1: number, pad: number, id: number, value: number): Promise<PadBlock> {
+    const range = PLAIN_PARAMS.has(id) ? PAD_PARAM_RANGE.get(id) : undefined;
+    if (!range) throw new DeviceError(`параметр ${id.toString(16)} так не задаётся`);
+    if (!(Number.isInteger(value) && value >= range[0] && value <= range[1])) throw new DeviceError(`значение ${value} вне ${range[0]}–${range[1]}`);
+    return this.editPad(project1, pad, () => this.setParam(pad, id, value));
+  }
+
+  /** Fixed Velocity: bit 0 of the mode flags, keeping the other bits. */
+  setFixedVelocity(project1: number, pad: number, on: boolean): Promise<PadBlock> {
+    return this.editPad(project1, pad, (b) => this.setParam(pad, PARAM_FLAGS, on ? b.flags | FLAG_FIXED_VELOCITY : b.flags & ~FLAG_FIXED_VELOCITY));
+  }
+
+  /**
    * Toggle bit 5 of the mode flags, keeping the other bits. Turning One Shot on also sends
    * Gate = 0, Loop = 0 and `72` = 0 afterwards, as the official app does.
    */
@@ -531,7 +548,11 @@ export class SP404Device {
     // Start, then End: the fresh pad spans the whole file, so Start < End holds at every step.
     if (s.startByte !== b.startByte) await this.setParam(dst, PARAM_START, byteToFrame(s.startByte, ch));
     if (s.endByte !== b.endByte) await this.setParam(dst, PARAM_END, byteToFrame(s.endByte, ch));
-    const field = (blk: PadBlock, id: number) => new DataView(blk.raw.buffer, blk.raw.byteOffset).getInt32(3 + (id - 0x66) * 4, true);
+    // On/off fields may read other than 1 when on (Loop reads 7FFFFFFF): they are sent as 0/1.
+    const field = (blk: PadBlock, id: number) => {
+      const v = new DataView(blk.raw.buffer, blk.raw.byteOffset).getInt32(3 + padFieldOf(id) * 4, true);
+      return PAD_PARAM_RANGE.get(id)![1] === 1 ? +(v !== 0) : v;
+    };
     // Flags first: One Shot on the unit may touch Gate and Loop, which come after it.
     const ids = [PARAM_FLAGS, ...[...PAD_PARAM_RANGE.keys()].filter((id) => id !== PARAM_FLAGS && id !== PARAM_START && id !== PARAM_END)];
     const skipped: string[] = [];
@@ -600,6 +621,9 @@ export class SP404Device {
     return this.padBlock(pad);
   }
 }
+
+/** Parameters with no side effects on others, set through setPadParam. */
+const PLAIN_PARAMS = new Set([PARAM_MUTE_GROUP, PARAM_PLAY_MODE, PARAM_BALANCE, PARAM_PAD_LINK, PARAM_BUS_FX, PARAM_ROLL, PARAM_ATTACK, PARAM_HOLD, PARAM_RELEASE]);
 
 function checkBpm(x100: number): void {
   if (!(Number.isInteger(x100) && x100 >= BPM_MIN_X100 && x100 <= BPM_MAX_X100)) throw new DeviceError("BPM должен быть от 40 до 200");
