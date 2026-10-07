@@ -155,6 +155,13 @@ button, input { font: inherit; color: inherit; }
 .bank-meta { display: flex; align-items: center; gap: 6px; font-size: 12px; }
 .bank-letter { font-weight: 800; font-size: 14px; display: inline-flex; align-items: center; gap: 4px; }
 .lock { margin-left: auto; color: var(--warn); display: inline-flex; }
+.bank-tile.drop-target { border-style: dashed; border-color: rgba(30, 143, 255, 0.55); }
+.bank-tile.drop { background: var(--glass-strong); box-shadow: 0 0 0 2px var(--accent), 0 0 24px 0 var(--glow); }
+.bank-tile.drop-full { opacity: 0.45; }
+.mini-grid i.target { background: var(--accent); box-shadow: 0 0 6px var(--glow); }
+.bank-tile .free em { font-style: normal; color: var(--warn); }
+.drag-speed { font-weight: 700; }
+.bank-tile .free { color: var(--accent); font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .here { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 6px var(--glow); display: inline-block; }
 
 /* ---------- pad grid ---------- */

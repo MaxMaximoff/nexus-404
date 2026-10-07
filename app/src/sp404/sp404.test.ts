@@ -364,6 +364,8 @@ describe("device against a scripted SP", () => {
     expect(dev.policy.moveToEmpty).toBeNull();
     await expect(dev.exclusive((d) => d.movePad(4, 34, 41))).rejects.toThrow(/пуст/);
     await expect(dev.exclusive((d) => d.movePad(4, 33, 33))).rejects.toThrow(/сам на себя/);
+    await expect(dev.exclusive((d) => d.movePad(4, 33, 40, true))).rejects.toThrow(/занят/);
+    expect(sp.sent.filter((m) => m.startsWith("5:95"))).toHaveLength(2);
   });
   it("selects another project, and nothing when it is already current", async () => {
     const sp = fakeSp();

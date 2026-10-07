@@ -3,7 +3,7 @@
 import { batch, computed, signal } from "@preact/signals";
 import {
   PAD_COUNT, SP404Device, SampleUploader, WebSerialTransport, bpmFromFileName, computeEnvelope, computePeaks, isSp404Port,
-  BPM_RANGES, VARI_MODES, byteToFrame, detectBpm, newJob, padName, samplePath, smpToPcm,
+  BANKS, BPM_RANGES, VARI_MODES, byteToFrame, detectBpm, formatBpm, newJob, padName, padSpeed, samplePath, smpToPcm,
   type BpmResult, type DeviceStatus, type ImportJob, type LogLevel, type PadBlock, type ProjectSettings,
 } from "../sp404";
 
@@ -348,12 +348,48 @@ function setPad(block: PadBlock): void {
 
 /** Drag type of a pad dragged within the app; the data is its index. */
 export const PAD_DRAG = "application/x-nexus-pad";
+/** The pad being dragged in the grid (drop targets elsewhere can't read the drag data until drop). */
+export const draggedPad = signal<number | null>(null);
+
+/** The bank under the pointer while a pad is dragged (a bank tile or a pad of the grid). */
+export const dragOverBank = signal<number | null>(null);
+
+export function endPadDrag(): void {
+  batch(() => { draggedPad.value = null; dragOverBank.value = null; });
+}
+
+/** The tempo a pad in `bank` plays to: the project's, or the bank's when Tempo Select is on banks. */
+export function tempoFor(bank: number): { tempoX100: number; of: string } | null {
+  const ps = project.value, b = ps?.banks[bank];
+  if (!ps) return null;
+  return ps.useProjectTempo || !b ? { tempoX100: ps.projectTempoX100, of: "проекта" } : { tempoX100: b.tempoX100, of: `банка ${b.letter}` };
+}
+
+/**
+ * How moving pad `src` into `bank` changes its speed: only with BPM Sync on and bank tempos in use,
+ * when the two banks' tempos differ. Null when it plays as before.
+ */
+export function moveSpeedChange(src: number, bank: number): { from: number; to: number; text: string } | null {
+  const p = pads.value[src], a = tempoFor(src >> 4), b = tempoFor(bank);
+  if (!p?.size || !p.bpmSync || !a || !b || bank === src >> 4) return null;
+  const from = padSpeed(p, a.tempoX100).ratio, to = padSpeed(p, b.tempoX100).ratio;
+  if (Math.abs(to / from - 1) < 0.005) return null;
+  const st = 12 * Math.log2(to / from);
+  const pitch = p.vinyl ? ` · с Vinyl ${st > 0 ? "выше" : "ниже"} на ${Math.abs(st).toFixed(1)} st` : "";
+  return { from, to, text: `${padName(src)}: ×${from.toFixed(2)} → ×${to.toFixed(2)} в банке ${BANKS[bank]} (${formatBpm(b.tempoX100)} BPM)${pitch}` };
+}
+
+/** First empty pad of a bank as last read, or null when the bank is full. */
+export function firstEmptyPad(bank: number): number | null {
+  for (let i = bank * 16; i < bank * 16 + 16; i++) if (!pads.value[i]?.size) return i;
+  return null;
+}
 
 /**
  * Move a pad onto an empty pad, or swap two pads, on the SP (any banks of the current project).
  * Cached waveforms and channel counts travel with the samples.
  */
-export async function movePad(src: number, dst: number): Promise<boolean> {
+export async function movePad(src: number, dst: number, onlyToEmpty = false): Promise<boolean> {
   const d = device;
   const blocked = writeBlockReason.value ?? (importing.value ? "Идёт импорт — дождитесь конца" : null);
   if (!d || src === dst) return false;
@@ -362,7 +398,7 @@ export async function movePad(src: number, dst: number): Promise<boolean> {
     return false;
   }
   try {
-    const r = await d.exclusive((x) => x.movePad(project1.value, src, dst));
+    const r = await d.exclusive((x) => x.movePad(project1.value, src, dst, onlyToEmpty));
     const swap = <T,>(m: Map<number, T>) => {
       const n = new Map(m), a = m.get(src), b = m.get(dst);
       n.delete(src); n.delete(dst);

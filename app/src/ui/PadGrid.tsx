@@ -1,7 +1,7 @@
 import { useState } from "preact/hooks";
 import { BANKS, formatBpm, padName } from "../sp404";
 import {
-  PAD_DRAG, conn, connect, hasGrant, importFiles, jobs, movePad, pads, project, reconnect, reload, selectPad, selectedBank, selectedPad, setBankTempo, status,
+  PAD_DRAG, conn, dragOverBank, draggedPad, endPadDrag, moveSpeedChange, connect, hasGrant, importFiles, jobs, movePad, pads, project, reconnect, reload, selectPad, selectedBank, selectedPad, setBankTempo, status,
   waveforms, writeBlockReason,
 } from "./store";
 import { IconLock, IconRefresh } from "./icons";
@@ -29,18 +29,26 @@ export function PadGrid() {
             </span>
           )}
           <span class="muted">{filled} / 16 занято</span>
+          <DragSpeed />
           {bank?.protected && <span class="chip chip-warn"><IconLock /> защищён</span>}
         </div>
         {c === "ready" && <button class="btn btn-ghost" onClick={reload} title="Перечитать проект с SP"><IconRefresh /> Обновить</button>}
       </div>
 
       <div class="pad-grid">
-        {Array.from({ length: 16 }, (_, i) => <PadCard key={b * 16 + i} index={b * 16 + i} />)}
+        {Array.from({ length: 16 }, (_, i) => <PadCard key={i} index={b * 16 + i} />)}
         {c !== "ready" && c !== "loading" && <ConnectOverlay />}
       </div>
-      <p class="hint">Перетащите файлы на пустой pad — они займут его и следующие пустые pad'ы банка. Pad на pad: на пустой — перенос, на занятый — обмен; задержите над банком, чтобы перейти в него.</p>
+      <p class="hint">Перетащите файлы на пустой pad — они займут его и следующие пустые pad'ы банка. Pad на pad: на пустой — перенос, на занятый — обмен; на плитку банка — на его первый пустой pad; задержите над банком, чтобы перейти в него.</p>
     </section>
   );
+}
+
+/** While a pad is dragged over another bank: how fast it will play there (bank tempos differ). */
+function DragSpeed() {
+  const src = draggedPad.value, bank = dragOverBank.value;
+  const s = src !== null && bank !== null ? moveSpeedChange(src, bank) : null;
+  return s && <span class="chip chip-warn drag-speed">{s.text}</span>;
 }
 
 function ConnectOverlay() {
@@ -81,10 +89,13 @@ function PadCard({ index }: { index: number }) {
         if (!canMove || !e.dataTransfer) return;
         e.dataTransfer.setData(PAD_DRAG, String(index));
         e.dataTransfer.effectAllowed = "move";
+        draggedPad.value = index;
       }}
+      onDragEnd={endPadDrag}
       onDragOver={(e) => {
         if (hasFiles(e)) { e.preventDefault(); setOver("files"); }
-        else if (hasPad(e) && !job) { e.preventDefault(); e.dataTransfer!.dropEffect = "move"; setOver(p?.size ? "swap" : "move"); }
+        else if (hasPad(e) && !job && draggedPad.value !== index) {
+          dragOverBank.value = index >> 4; e.preventDefault(); e.dataTransfer!.dropEffect = "move"; setOver(p?.size ? "swap" : "move"); }
       }}
       onDragLeave={() => setOver(false)}
       onDrop={(e) => {
