@@ -1,5 +1,5 @@
 import { BANKS, formatBpm } from "../sp404";
-import { pads, project, selectedBank, selectedPad, status } from "./store";
+import { pads, project, selectPad, selectedBank, selectedPad, status } from "./store";
 import { IconLock } from "./icons";
 
 export function BankRail() {
@@ -17,7 +17,7 @@ export function BankRail() {
             <button
               key={letter}
               class={`bank-tile ${selectedBank.value === b ? "active" : ""}`}
-              onClick={() => { selectedBank.value = b; selectedPad.value = b * 16 + (selectedPad.value & 15); }}
+              onClick={() => selectPad(b * 16 + (selectedPad.value & 15))} // the same pad of that bank, selected on the SP too
               title={`Банк ${letter}: ${filled} из 16${bank?.protected ? ", защищён" : ""}`}
             >
               <span class="mini-grid">

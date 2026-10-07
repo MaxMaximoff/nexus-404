@@ -2,6 +2,7 @@
 
 export const BANKS = "ABCDEFGHIJ";
 export const PAD_COUNT = 160;
+export const PROJECT_COUNT = 16;
 export const padName = (i: number): string => `${BANKS[i >> 4]}${(i & 15) + 1}`;
 
 export interface DeviceStatus {

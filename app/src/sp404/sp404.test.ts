@@ -83,7 +83,7 @@ describe("guard", () => {
   const policy = { importProject: 4, importPad: 33, writableHandles: new Set([100]) };
   const g = makeGuard(policy);
   const allowed: [number, ArrayLike<number>][] = [
-    [CH_CONTROL, [0xfe, 0x66, 0]], [CH_CONTROL, [0x9e, 5, 0]], [CH_CONTROL, [0x8e, 5, 0, 0x7f, 0xff]], [CH_CONTROL, [0x8f, 5, 0, 0]],
+    [CH_CONTROL, [0xfe, 0x66, 0]], [CH_CONTROL, [0x9e, 5, 0]], [CH_CONTROL, [0x9a, 0, 0]], [CH_CONTROL, [0x9a, 15, 0]], [CH_CONTROL, [0x8e, 5, 0, 0x7f, 0xff]], [CH_CONTROL, [0x8f, 5, 0, 0]],
     [CH_CONTROL, [0xfb, 0xa0, 0]], [CH_CONTROL, [0x91, 33, 0, 1, 0]], [CH_CONTROL, [0x9d]], [CH_CONTROL, [0x9f, 33, 0]],
     [CH_CONTROL, [1, 0x6f, 0, 7, 0, 0xe0, 0x2e, 0, 0]],
     [CH_CONTROL, [1, 0x69, 0, 159, 0, 127, 0, 0, 0]], [CH_CONTROL, [1, 0x6a, 0, 33, 0, 1, 0, 0, 0]], [CH_CONTROL, [1, 0x6b, 0, 33, 0, 0, 0, 0, 0]],
@@ -101,7 +101,7 @@ describe("guard", () => {
   const blocked: [number, ArrayLike<number>][] = [
     [CH_CONTROL, [0x92, 0, 0, 0, 0, 0, 0]], [CH_CONTROL, [0x91, 33, 0, 0, 0]], [CH_CONTROL, [0x91, 34, 0, 1, 0]],
     [CH_CONTROL, [0x95, 0, 0, 1, 0, 0, 0]], [CH_CONTROL, [0x35, 3, 65]], [CH_CONTROL, [0x02, 33, 0, 65]],
-    [CH_CONTROL, [0x9a, 1, 0]], [CH_CONTROL, [0xb1, 3, 0]],
+    [CH_CONTROL, [0x9a, 16, 0]], [CH_CONTROL, [0x9a, 1, 1]], [CH_CONTROL, [0x9a, 1]], [CH_CONTROL, [0xb1, 3, 0]],
     // per-pad parameters: unknown ids, values out of range, a pad past J16
     [CH_CONTROL, [1, 0x6d, 0, 33, 0, 1, 0, 0, 0]], [CH_CONTROL, [1, 0x6e, 0, 33, 0, 2, 0, 0, 0]], [CH_CONTROL, [1, 0x75, 0, 33, 0, 1, 0, 0, 0]],
     [CH_CONTROL, [1, 0x73, 0, 33, 0, 13, 0, 0, 0]], [CH_CONTROL, [1, 0x74, 0, 33, 0, 0x9b, 0xff, 0xff, 0xff]], // +13 st, −101 ct
@@ -166,6 +166,7 @@ describe("device against a scripted SP", () => {
         else if (p[0] === 0x8e) reply(ch, [0x0e, p[1], p[2], 0]);
         else if (p[0] === 0x8f) reply(ch, [0x0f, p[1], p[2], 0]);
         else if (p[0] === 0x91) reply(ch, [0x11, 0]);
+        else if (p[0] === 0x9a) reply(ch, [0x1a, 0]);
         else if (p[0] === 0x9d) reply(ch, [0x1d, 0]);
         else if (p[0] === 0x1e) { blocks.set(p[1], Uint8Array.from([...p, ...new Uint8Array(128)])); reply(ch, [0x1e, 0]); }
         else if (p[0] === 0x9f) reply(ch, [0x1f, p[1], p[2], 0]);
@@ -332,6 +333,14 @@ describe("device against a scripted SP", () => {
     await dev.exclusive((d) => d.stopPad(4, 33));
     expect(sp.params).toEqual([]);
     expect(sp.sent.at(-2)?.slice(0, 4)).toBe("5:8f");
+  });
+  it("selects another project, and nothing when it is already current", async () => {
+    const sp = fakeSp();
+    const dev = new SP404Device(sp.t);
+    await dev.exclusive((d) => d.selectProject(4)); // the fake SP is on project 4
+    await dev.exclusive((d) => d.selectProject(9));
+    expect(sp.sent.filter((m) => m.startsWith("5:9a"))).toEqual(["5:9a0800"]);
+    await expect(dev.exclusive((d) => d.selectProject(17))).rejects.toThrow(/нет проекта/);
   });
   it("moves Start/End in frames, in an order that keeps Start < End", async () => {
     const { sp, dev } = await loaded();

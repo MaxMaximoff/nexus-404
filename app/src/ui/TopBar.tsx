@@ -1,7 +1,8 @@
 import { useState } from "preact/hooks";
+import { PROJECT_COUNT } from "../sp404";
 import {
-  conn, connect, disconnect, freeKb, hasGrant, loadProgress, project, reconnect, selectedBank, setBankTempo, setProjectTempo, setTempoSelect,
-  status, writeBlockReason,
+  conn, connect, disconnect, freeKb, hasGrant, importing, loadProgress, project, reconnect, selectProject, selectedBank, setBankTempo, setProjectTempo,
+  setTempoSelect, status, writeBlockReason,
 } from "./store";
 import { TempoField } from "./TempoField";
 import { IconPlug, IconUnplug } from "./icons";
@@ -55,6 +56,19 @@ function TempoControl() {
   );
 }
 
+/** The project on the SP; choosing another one switches the unit to it. */
+function ProjectSelect() {
+  const ps = project.value!, st = status.value!;
+  const blocked = conn.value === "loading" ? "Читаю проект…" : writeBlockReason.value ?? (importing.value ? "Идёт импорт — дождитесь конца" : null);
+  const name = (i: number) => (i === st.project ? ps.name : "") || ps.names[i] || "";
+  return (
+    <select class="project-select" value={st.project} disabled={!!blocked} title={blocked ?? "Проект на SP: выберите другой, чтобы переключить"}
+      aria-label="Проект" onChange={(e) => selectProject(+(e.target as HTMLSelectElement).value + 1)}>
+      {Array.from({ length: PROJECT_COUNT }, (_, i) => <option value={i}>Проект {i + 1}{name(i) ? ` · ${name(i)}` : ""}</option>)}
+    </select>
+  );
+}
+
 export function TopBar() {
   const c = conn.value;
   const ps = project.value;
@@ -75,8 +89,7 @@ export function TopBar() {
 
       {connected && ps && st && (
         <div class="project-info">
-          <span class="chip">Проект {st.project + 1}</span>
-          <span class="project-name">{ps.name || ps.names[st.project] || "без имени"}</span>
+          <ProjectSelect />
           <TempoControl />
           {freeKb.value !== null && <span class="muted">· свободно {(freeKb.value / 1048576).toFixed(1)} GB</span>}
         </div>

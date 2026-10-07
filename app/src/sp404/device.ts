@@ -6,7 +6,7 @@ import {
   BULK_READ, CHUNK, FileReq, O_CREAT_TRUNC_RDWR, O_RDONLY, ROOT, WRITE_BATCH, parseFileReply, samplePath,
 } from "./fileApi";
 import {
-  BPM_MAX_X100, BPM_MIN_X100, FLAG_ONE_SHOT, GLOBAL, PARAM_BANK_TEMPO, PARAM_PROJECT_TEMPO, PARAM_TEMPO_SELECT, LEVEL_MAX, PAD_COUNT, PARAM_BPM, PARAM_CLEARED_BY_ONE_SHOT, PARAM_END,
+  BPM_MAX_X100, BPM_MIN_X100, FLAG_ONE_SHOT, GLOBAL, PARAM_BANK_TEMPO, PARAM_PROJECT_TEMPO, PARAM_TEMPO_SELECT, LEVEL_MAX, PAD_COUNT, PROJECT_COUNT, PARAM_BPM, PARAM_CLEARED_BY_ONE_SHOT, PARAM_END,
   PARAM_FLAGS, PARAM_GATE, PARAM_PITCH_COARSE, PARAM_PITCH_FINE, PARAM_TIME_STRETCH, PARAM_VINYL, PITCH_COARSE_MAX, PITCH_FINE_MAX,
   STRETCH_MAX_X100, STRETCH_MIN_X100, VARI_MASK, VARI_MODES, PARAM_LEVEL, PARAM_LOOP, PARAM_BPM_SYNC, PARAM_START, assignSampleBlock, byteToFrame, deviceErrorText, padName,
   parsePadBlock, parseProjectSettings, parseStatus, setParamPayload,
@@ -205,6 +205,18 @@ export class SP404Device {
         await this.setParam(pad, PARAM_GATE, 0);
       }
     });
+  }
+
+  /**
+   * Select a project (1-based) on the unit. It answers `1A 00` and then loads the project: pad
+   * blocks read empty for a while, so the caller waits before reading them (report §0).
+   */
+  async selectProject(project1: number): Promise<void> {
+    if (!(Number.isInteger(project1) && project1 >= 1 && project1 <= PROJECT_COUNT)) throw new DeviceError(`нет проекта ${project1}`);
+    const st = await this.status();
+    if (st.workingMode !== 0) throw new DeviceError("SP показывает меню — закройте его на устройстве");
+    if (st.project + 1 === project1) return;
+    await this.command([0x9a, project1 - 1, 0x00], 0x1a, "выбор проекта");
   }
 
   /** What the official app sends when it lets go of the device. No reply. */

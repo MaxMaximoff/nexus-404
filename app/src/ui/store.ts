@@ -212,6 +212,28 @@ export function scheduleReload(ms: number): void {
 
 export const reload = () => device && loadAll();
 
+/**
+ * Switch the SP to another project (1-based) and read it once loaded. The unit needs a moment:
+ * pad blocks read empty meanwhile, so wait for its `1A` notification or 2.5 s (report §0).
+ */
+export async function selectProject(p1: number): Promise<void> {
+  const d = device;
+  if (!d || importing.value || p1 === project1.value) return;
+  try {
+    await d.exclusive((x) => x.selectProject(p1));
+    batch(() => {
+      if (status.value) status.value = { ...status.value, project: p1 - 1 }; // the poll should not take it for a change made on the SP
+      playing.value = null;
+      conn.value = "loading";
+      loadProgress.value = 0;
+    });
+    log("info", `Выбран проект ${p1} — жду, пока SP его загрузит`);
+    scheduleReload(2500);
+  } catch (e) {
+    fail(e, "Смена проекта");
+  }
+}
+
 async function poll(): Promise<void> {
   const d = device;
   if (!d || conn.value !== "ready") return;
