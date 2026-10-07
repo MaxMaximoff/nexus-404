@@ -7,13 +7,13 @@ import {
 } from "../sp404";
 import {
   bpmRange, channelsOf, confirmDelete, conn, deletePad, detectPadBpm, importFiles, loadWaveform, pads, playing, preview, project, selectedPad, setBpm, setBpmSync, setGate, setLevel, setLoop, setFixedVelocity, setOneShot, setPadParam, setPitch, setTimeStretch, setVari, setVinyl,
-  setRange, stopPlaying, waveLoading, waveforms, writeBlockReason, editGroup, pickedList, planGroupBpm, applyGroupBpm, type BpmPlan,
+  setRange, stopPlaying, waveLoading, waveforms, writeBlockReason, editGroup, pickedList, selectedBank, planGroupBpm, applyGroupBpm, type BpmPlan,
 } from "./store";
 import type { PadBlock } from "../sp404";
 import { Waveform, type Range } from "./Waveform";
 import { InputPicker, RecMeter, TakeCard } from "./Recorder";
 import { disarm, recState, recTake, takeTarget } from "./rec";
-import { linkedPads, resamplePad, rsBusy, rsNormalize, rsTail } from "./resample";
+import { emptyPadsOf, groupPlan, linkedPads, resampleGroup, resamplePad, rsBusy, rsCancel, rsNormalize, rsTail } from "./resample";
 import { midiPort, midiState } from "./midi";
 
 const MIDI_NOTE = { off: "MIDI подключится при ресэмпле", asking: "жду разрешения на MIDI…", ready: "MIDI готов", nodevice: "MIDI-порт SP не найден",
@@ -660,6 +660,10 @@ function GroupInspector() {
           ))}
         </Section>
 
+        <Section id="resample" title="Ресэмпл через эффекты SP">
+          <GroupResample list={list} />
+        </Section>
+
         <Section id="mix" title="Микс">
           <Choice label="Mute Group" value={mute ?? -1} mixed={mute === null} options={OFF_A_J}
             pick={param(PARAM_MUTE_GROUP, (v) => `Mute Group ${OFF_A_J[v][1]}`, (b) => b.muteGroup)} />
@@ -676,6 +680,57 @@ function GroupInspector() {
 }
 
 type Dev = Parameters<Parameters<typeof editGroup>[1]>[0];
+
+/**
+ * Every picked pad through the effect set on the SP, one after another, onto the first empty pads
+ * of a bank. A pad that sounds as a PAD Link layer of an earlier picked pad gets no pass of its own.
+ */
+function GroupResample({ list }: { list: number[] }) {
+  const [bank, setBank] = useState(selectedBank.value);
+  useEffect(() => () => { if (recState.value !== "recording") disarm(); }, []);
+  const { sources, skipped } = groupPlan(list);
+  const targets = emptyPadsOf(bank, sources.length);
+  const busy = rsBusy.value, ready = conn.value === "ready";
+  return (
+    <div class="resample">
+      <p class="note">
+        Включите эффект на SP. Приложение по очереди нажмёт выбранные pad'ы MIDI-нотой, запишет каждый вместе с хвостом эффекта
+        и разложит дубли по пустым pad'ам банка одним импортом. Во время ресэмпла ничего не играйте на SP.
+      </p>
+      <InputPicker />
+      <RecMeter />
+      <div class="resample-opts">
+        <label>хвост
+          <select value={rsTail.value} onChange={(e) => (rsTail.value = +(e.target as HTMLSelectElement).value)}>
+            {TAILS.map((t) => <option key={t} value={t}>{t} s</option>)}
+          </select>
+        </label>
+        <label title="Пик каждого дубля на −0.3 dB; усиление считается до перевода в 16 бит"><input type="checkbox" checked={rsNormalize.value} onChange={(e) => (rsNormalize.value = (e.target as HTMLInputElement).checked)} /> нормализовать</label>
+        <label>в банк
+          <select value={bank} onChange={(e) => setBank(+(e.target as HTMLSelectElement).value)} disabled={!!busy}>
+            {[...BANKS].map((l, b) => <option key={l} value={b}>{l} ({16 - pads.value.slice(b * 16, b * 16 + 16).filter((x) => x?.size).length} своб.)</option>)}
+          </select>
+        </label>
+      </div>
+      <p class="note rs-plan">
+        {targets ? sources.map((s, i) => `${padName(s)} → ${padName(targets[i])}`).join(", ") : `В банке ${BANKS[bank]} меньше ${sources.length} пустых pad'ов`}
+        {skipped.length > 0 && ` · ${skipped.map(padName).join(", ")} — слой PAD Link, без отдельного прохода`}
+      </p>
+      <div class="row">
+        {busy ? (
+          <>
+            <button class="btn btn-danger" disabled={rsCancel.value} onClick={() => (rsCancel.value = true)}>{rsCancel.value ? "Остановлю после этого pad'а…" : "Стоп"}</button>
+            <span class="note">{busy}</span>
+          </>
+        ) : (
+          <button class="btn btn-primary" disabled={!ready || !targets || recState.value === "recording"} onClick={() => void resampleGroup(bank)}>
+            Ресэмпл {sources.length} {sources.length === 1 ? "pad'а" : "pad'ов"}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
 
 /** "Определить" / "По Start/End" for each picked pad: a list to look at first, then one write. */
 function GroupBpm({ list }: { list: number[] }) {
