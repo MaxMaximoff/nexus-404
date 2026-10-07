@@ -7,7 +7,7 @@ import {
 } from "../sp404";
 import {
   bpmRange, channelsOf, confirmDelete, conn, deletePad, detectPadBpm, importFiles, loadWaveform, pads, playing, preview, project, selectedPad, setBpm, setBpmSync, setGate, setLevel, setLoop, setFixedVelocity, setOneShot, setPadParam, setPitch, setTimeStretch, setVari, setVinyl,
-  setRange, stopPlaying, waveLoading, waveforms, writeBlockReason, editGroup, pickedList,
+  setRange, stopPlaying, waveLoading, waveforms, writeBlockReason, editGroup, pickedList, planGroupBpm, applyGroupBpm, type BpmPlan,
 } from "./store";
 import type { PadBlock } from "../sp404";
 import { Waveform, type Range } from "./Waveform";
@@ -551,6 +551,7 @@ function GroupInspector() {
                 onSave={(v) => editGroup(`BPM ${formatBpm(v)}`, (d, p1, pad) => d.setBpm(p1, pad, v), (b) => b.bpmX100 === v)} />
               <span class="note">40–200, Enter — записать во все</span>
             </div>
+            <GroupBpm list={list} />
             <div class="toggles">
               {toggle("BPM Sync", (b) => b.bpmSync, (d, p1, pad, on) => d.setBpmSync(p1, pad, on), "Сэмплы следуют темпу банка или проекта")}
               {toggle("Vinyl", (b) => b.vinyl, (d, p1, pad, on) => d.setVinyl(p1, pad, on), "Смена темпа меняет и высоту, как у пластинки")}
@@ -619,6 +620,64 @@ function GroupInspector() {
 }
 
 type Dev = Parameters<Parameters<typeof editGroup>[1]>[0];
+
+/** "Определить" / "По Start/End" for each picked pad: a list to look at first, then one write. */
+function GroupBpm({ list }: { list: number[] }) {
+  const [plan, setPlan] = useState<BpmPlan[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const key = list.join(",");
+  useEffect(() => setPlan(null), [key]); // another selection: the list no longer applies
+  const run = async (how: "detect" | "range") => {
+    setBusy(true);
+    setPlan(await planGroupBpm(how));
+    setBusy(false);
+  };
+  const changes = plan?.filter((p) => p.x100 !== null && p.x100 !== p.from).length ?? 0;
+  const blocked = conn.value !== "ready" ? "SP не подключён" : null;
+  return (
+    <>
+      <div class="trim">
+        <button class="btn" disabled={busy || !!blocked} onClick={() => run("detect")}
+          title={blocked ?? "Определить темп каждого pad'а по звуку между Start и End; сначала покажу список, запись — отдельной кнопкой"}>
+          Определить для каждого
+        </button>
+        <button class="btn" disabled={busy || !!blocked} onClick={() => run("range")}
+          title={blocked ?? "Для каждого pad'а BPM, при котором между Start и End целое число долей (как Set BPM by St/End)"}>
+          По Start/End для каждого
+        </button>
+        <label title="Темп сворачивается в этот диапазон, как на SP">
+          <span>диапазон</span>
+          <select value={bpmRange.value} onChange={(e) => (bpmRange.value = +(e.target as HTMLSelectElement).value)}>
+            {BPM_RANGES.map(([a, b], i) => <option value={i}>{a}–{b}</option>)}
+          </select>
+        </label>
+      </div>
+      {plan && (
+        <div class="bpm-plan">
+          <table>
+            <tbody>
+              {plan.map((p) => (
+                <tr key={p.pad} class={p.x100 === null ? "none" : p.x100 === p.from ? "same" : ""}>
+                  <th>{padName(p.pad)}</th>
+                  <td>{formatBpm(p.from)}</td>
+                  <td>{p.x100 === null ? "—" : `→ ${formatBpm(p.x100)}`}</td>
+                  <td class="muted">{p.x100 !== null && p.x100 === p.from ? "без изменений" : p.note}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div class="row">
+            <button class="btn btn-primary" disabled={!changes || !!writeBlockReason.value}
+              onClick={async () => { if (await applyGroupBpm(plan)) setPlan(null); }}>
+              Записать {changes}
+            </button>
+            <button class="btn" onClick={() => setPlan(null)}>Отмена</button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
 
 const parseBpmField: Parse = (text) => {
   const r = parseBpmInput(text);

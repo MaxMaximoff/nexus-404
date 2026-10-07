@@ -3,7 +3,7 @@
 import { batch, computed, effect, signal } from "@preact/signals";
 import {
   PAD_COUNT, SP404Device, SampleUploader, WebSerialTransport, bpmFromFileName, computeEnvelope, computePeaks, isSp404Port,
-  BANKS, BPM_RANGES, VARI_MODES, byteToFrame, detectBpm, formatBpm, newJob, padName, padSpeed, samplePath, smpToPcm,
+  BANKS, BPM_MAX_X100, BPM_MIN_X100, BPM_RANGES, VARI_MODES, bpmFromLength, byteToFrame, detectBpm, formatBpm, newJob, padName, padSpeed, samplePath, smpToPcm,
   type BpmResult, type DeviceStatus, type ImportJob, type LogLevel, type PadBlock, type ProjectSettings,
 } from "../sp404";
 
@@ -696,6 +696,50 @@ export async function detectPadBpm(pad: number): Promise<BpmResult | null | unde
   const r = detectBpm(w.samples.subarray(from * ch, to * ch), ch, min);
   log("info", `${padName(pad)}: BPM ${r ? (r.x100 / 100).toFixed(2) + (r.beats ? `, луп ${r.beats} долей` : "") + `, чёткость ${r.clarity.toFixed(2)}` : "не определён"} (диапазон ${min}–${max})`);
   return r;
+}
+
+/** A BPM worked out for one picked pad: `x100` null when there is none, with the reason in `note`. */
+export interface BpmPlan { pad: number; from: number; x100: number | null; note: string }
+
+/**
+ * Work out a BPM for every picked pad, by sound ("Определить") or by Start/End ("По Start/End");
+ * nothing is written: the user looks at the list first, then applyGroupBpm writes it.
+ */
+export async function planGroupBpm(how: "detect" | "range"): Promise<BpmPlan[] | null> {
+  const list = pickedList.value;
+  if (!list.length || groupProgress.value) return null;
+  const verb = how === "detect" ? "Анализирую" : "Считаю";
+  const out: BpmPlan[] = [];
+  groupProgress.value = { done: 0, total: list.length, verb };
+  try {
+    for (const pad of list) {
+      const b = pads.value[pad]!, from = b.bpmX100;
+      if (how === "detect") {
+        const r = await detectPadBpm(pad);
+        out.push(r ? { pad, from, x100: r.x100, note: r.beats ? `${r.beats} долей` : r.clarity < 0.4 ? "ритм нечёткий" : "" }
+          : { pad, from, x100: null, note: r === null ? "чёткого ритма нет" : "сэмпл не прочитан" });
+      } else {
+        await loadChannels(pad);
+        const ch = channelsOf(pad);
+        const r = ch ? bpmFromLength(byteToFrame(b.endByte, ch) - byteToFrame(b.startByte, ch), from) : null;
+        const beats = r && (r.beats >= 1 ? String(r.beats) : `1/${1 / r.beats}`);
+        out.push(!ch ? { pad, from, x100: null, note: "заголовок сэмпла не прочитан" }
+          : !r ? { pad, from, x100: null, note: "слишком короткий участок" }
+          : r.x100 < BPM_MIN_X100 || r.x100 > BPM_MAX_X100 ? { pad, from, x100: null, note: `выходит ${formatBpm(r.x100)} — вне 40–200` }
+          : { pad, from, x100: r.x100, note: `${beats} долей` });
+      }
+      groupProgress.value = { done: out.length, total: list.length, verb };
+    }
+  } finally {
+    groupProgress.value = null;
+  }
+  return out;
+}
+
+/** Write the BPMs of a plan to the pads that got one and still have another BPM. */
+export function applyGroupBpm(plan: BpmPlan[]): Promise<boolean> {
+  const to = new Map(plan.flatMap((p) => (p.x100 === null ? [] : [[p.pad, p.x100] as const])));
+  return editGroup("BPM по каждому pad'у", (d, p1, pad) => d.setBpm(p1, pad, to.get(pad)!), (b) => to.get(b.index) === undefined || to.get(b.index) === b.bpmX100);
 }
 
 /** Pad started by preview that may still be playing (Gate off), for the stop button; null when none. */
