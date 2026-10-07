@@ -2,8 +2,8 @@
 // several pads at once), which the remote preview (8E) cannot: it plays one pad at a time
 // (checked on the unit). Note map as the SP's MIDI export of patterns uses it (SparkyMK2 spec
 // 04-patterns.md): channel = bank (A = 1 … J = 10), note = 36 + the pad's place in the 4 × 4 grid
-// from the bottom row up (pad 13 = 36, pad 1 = 48). That is one channel per bank (Roland's MIDI
-// mode "B"); in mode "A" the SP maps notes differently.
+// from the bottom row up (pad 13 = 36, pad 1 = 48). That is Roland's MIDI mode "A" (notes 35–51,
+// one channel per bank; checked on the unit); mode "B" maps notes 12–91 differently.
 
 import { signal } from "@preact/signals";
 import { log } from "./store";

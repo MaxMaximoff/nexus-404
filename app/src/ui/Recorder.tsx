@@ -2,9 +2,10 @@ import { useEffect } from "preact/hooks";
 import { padName } from "../sp404";
 import {
   RATE, TAKE_DRAG, arm, disarm, dropTake, listInputs, playTake, recClip, recError, recInputId, recInputs, recLevel, recSeconds, recState, recTake, record,
-  setInput, stop, takePlaying, takeTarget, takeToPad,
+  setInput, stop, takeBank, takePlaying, takeTarget, takeToPad,
 } from "./rec";
-import { conn } from "./store";
+import { conn, pads, selectedPad } from "./store";
+import { BANKS } from "../sp404";
 import { Waveform } from "./Waveform";
 import { IconMic, IconPlay, IconStop, IconTrash } from "./icons";
 
@@ -66,6 +67,10 @@ export function TakeCard() {
       <Waveform wave={take.wave} />
       <div class="rec-take-actions">
         <button class="btn" onClick={() => void playTake()}>{takePlaying.value ? <><IconStop /> Стоп</> : <><IconPlay /> Прослушать</>}</button>
+        <select class="take-bank" value={takeBank.value ?? selectedPad.value >> 4} onChange={(e) => (takeBank.value = +(e.target as HTMLSelectElement).value)}
+          aria-label="Банк, куда положить дубль" title="Куда положить дубль: первый пустой pad этого банка">
+          {[...BANKS].map((l, b) => <option key={l} value={b}>банк {l} ({16 - pads.value.slice(b * 16, b * 16 + 16).filter((x) => x?.size).length} своб.)</option>)}
+        </select>
         <button class="btn btn-primary" disabled={!ready || target === null} onClick={() => target !== null && takeToPad(target)}
           title={target === null ? "В банке нет пустых pad'ов" : "Записать дубль на SP"}>
           {target === null ? "Нет пустого pad'а" : `На ${padName(target)}`}

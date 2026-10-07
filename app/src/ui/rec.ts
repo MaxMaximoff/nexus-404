@@ -251,11 +251,17 @@ export function stopTake(): void {
   takePlaying.value = false;
 }
 
-/** The pad the take button puts it on: the selected pad when empty, else the first empty pad of its bank. */
+/** The bank the take goes to (null: the selected pad's bank). */
+export const takeBank = signal<number | null>(null);
+
+/**
+ * The pad the take button puts it on: in the selected pad's bank, that pad when empty, else the
+ * first empty pad; in another chosen bank, its first empty pad.
+ */
 export function takeTarget(): number | null {
-  const sel = selectedPad.value;
-  if (!pads.value[sel]?.size) return sel;
-  for (let i = sel & ~15; i < (sel & ~15) + 16; i++) if (!pads.value[i]?.size) return i;
+  const sel = selectedPad.value, bank = takeBank.value ?? sel >> 4;
+  if (bank === sel >> 4 && !pads.value[sel]?.size) return sel;
+  for (let i = bank * 16; i < bank * 16 + 16; i++) if (!pads.value[i]?.size) return i;
   return null;
 }
 

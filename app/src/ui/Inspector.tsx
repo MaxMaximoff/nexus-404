@@ -12,7 +12,7 @@ import {
 import type { PadBlock } from "../sp404";
 import { Waveform, type Range } from "./Waveform";
 import { InputPicker, RecMeter, TakeCard } from "./Recorder";
-import { disarm, recState, recTake, takeTarget } from "./rec";
+import { disarm, recState, takeTarget } from "./rec";
 import { emptyPadsOf, groupPlan, linkedPads, resampleGroup, resamplePad, rsBusy, rsCancel, rsNormalize, rsTail } from "./resample";
 import { midiPort, midiState } from "./midi";
 
@@ -74,90 +74,81 @@ function FilledPad({ pad, ready }: { pad: number; ready: boolean }) {
   const channels = channelsOf(pad);
   const total = channels ? byteToFrame(p.size, channels) : null;
   const range = channels && total ? { start: byteToFrame(p.startByte, channels) / total, end: byteToFrame(p.endByte, channels) / total } : undefined;
-  const frames = channels ? (p.endByte - p.startByte) / (2 * channels) : null;
-  const speed = speedOf(pad);
   const sec = (f: number) => (f / RATE).toFixed(2);
+  const facts = [total !== null && `${sec(total)} s`, channels && (channels === 1 ? "mono" : "stereo"), `${(p.size / 1048576).toFixed(2)} MB`].filter(Boolean).join(" · ");
   return (
     <>
+      <div class="insp-facts">{facts}</div>
+      <PadChips pad={pad} />
+      <Tabs />
       <div class="insp-scroll">
-      <Section id="sample" title="Сэмпл" summary={channels && total ? `${sec(byteToFrame(p.startByte, channels))}–${sec(byteToFrame(p.endByte, channels))} s из ${sec(total)} s` : undefined}>
-        {wave ? <Waveform wave={wave} range={range} onCommit={total && !writeBlockReason.value ? (r) => commitDrag(pad, r, total) : undefined} /> : (
-          <div class="wave-box">
-            <div class="wave-placeholder">
-              {loading ? (
-                <>
-                  <span>Читаю сэмпл с SP… {Math.round(loading.progress * 100)} %</span>
-                  <span class="bar"><span style={{ width: `${loading.progress * 100}%` }} /></span>
-                </>
-              ) : (
-                <button class="btn" disabled={!ready} onClick={() => loadWaveform(pad)}>
-                  <IconWave /> Показать волну ({(p.size / 1048576).toFixed(1)} MB)
-                </button>
-              )}
+        <TabPanel id="sample">
+          <Card>
+            {wave ? <Waveform wave={wave} range={range} onCommit={total && !writeBlockReason.value ? (r) => commitDrag(pad, r, total) : undefined} /> : (
+              <div class="wave-box">
+                <div class="wave-placeholder">
+                  {loading ? (
+                    <>
+                      <span>Читаю сэмпл с SP… {Math.round(loading.progress * 100)} %</span>
+                      <span class="bar"><span style={{ width: `${loading.progress * 100}%` }} /></span>
+                    </>
+                  ) : (
+                    <button class="btn" disabled={!ready} onClick={() => loadWaveform(pad)}>
+                      <IconWave /> Показать волну ({(p.size / 1048576).toFixed(1)} MB)
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+            {channels ? <RangeEditor pad={pad} channels={channels} wave={wave} /> : <div class="range-editor muted">Start/End: читаю заголовок сэмпла…</div>}
+          </Card>
+          <Card title="Темп и высота">
+            <BpmEditor pad={pad} />
+            <TempoPitch pad={pad} />
+          </Card>
+        </TabPanel>
+
+        <TabPanel id="pad">
+          <Card>
+            <Slider pad={pad} label="Level" value={p.level} min={0} max={LEVEL_MAX} commit={(v) => setLevel(pad, v)} />
+            <Slider pad={pad} label="Balance" value={p.balance} min={13} max={115} show={fmtBalance} centre={BALANCE_CENTRE}
+              commit={(v) => setPadParam(pad, PARAM_BALANCE, v, `Balance ${fmtBalance(v)}`)}
+              hint="Баланс стерео: громкость левого и правого канала (L51 … C … R51); двойной клик — в центр. На моно-сэмпл не действует (проверено на SP)" />
+            {channels === 1 && <span class="note slider-note">Моно-сэмпл: Balance на него не действует</span>}
+            <div class="toggles">
+              <Toggle label="Gate" on={p.gate} onChange={(on) => setGate(pad, on)} />
+              <Toggle label="Loop" on={p.loop} onChange={(on) => setLoop(pad, on)} />
+              <Toggle label="One Shot" on={p.oneShot} onChange={(on) => setOneShot(pad, on)}
+                hint="Как в официальном App: при включении One Shot выключаются Gate и Loop" />
+              <Toggle label="Fixed Velocity" on={p.fixedVelocity} onChange={(on) => setFixedVelocity(pad, on)}
+                hint="Громкость не зависит от силы удара по pad'у" />
             </div>
-          </div>
-        )}
-        {channels ? <RangeEditor pad={pad} channels={channels} wave={wave} /> : <div class="range-editor muted">Start/End: читаю заголовок сэмпла…</div>}
-      </Section>
+            <Choice label="Play" value={p.playMode} options={PLAY_MODES.map((n, i) => [i, n])} kind="segmented"
+              pick={(v) => setPadParam(pad, PARAM_PLAY_MODE, v, `Play Mode ${PLAY_MODES[v]}`)} hint="Направление воспроизведения" />
+          </Card>
+          <Card title="Огибающая">
+            <Slider pad={pad} label="Attack" value={p.attack} min={0} max={127} commit={(v) => setPadParam(pad, PARAM_ATTACK, v, `Attack ${v}`)} hint="Нарастание в начале" />
+            <Slider pad={pad} label="Hold" value={p.hold} min={1} max={100} commit={(v) => setPadParam(pad, PARAM_HOLD, v, `Hold ${v}`)} hint="Сколько держится полная громкость" />
+            <Slider pad={pad} label="Release" value={p.release} min={0} max={127} commit={(v) => setPadParam(pad, PARAM_RELEASE, v, `Release ${v}`)} hint="Затухание в конце" />
+          </Card>
+        </TabPanel>
 
-      <Section id="tempo" title="Темп и высота"
-        summary={[`${formatBpm(p.bpmX100)} BPM`, speed && `×${speed.ratio.toFixed(2)}`, p.bpmSync && "Sync", p.vinyl ? "Vinyl" : p.vari > 0 && VARI_MODES[p.vari]].filter(Boolean).join(" · ")}>
-        <BpmEditor pad={pad} />
-        <TempoPitch pad={pad} />
-      </Section>
+        <TabPanel id="mix">
+          <Card>
+            <Choice label="Mute Group" value={p.muteGroup} options={OFF_A_J} pick={(v) => setPadParam(pad, PARAM_MUTE_GROUP, v, `Mute Group ${OFF_A_J[v][1]}`)}
+              hint="Pad'ы одной группы глушат друг друга" />
+            <Choice label="PAD Link" value={p.padLink} options={OFF_A_J} pick={(v) => setPadParam(pad, PARAM_PAD_LINK, v, `PAD Link ${OFF_A_J[v][1]}`)}
+              hint="Pad'ы одной группы звучат вместе" />
+            <Choice label="BUS FX" value={p.busFx} options={BUS_FX.map((n, i) => [i, n])} kind="segmented"
+              pick={(v) => setPadParam(pad, PARAM_BUS_FX, v, `BUS FX ${BUS_FX[v]}`)} hint="Через какую шину эффектов идёт pad" />
+            <Choice label="Roll" value={p.roll} options={ROLL.map((n, i) => [i, n])} pick={(v) => setPadParam(pad, PARAM_ROLL, v, `Roll ${ROLL[v]}`)}
+              hint="Шаг повтора при Roll" />
+          </Card>
+        </TabPanel>
 
-      <Section id="play" title="Воспроизведение"
-        summary={[`Level ${p.level}`, p.balance !== BALANCE_CENTRE && `Balance ${fmtBalance(p.balance)}`, p.gate && "Gate", p.loop && "Loop", p.oneShot && "One Shot",
-          p.fixedVelocity && "Fixed Vel", p.playMode && PLAY_MODES[p.playMode]].filter(Boolean).join(" · ")}>
-        <Slider pad={pad} label="Level" value={p.level} min={0} max={LEVEL_MAX} commit={(v) => setLevel(pad, v)} />
-        <Slider pad={pad} label="Balance" value={p.balance} min={13} max={115} show={fmtBalance} centre={BALANCE_CENTRE}
-          commit={(v) => setPadParam(pad, PARAM_BALANCE, v, `Balance ${fmtBalance(v)}`)}
-          hint="Баланс стерео: громкость левого и правого канала (L51 … C … R51); двойной клик — в центр. На моно-сэмпл не действует (проверено на SP)" />
-        {channels === 1 && <span class="note slider-note">Моно-сэмпл: Balance на него не действует</span>}
-        <div class="toggles">
-          <Toggle label="Gate" on={p.gate} onChange={(on) => setGate(pad, on)} />
-          <Toggle label="Loop" on={p.loop} onChange={(on) => setLoop(pad, on)} />
-          <Toggle label="One Shot" on={p.oneShot} onChange={(on) => setOneShot(pad, on)}
-            hint="Как в официальном App: при включении One Shot выключаются Gate и Loop" />
-          <Toggle label="Fixed Velocity" on={p.fixedVelocity} onChange={(on) => setFixedVelocity(pad, on)}
-            hint="Громкость не зависит от силы удара по pad'у" />
-        </div>
-        <Choice label="Play" value={p.playMode} options={PLAY_MODES.map((n, i) => [i, n])} kind="segmented"
-          pick={(v) => setPadParam(pad, PARAM_PLAY_MODE, v, `Play Mode ${PLAY_MODES[v]}`)} hint="Направление воспроизведения" />
-      </Section>
-
-      <Section id="ahr" title="Огибающая" summary={`A ${p.attack} · H ${p.hold} · R ${p.release}`}>
-        <Slider pad={pad} label="Attack" value={p.attack} min={0} max={127} commit={(v) => setPadParam(pad, PARAM_ATTACK, v, `Attack ${v}`)} hint="Нарастание в начале" />
-        <Slider pad={pad} label="Hold" value={p.hold} min={1} max={100} commit={(v) => setPadParam(pad, PARAM_HOLD, v, `Hold ${v}`)} hint="Сколько держится полная громкость" />
-        <Slider pad={pad} label="Release" value={p.release} min={0} max={127} commit={(v) => setPadParam(pad, PARAM_RELEASE, v, `Release ${v}`)} hint="Затухание в конце" />
-      </Section>
-
-      <Section id="mix" title="Микс"
-        summary={[p.muteGroup && `Mute ${OFF_A_J[p.muteGroup]?.[1] ?? p.muteGroup}`, p.padLink && `Link ${OFF_A_J[p.padLink]?.[1] ?? p.padLink}`, BUS_FX[p.busFx] ?? `BUS ${p.busFx}`, `Roll ${ROLL[p.roll] ?? p.roll}`].filter(Boolean).join(" · ")}>
-        <Choice label="Mute Group" value={p.muteGroup} options={OFF_A_J} pick={(v) => setPadParam(pad, PARAM_MUTE_GROUP, v, `Mute Group ${OFF_A_J[v][1]}`)}
-          hint="Pad'ы одной группы глушат друг друга" />
-        <Choice label="PAD Link" value={p.padLink} options={OFF_A_J} pick={(v) => setPadParam(pad, PARAM_PAD_LINK, v, `PAD Link ${OFF_A_J[v][1]}`)}
-          hint="Pad'ы одной группы звучат вместе" />
-        <Choice label="BUS FX" value={p.busFx} options={BUS_FX.map((n, i) => [i, n])} kind="segmented"
-          pick={(v) => setPadParam(pad, PARAM_BUS_FX, v, `BUS FX ${BUS_FX[v]}`)} hint="Через какую шину эффектов идёт pad" />
-        <Choice label="Roll" value={p.roll} options={ROLL.map((n, i) => [i, n])} pick={(v) => setPadParam(pad, PARAM_ROLL, v, `Roll ${ROLL[v]}`)}
-          hint="Шаг повтора при Roll" />
-      </Section>
-
-      <Section id="resample" title="Ресэмпл через эффекты SP" summary={rsBusy.value ?? (recTake.value?.source === pad ? "есть дубль" : undefined)}>
-        <Resample pad={pad} />
-      </Section>
-
-      <Section id="file" title="Файл"
-        summary={[frames !== null && `${sec(frames)} s`, channels && (channels === 1 ? "mono" : "stereo"), `${(p.size / 1048576).toFixed(2)} MB`].filter(Boolean).join(" · ")}>
-        <dl class="facts">
-          <div><dt>Звучит</dt><dd>{frames !== null ? `${sec(frames)} s` : "—"}</dd></div>
-          <div><dt>Весь сэмпл</dt><dd>{total !== null ? `${sec(total)} s` : "—"}</dd></div>
-          <div><dt>Каналы</dt><dd>{channels ? (channels === 1 ? "mono" : "stereo") : "—"}</dd></div>
-          <div><dt>Размер</dt><dd>{(p.size / 1048576).toFixed(2)} MB</dd></div>
-        </dl>
-      </Section>
-
+        <TabPanel id="resample">
+          <Card><Resample pad={pad} /></Card>
+        </TabPanel>
       </div>
       <div class="play-row">
         <button
@@ -184,43 +175,92 @@ function FilledPad({ pad, ready }: { pad: number; ready: boolean }) {
   );
 }
 
-// ------------------------------------------------------------------ accordion
+// ------------------------------------------------------------------ tabs
 
-const OPEN_KEY = "nexus404.inspector.open";
-const DEFAULT_OPEN = ["sample", "tempo", "play"];
+type Tab = "sample" | "pad" | "mix" | "resample";
+const TAB_KEY = "nexus404.inspector.tab";
+const TABS: [Tab, string][] = [["sample", "Сэмпл"], ["pad", "Pad"], ["mix", "Микс"]];
 
-function loadOpen(): Set<string> {
+function loadTab(): Tab {
   try {
-    const v = JSON.parse(localStorage.getItem(OPEN_KEY) ?? "null");
-    if (Array.isArray(v)) return new Set(v.filter((x) => typeof x === "string"));
-  } catch { /* storage blocked or broken: use the default */ }
-  return new Set(DEFAULT_OPEN);
+    const v = localStorage.getItem(TAB_KEY);
+    if (v === "pad" || v === "mix" || v === "resample") return v;
+  } catch { /* storage blocked */ }
+  return "sample";
 }
 
-/** Which inspector sections are open; kept per browser, the same for every pad. */
-const openSections = signal(loadOpen());
+/** The inspector's mode; kept per browser, the same for every pad. */
+const inspTab = signal<Tab>(loadTab());
 
-function toggleSection(id: string): void {
-  const next = new Set(openSections.value);
-  if (!next.delete(id)) next.add(id);
-  openSections.value = next;
-  try { localStorage.setItem(OPEN_KEY, JSON.stringify([...next])); } catch { /* not kept: fine */ }
+function showTab(t: Tab): void {
+  inspTab.value = t;
+  try { localStorage.setItem(TAB_KEY, t); } catch { /* not kept: fine */ }
 }
 
-/** A collapsible inspector section; a collapsed one shows `summary` in its header. */
-function Section({ id, title, summary, children }: { id: string; title: string; summary?: string; children: preact.ComponentChildren }) {
-  const open = openSections.value.has(id);
+/**
+ * Сэмпл · Pad · Микс edit the pad; Ресэмпл, set apart, is an operation on its sound. Leaving it
+ * closes the recording input (unless a recording runs), so the browser's mic indicator goes off.
+ */
+function Tabs() {
+  const tab = inspTab.value;
+  useEffect(() => { if (tab !== "resample" && recState.value !== "recording") disarm(); }, [tab]);
   return (
-    <section class={`acc ${open ? "open" : ""}`}>
-      <button type="button" class="acc-head" aria-expanded={open} aria-controls={`acc-${id}`} onClick={() => toggleSection(id)}>
-        <span class="acc-title">{title}</span>
-        {!open && summary && <span class="acc-sum">{summary}</span>}
-        <svg class="acc-chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M6 9l6 6 6-6" />
-        </svg>
-      </button>
-      {open && <div class="acc-body" id={`acc-${id}`}>{children}</div>}
+    <div class="insp-tabs" role="tablist" aria-label="Режим инспектора">
+      {TABS.map(([id, label]) => (
+        <button key={id} type="button" role="tab" aria-selected={tab === id} class={`insp-tab ${tab === id ? "on" : ""}`} onClick={() => showTab(id)}>{label}</button>
+      ))}
+      <button type="button" role="tab" aria-selected={tab === "resample"} class={`insp-tab insp-tab-op ${tab === "resample" ? "on" : ""}`}
+        onClick={() => showTab("resample")} title="Операция над звуком: сыграть pad через эффекты SP и записать">⚡ Ресэмпл</button>
+    </div>
+  );
+}
+
+/** A tab's content stays mounted when hidden, so the wave zoom and typed values are there on return. */
+function TabPanel({ id, children }: { id: Tab; children: preact.ComponentChildren }) {
+  return <div class="tab-panel" role="tabpanel" hidden={inspTab.value !== id}>{children}</div>;
+}
+
+/** A block inside a tab. */
+function Card({ title, children }: { title?: string; children: preact.ComponentChildren }) {
+  return (
+    <section class="acc open card">
+      {title && <div class="card-title">{title}</div>}
+      <div class="acc-body">{children}</div>
     </section>
+  );
+}
+
+/**
+ * What is special about the pad, at a glance on any tab: the BPM always, the rest only when it is
+ * not the usual value. A chip opens the tab where it is set.
+ */
+function PadChips({ pad }: { pad: number }) {
+  const p = pads.value[pad]!;
+  const speed = speedOf(pad);
+  const chips: [string, Tab, string?][] = [
+    [`${formatBpm(p.bpmX100)} BPM`, "sample"],
+    ...(p.bpmSync ? [["Sync", "sample", speed ? `скорость ×${speed.ratio.toFixed(2)}` : undefined] as [string, Tab, string?]] : []),
+    ...(p.vinyl ? [["Vinyl", "sample"] as [string, Tab]] : p.vari > 0 ? [[VARI_MODES[p.vari], "sample", "VARI MODE"] as [string, Tab, string]] : []),
+    ...(p.timeStretchX100 !== 10000 ? [[`Stretch ${formatStretch(p.timeStretchX100)} %`, "sample"] as [string, Tab]] : []),
+    ...(!p.vinyl && (p.pitchCoarse || p.pitchFine) ? [[`Pitch ${signed(p.pitchCoarse)}${p.pitchFine ? ` ${signed(p.pitchFine)} ct` : " st"}`, "sample"] as [string, Tab]] : []),
+    ...(p.level !== LEVEL_MAX ? [[`Level ${p.level}`, "pad"] as [string, Tab]] : []),
+    ...(p.balance !== BALANCE_CENTRE ? [[`Bal ${fmtBalance(p.balance)}`, "pad"] as [string, Tab]] : []),
+    ...(!p.gate ? [["Gate off", "pad"] as [string, Tab]] : []),
+    ...(p.loop ? [["Loop", "pad"] as [string, Tab]] : []),
+    ...(p.oneShot ? [["One Shot", "pad"] as [string, Tab]] : []),
+    ...(p.fixedVelocity ? [["Fixed Vel", "pad"] as [string, Tab]] : []),
+    ...(p.playMode ? [[PLAY_MODES[p.playMode] ?? `Play ${p.playMode}`, "pad"] as [string, Tab]] : []),
+    ...(p.attack || p.release || p.hold !== 100 ? [[`AHR ${p.attack}/${p.hold}/${p.release}`, "pad"] as [string, Tab]] : []),
+    ...(p.muteGroup ? [[`M ${OFF_A_J[p.muteGroup]?.[1] ?? p.muteGroup}`, "mix", "Mute Group"] as [string, Tab, string]] : []),
+    ...(p.padLink ? [[`L ${OFF_A_J[p.padLink]?.[1] ?? p.padLink}`, "mix", "PAD Link"] as [string, Tab, string]] : []),
+    ...(p.busFx !== 1 ? [[BUS_FX[p.busFx] === "Off" ? "без BUS FX" : BUS_FX[p.busFx] ?? `BUS ${p.busFx}`, "mix"] as [string, Tab]] : []),
+  ];
+  return (
+    <div class="pad-chips">
+      {chips.map(([label, tab, hint]) => (
+        <button key={label} type="button" class={`pchip ${inspTab.value === tab ? "cur" : ""}`} onClick={() => showTab(tab)} title={hint ?? `Открыть «${TABS.find(([t]) => t === tab)?.[1] ?? "Ресэмпл"}»`}>{label}</button>
+      ))}
+    </div>
   );
 }
 
@@ -596,84 +636,90 @@ function GroupInspector() {
         <span class="chip chip-accent">{list.length}</span>
         <span class="insp-name" title={list.map(padName).join(", ")}>Выбрано: {list.map(padName).join(", ")}</span>
       </div>
+      <div class="insp-facts">Изменения записываются во все выбранные pad'ы</div>
+      <Tabs />
       <div class="insp-scroll">
-        <p class="group-note">Изменения записываются во все выбранные pad'ы. Start/End, волна и имя — по одному pad'у: снимите выделение (Esc).</p>
-
-        <Section id="tempo" title="Темп и высота">
-          <div class="tempo-pitch">
-            <div class="tp-row">
-              <span>BPM</span>
-              <ValueField value={num((b) => b.bpmX100)} format={formatBpm} parse={parseBpmField} label="BPM" width={84} placeholder="разные"
-                onSave={(v) => editGroup(`BPM ${formatBpm(v)}`, (d, p1, pad) => d.setBpm(p1, pad, v), (b) => b.bpmX100 === v)} />
-              <span class="note">40–200, Enter — записать во все</span>
+        <TabPanel id="sample">
+          <Card title="Темп и высота">
+            <div class="tempo-pitch">
+              <div class="tp-row">
+                <span>BPM</span>
+                <ValueField value={num((b) => b.bpmX100)} format={formatBpm} parse={parseBpmField} label="BPM" width={84} placeholder="разные"
+                  onSave={(v) => editGroup(`BPM ${formatBpm(v)}`, (d, p1, pad) => d.setBpm(p1, pad, v), (b) => b.bpmX100 === v)} />
+                <span class="note">40–200, Enter — записать во все</span>
+              </div>
+              <GroupBpm list={list} />
+              <div class="toggles">
+                {toggle("BPM Sync", (b) => b.bpmSync, (d, p1, pad, on) => d.setBpmSync(p1, pad, on), "Сэмплы следуют темпу банка или проекта")}
+                {toggle("Vinyl", (b) => b.vinyl, (d, p1, pad, on) => d.setVinyl(p1, pad, on), "Смена темпа меняет и высоту, как у пластинки")}
+              </div>
+              <Choice label="VARI" value={vari ?? -1} mixed={vari === null} kind="segmented" options={VARI_MODES.map((n, i) => [i, n])}
+                disabled={anyVinyl ? "VARI MODE работает при выключенном Vinyl — у части pad'ов Vinyl включён" : null}
+                pick={(v) => editGroup(`VARI MODE ${VARI_MODES[v]}`, (d, p1, pad) => d.setVari(p1, pad, v), (b) => b.vari === v)} />
+              <div class="tp-row">
+                <span>Stretch</span>
+                <ValueField value={num((b) => b.timeStretchX100)} format={formatStretch} parse={parseStretch} label="Time Stretch" width={64} placeholder="разн."
+                  onSave={(v) => editGroup(`Time Stretch ${formatStretch(v)} %`, (d, p1, pad) => d.setTimeStretch(p1, pad, v), (b) => b.timeStretchX100 === v)} />
+                <span class="unit">%</span>
+              </div>
+              <div class="tp-row">
+                <span>Pitch</span>
+                <ValueField value={num((b) => b.pitchCoarse)} format={signed} parse={intIn(-PITCH_COARSE_MAX, PITCH_COARSE_MAX)} label="Pitch, полутоны" width={52} placeholder="разн."
+                  disabled={anyVinyl ? "Pitch меняется при выключенном Vinyl" : null}
+                  onSave={(v) => editGroup(`Pitch ${signed(v)} st`, (d, p1, pad) => d.setPitch(p1, pad, v, pads.value[pad]!.pitchFine), (b) => b.pitchCoarse === v)} />
+                <span class="unit">st</span>
+                <ValueField value={num((b) => b.pitchFine)} format={signed} parse={intIn(-PITCH_FINE_MAX, PITCH_FINE_MAX)} label="Pitch, центы" width={58} placeholder="разн."
+                  disabled={anyVinyl ? "Pitch меняется при выключенном Vinyl" : null}
+                  onSave={(v) => editGroup(`Pitch ${signed(v)} ct`, (d, p1, pad) => d.setPitch(p1, pad, pads.value[pad]!.pitchCoarse, v), (b) => b.pitchFine === v)} />
+                <span class="unit">ct</span>
+                {anyVinyl && <span class="note">при выключенном Vinyl</span>}
+              </div>
             </div>
-            <GroupBpm list={list} />
+          </Card>
+          <p class="group-note">Start/End, волна и имя — по одному pad'у: снимите выделение (Esc).</p>
+        </TabPanel>
+
+        <TabPanel id="pad">
+          <Card>
+            <Slider pad={anchor} label="Level" value={same((b) => b.level) ?? blocks[0].level} mixed={same((b) => b.level) === null} min={0} max={LEVEL_MAX}
+              commit={(v) => editGroup(`Level ${v}`, (d, p1, pad) => d.setLevel(p1, pad, v), (b) => b.level === v)} />
+            <Slider pad={anchor} label="Balance" value={same((b) => b.balance) ?? BALANCE_CENTRE} mixed={same((b) => b.balance) === null} min={13} max={115}
+              show={fmtBalance} centre={BALANCE_CENTRE} hint="Баланс стерео; на моно-сэмплы не действует"
+              commit={param(PARAM_BALANCE, (v) => `Balance ${fmtBalance(v)}`, (b) => b.balance)} />
             <div class="toggles">
-              {toggle("BPM Sync", (b) => b.bpmSync, (d, p1, pad, on) => d.setBpmSync(p1, pad, on), "Сэмплы следуют темпу банка или проекта")}
-              {toggle("Vinyl", (b) => b.vinyl, (d, p1, pad, on) => d.setVinyl(p1, pad, on), "Смена темпа меняет и высоту, как у пластинки")}
+              {toggle("Gate", (b) => b.gate, (d, p1, pad, on) => d.setGate(p1, pad, on))}
+              {toggle("Loop", (b) => b.loop, (d, p1, pad, on) => d.setLoop(p1, pad, on))}
+              {toggle("One Shot", (b) => b.oneShot, (d, p1, pad, on) => d.setOneShot(p1, pad, on), "При включении One Shot выключаются Gate и Loop")}
+              {toggle("Fixed Velocity", (b) => b.fixedVelocity, (d, p1, pad, on) => d.setFixedVelocity(p1, pad, on))}
             </div>
-            <Choice label="VARI" value={vari ?? -1} mixed={vari === null} kind="segmented" options={VARI_MODES.map((n, i) => [i, n])}
-              disabled={anyVinyl ? "VARI MODE работает при выключенном Vinyl — у части pad'ов Vinyl включён" : null}
-              pick={(v) => editGroup(`VARI MODE ${VARI_MODES[v]}`, (d, p1, pad) => d.setVari(p1, pad, v), (b) => b.vari === v)} />
-            <div class="tp-row">
-              <span>Stretch</span>
-              <ValueField value={num((b) => b.timeStretchX100)} format={formatStretch} parse={parseStretch} label="Time Stretch" width={64} placeholder="разн."
-                onSave={(v) => editGroup(`Time Stretch ${formatStretch(v)} %`, (d, p1, pad) => d.setTimeStretch(p1, pad, v), (b) => b.timeStretchX100 === v)} />
-              <span class="unit">%</span>
-            </div>
-            <div class="tp-row">
-              <span>Pitch</span>
-              <ValueField value={num((b) => b.pitchCoarse)} format={signed} parse={intIn(-PITCH_COARSE_MAX, PITCH_COARSE_MAX)} label="Pitch, полутоны" width={52} placeholder="разн."
-                disabled={anyVinyl ? "Pitch меняется при выключенном Vinyl" : null}
-                onSave={(v) => editGroup(`Pitch ${signed(v)} st`, (d, p1, pad) => d.setPitch(p1, pad, v, pads.value[pad]!.pitchFine), (b) => b.pitchCoarse === v)} />
-              <span class="unit">st</span>
-              <ValueField value={num((b) => b.pitchFine)} format={signed} parse={intIn(-PITCH_FINE_MAX, PITCH_FINE_MAX)} label="Pitch, центы" width={58} placeholder="разн."
-                disabled={anyVinyl ? "Pitch меняется при выключенном Vinyl" : null}
-                onSave={(v) => editGroup(`Pitch ${signed(v)} ct`, (d, p1, pad) => d.setPitch(p1, pad, pads.value[pad]!.pitchCoarse, v), (b) => b.pitchFine === v)} />
-              <span class="unit">ct</span>
-              {anyVinyl && <span class="note">при выключенном Vinyl</span>}
-            </div>
-          </div>
-        </Section>
+            <Choice label="Play" value={playMode ?? -1} mixed={playMode === null} options={PLAY_MODES.map((n, i) => [i, n])} kind="segmented"
+              pick={param(PARAM_PLAY_MODE, (v) => `Play Mode ${PLAY_MODES[v]}`, (b) => b.playMode)} />
+          </Card>
+          <Card title="Огибающая">
+            {([["Attack", PARAM_ATTACK, 0, 127, (b: PadBlock) => b.attack], ["Hold", PARAM_HOLD, 1, 100, (b: PadBlock) => b.hold],
+              ["Release", PARAM_RELEASE, 0, 127, (b: PadBlock) => b.release]] as const).map(([label, id, min, max, get]) => (
+              <Slider key={label} pad={anchor} label={label} value={same(get) ?? get(blocks[0])} mixed={same(get) === null} min={min} max={max}
+                commit={param(id, (v) => `${label} ${v}`, get)} />
+            ))}
+          </Card>
+        </TabPanel>
 
-        <Section id="play" title="Воспроизведение">
-          <Slider pad={anchor} label="Level" value={same((b) => b.level) ?? blocks[0].level} mixed={same((b) => b.level) === null} min={0} max={LEVEL_MAX}
-            commit={(v) => editGroup(`Level ${v}`, (d, p1, pad) => d.setLevel(p1, pad, v), (b) => b.level === v)} />
-          <Slider pad={anchor} label="Balance" value={same((b) => b.balance) ?? BALANCE_CENTRE} mixed={same((b) => b.balance) === null} min={13} max={115}
-            show={fmtBalance} centre={BALANCE_CENTRE} hint="Баланс стерео; на моно-сэмплы не действует"
-            commit={param(PARAM_BALANCE, (v) => `Balance ${fmtBalance(v)}`, (b) => b.balance)} />
-          <div class="toggles">
-            {toggle("Gate", (b) => b.gate, (d, p1, pad, on) => d.setGate(p1, pad, on))}
-            {toggle("Loop", (b) => b.loop, (d, p1, pad, on) => d.setLoop(p1, pad, on))}
-            {toggle("One Shot", (b) => b.oneShot, (d, p1, pad, on) => d.setOneShot(p1, pad, on), "При включении One Shot выключаются Gate и Loop")}
-            {toggle("Fixed Velocity", (b) => b.fixedVelocity, (d, p1, pad, on) => d.setFixedVelocity(p1, pad, on))}
-          </div>
-          <Choice label="Play" value={playMode ?? -1} mixed={playMode === null} options={PLAY_MODES.map((n, i) => [i, n])} kind="segmented"
-            pick={param(PARAM_PLAY_MODE, (v) => `Play Mode ${PLAY_MODES[v]}`, (b) => b.playMode)} />
-        </Section>
+        <TabPanel id="mix">
+          <Card>
+            <Choice label="Mute Group" value={mute ?? -1} mixed={mute === null} options={OFF_A_J}
+              pick={param(PARAM_MUTE_GROUP, (v) => `Mute Group ${OFF_A_J[v][1]}`, (b) => b.muteGroup)} />
+            <Choice label="PAD Link" value={link ?? -1} mixed={link === null} options={OFF_A_J}
+              pick={param(PARAM_PAD_LINK, (v) => `PAD Link ${OFF_A_J[v][1]}`, (b) => b.padLink)} />
+            <Choice label="BUS FX" value={bus ?? -1} mixed={bus === null} options={BUS_FX.map((n, i) => [i, n])} kind="segmented"
+              pick={param(PARAM_BUS_FX, (v) => `BUS FX ${BUS_FX[v]}`, (b) => b.busFx)} />
+            <Choice label="Roll" value={roll ?? -1} mixed={roll === null} options={ROLL.map((n, i) => [i, n])}
+              pick={param(PARAM_ROLL, (v) => `Roll ${ROLL[v]}`, (b) => b.roll)} />
+          </Card>
+        </TabPanel>
 
-        <Section id="ahr" title="Огибающая">
-          {([["Attack", PARAM_ATTACK, 0, 127, (b: PadBlock) => b.attack], ["Hold", PARAM_HOLD, 1, 100, (b: PadBlock) => b.hold],
-            ["Release", PARAM_RELEASE, 0, 127, (b: PadBlock) => b.release]] as const).map(([label, id, min, max, get]) => (
-            <Slider key={label} pad={anchor} label={label} value={same(get) ?? get(blocks[0])} mixed={same(get) === null} min={min} max={max}
-              commit={param(id, (v) => `${label} ${v}`, get)} />
-          ))}
-        </Section>
-
-        <Section id="resample" title="Ресэмпл через эффекты SP">
-          <GroupResample list={list} />
-        </Section>
-
-        <Section id="mix" title="Микс">
-          <Choice label="Mute Group" value={mute ?? -1} mixed={mute === null} options={OFF_A_J}
-            pick={param(PARAM_MUTE_GROUP, (v) => `Mute Group ${OFF_A_J[v][1]}`, (b) => b.muteGroup)} />
-          <Choice label="PAD Link" value={link ?? -1} mixed={link === null} options={OFF_A_J}
-            pick={param(PARAM_PAD_LINK, (v) => `PAD Link ${OFF_A_J[v][1]}`, (b) => b.padLink)} />
-          <Choice label="BUS FX" value={bus ?? -1} mixed={bus === null} options={BUS_FX.map((n, i) => [i, n])} kind="segmented"
-            pick={param(PARAM_BUS_FX, (v) => `BUS FX ${BUS_FX[v]}`, (b) => b.busFx)} />
-          <Choice label="Roll" value={roll ?? -1} mixed={roll === null} options={ROLL.map((n, i) => [i, n])}
-            pick={param(PARAM_ROLL, (v) => `Roll ${ROLL[v]}`, (b) => b.roll)} />
-        </Section>
+        <TabPanel id="resample">
+          <Card><GroupResample list={list} /></Card>
+        </TabPanel>
       </div>
     </aside>
   );
