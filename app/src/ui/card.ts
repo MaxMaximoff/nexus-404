@@ -26,12 +26,13 @@ function savedPath(): string[] {
 }
 
 const TAB_KEY = "nexus404.side.tab";
-function savedTab(): "pad" | "card" {
+type Side = "pad" | "card" | "rec";
+function savedTab(): Side { // the recorder is not restored: it would open an input on load
   try { return localStorage.getItem(TAB_KEY) === "card" ? "card" : "pad"; } catch { return "pad"; }
 }
-/** What the right column shows: the pad inspector or the SD card browser. */
-export const sideTab = signal<"pad" | "card">(savedTab());
-export function showSide(tab: "pad" | "card"): void {
+/** What the right column shows: the pad inspector, the SD card browser or the recorder. */
+export const sideTab = signal<Side>(savedTab());
+export function showSide(tab: Side): void {
   sideTab.value = tab;
   try { localStorage.setItem(TAB_KEY, tab); } catch { /* private mode */ }
 }

@@ -94,6 +94,7 @@ export function TopBar() {
           <TempoControl />
           {freeKb.value !== null && <span class="muted">· свободно {(freeKb.value / 1048576).toFixed(1)} GB</span>}
           <CardToggle />
+          {/* <RecToggle /> — recording from an input is hidden until the idea is thought through (HANDOFF §10) */}
         </div>
       )}
 

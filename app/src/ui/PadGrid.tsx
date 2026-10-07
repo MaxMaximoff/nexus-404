@@ -7,8 +7,10 @@ import {
 import { IconLock, IconRefresh, IconTrash } from "./icons";
 import { TempoField } from "./TempoField";
 import { CARD_DRAG, importFromCard } from "./card";
+import { TAKE_DRAG, takeToPad } from "./rec";
 
 const hasFiles = (e: DragEvent) => !!e.dataTransfer?.types.includes("Files");
+const hasTake = (e: DragEvent) => !!e.dataTransfer?.types.includes(TAKE_DRAG);
 const hasCard = (e: DragEvent) => !!e.dataTransfer?.types.includes(CARD_DRAG);
 export const hasPad = (e: DragEvent) => !!e.dataTransfer?.types.includes(PAD_DRAG);
 
@@ -145,7 +147,7 @@ function PadCard({ index }: { index: number }) {
       }}
       onDragEnd={endPadDrag}
       onDragOver={(e) => {
-        if (hasFiles(e) || (hasCard(e) && !p?.size && !job)) { e.preventDefault(); e.dataTransfer!.dropEffect = "copy"; setOver("files"); }
+        if (hasFiles(e) || ((hasCard(e) || hasTake(e)) && !p?.size && !job)) { e.preventDefault(); e.dataTransfer!.dropEffect = "copy"; setOver("files"); }
         else if (hasPad(e) && dragGroup.value) {
           // A group lands on this pad and the empty ones after it; no swaps for groups.
           const g = dragGroup.value;
@@ -169,6 +171,7 @@ function PadCard({ index }: { index: number }) {
       onDrop={(e) => {
         e.preventDefault();
         setOver(false);
+        if (e.dataTransfer?.types.includes(TAKE_DRAG)) return void (!p?.size && takeToPad(index));
         const card = e.dataTransfer?.getData(CARD_DRAG);
         if (card) return void importFromCard(JSON.parse(card) as string[], index);
         const src = e.dataTransfer?.getData(PAD_DRAG);

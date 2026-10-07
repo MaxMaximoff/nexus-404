@@ -400,6 +400,28 @@ button, input { font: inherit; color: inherit; }
 .card-edit input { width: 100%; font: inherit; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 13px; padding: 2px 6px; border-radius: 6px; border: 1px solid var(--accent); background: #fff; }
 .card-edit input.invalid { border-color: var(--danger); }
 .card-row.editing .card-size { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* ---------- recorder ---------- */
+.rec-input { display: flex; gap: 8px; align-items: center; }
+.rec-input select { flex: 1; min-width: 0; font: inherit; font-size: 13px; padding: 6px 8px; border-radius: 10px; border: 1px solid var(--stroke); background: rgba(255, 255, 255, 0.85); }
+.rec-meter { display: flex; flex-direction: column; gap: 5px; position: relative; }
+.rec-meter.off { opacity: 0.45; }
+.rec-bar { display: grid; grid-template-columns: 14px 1fr 44px; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.rec-track { height: 8px; border-radius: 4px; background: rgba(120, 150, 185, 0.2); overflow: hidden; }
+.rec-fill { display: block; height: 100%; background: linear-gradient(90deg, #1e8fff, #6cc0ff); transition: width 0.05s linear; }
+.rec-fill.warm { background: linear-gradient(90deg, #1e8fff, #6cc0ff 70%, #f5b400); }
+.rec-fill.hot { background: linear-gradient(90deg, #1e8fff, #f5b400 70%, var(--danger)); }
+.rec-db { text-align: right; }
+.rec-clip { position: absolute; right: 0; top: -22px; font: inherit; font-size: 10px; font-weight: 800; color: #fff; background: var(--danger); border: 0; border-radius: 6px; padding: 2px 6px; cursor: pointer; }
+.rec-controls { display: flex; align-items: center; gap: 14px; }
+.rec-btn { min-width: 120px; }
+.rec-go:not(:disabled) { color: var(--danger); border-color: rgba(229, 72, 77, 0.45); }
+.rec-dot { width: 10px; height: 10px; border-radius: 50%; background: currentColor; display: inline-block; }
+.rec-time { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--muted); }
+.rec-time.live { color: var(--danger); }
+.rec-take { display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: var(--radius-m); border: 1px solid var(--stroke-soft); background: rgba(255, 255, 255, 0.55); cursor: grab; }
+.rec-take-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; font-size: 13px; }
+.rec-take-actions { display: flex; gap: 8px; align-items: center; }
+.rec-take-actions .icon-btn { margin-left: auto; }
 .group-note { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
 .toggle.mixed .knob { background: linear-gradient(90deg, #6cc0ff 50%, rgba(120, 150, 185, 0.35) 50%); }
 .toggle.mixed .knob::after { transform: translateX(6px); }

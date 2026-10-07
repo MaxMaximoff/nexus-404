@@ -133,3 +133,36 @@ export function parseBpmInput(s: string): { x100: number } | { error: string } |
 }
 
 export const formatBpm = (x100: number): string => (x100 / 100).toFixed(2).replace(/\.00$/, "").replace(/(\.\d)0$/, "$1");
+
+/**
+ * Blocks of float audio, one array per channel each (as an AudioWorklet hands them over), into
+ * interleaved 16-bit PCM; anything beyond full scale is clipped.
+ */
+export function floatBlocksToPcm(blocks: Float32Array[][], channels: number): Int16Array {
+  const frames = blocks.reduce((n, b) => n + (b[0]?.length ?? 0), 0);
+  const out = new Int16Array(frames * channels);
+  let f = 0;
+  for (const b of blocks) {
+    const len = b[0]?.length ?? 0;
+    for (let i = 0; i < len; i++, f++)
+      for (let c = 0; c < channels; c++) {
+        const v = (b[c] ?? b[0])[i];
+        out[f * channels + c] = v >= 1 ? 32767 : v <= -1 ? -32768 : Math.round(v < 0 ? v * 32768 : v * 32767);
+      }
+  }
+  return out;
+}
+
+/** A plain 16-bit PCM WAV file (little-endian), 48 kHz unless told otherwise. */
+export function encodeWav(samples: Int16Array, channels: number, rate = 48000): ArrayBuffer {
+  const data = samples.length * 2;
+  const buf = new ArrayBuffer(44 + data);
+  const dv = new DataView(buf);
+  const str = (o: number, t: string) => [...t].forEach((ch, i) => dv.setUint8(o + i, ch.charCodeAt(0)));
+  str(0, "RIFF"); dv.setUint32(4, 36 + data, true); str(8, "WAVE");
+  str(12, "fmt "); dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, channels, true);
+  dv.setUint32(24, rate, true); dv.setUint32(28, rate * channels * 2, true); dv.setUint16(32, channels * 2, true); dv.setUint16(34, 16, true);
+  str(36, "data"); dv.setUint32(40, data, true);
+  new Int16Array(buf, 44).set(samples);
+  return buf;
+}

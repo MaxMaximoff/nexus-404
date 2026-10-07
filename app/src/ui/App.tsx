@@ -2,6 +2,7 @@ import { BankRail } from "./BankRail";
 import { ImportPanel, LogPanel } from "./BottomPanels";
 import { Inspector } from "./Inspector";
 import { CardBrowser } from "./CardBrowser";
+import { Recorder } from "./Recorder";
 import { canUploadHere, cardBusy, cardConfirm, cardEdit, cardSel, sideTab } from "./card";
 import { PadGrid } from "./PadGrid";
 import { TopBar } from "./TopBar";
@@ -60,7 +61,7 @@ export function App() {
           <BankRail />
           <PadGrid />
         </div>
-        {sideTab.value === "card" ? <CardBrowser /> : <Inspector />}
+        {sideTab.value === "card" ? <CardBrowser /> : sideTab.value === "rec" ? <Recorder /> : <Inspector />}
       </main>
       <div class="bottom">
         <ImportPanel />

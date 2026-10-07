@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   CH_CONTROL, CH_FILE, FileReq, FrameDecoder, O_CREAT_TRUNC_RDWR, SP404Device, assignSampleBlock, bpmFromFileName,
-  padSpeed, padFieldOf, bpmFromLength, computePeaks, computeEnvelope, findSound, ENVELOPE_BLOCK, encodeLong, encodeShort, makeGuard, md5, parseBpmInput, parseFileReply, parsePadBlock, parseSmpHeader,
+  padSpeed, padFieldOf, bpmFromLength, floatBlocksToPcm, encodeWav, decodeAudio, computePeaks, computeEnvelope, findSound, ENVELOPE_BLOCK, encodeLong, encodeShort, makeGuard, md5, parseBpmInput, parseFileReply, parsePadBlock, parseSmpHeader,
   samplePath, septDec, septEnc, smpHeader, buildSmp, SampleUploader, newJob, type ImportJob, smpToPcm, deviceErrorText, frameToByte, remotePath, type SP404Transport,
 } from "./index";
 
@@ -714,5 +714,23 @@ describe("Set BPM by St/End", () => {
     expect(bpmFromLength(12000, 13000)).toEqual({ beats: 0.5, x100: 12000 });
     expect(bpmFromLength(12000, 23000)).toEqual({ beats: 1, x100: 24000 });
     expect(bpmFromLength(12000, 40000)).toEqual({ beats: 1, x100: 24000 });
+  });
+});
+
+describe("recording helpers", () => {
+  it("turns float blocks into interleaved 16-bit PCM, clipping beyond full scale", () => {
+    const pcm = floatBlocksToPcm([[Float32Array.of(0, 0.5), Float32Array.of(-0.5, 2)], [Float32Array.of(-1.5), Float32Array.of(1)]], 2);
+    expect([...pcm]).toEqual([0, -16384, 16384, 32767, -32768, 32767]);
+    expect([...floatBlocksToPcm([[Float32Array.of(0.25, -0.25)]], 1)]).toEqual([8192, -8192]);
+  });
+  it("writes a 48 kHz 16-bit WAV that the importer copies bit-exact", async () => {
+    const pcm = Int16Array.from({ length: 4800 * 2 }, (_, i) => ((i * 997) % 65536) - 32768);
+    const wav = encodeWav(pcm, 2);
+    expect(wav.byteLength).toBe(44 + pcm.length * 2);
+    const back = await decodeAudio(new Blob([wav]));
+    expect(back.channels).toBe(2);
+    expect(back.frames).toBe(4800);
+    expect([...back.samples.subarray(0, 8)]).toEqual([...pcm.subarray(0, 8)]);
+    expect(back.samples.every((v, i) => v === pcm[i])).toBe(true);
   });
 });
