@@ -3,7 +3,7 @@
 // its own filesystem at "/" (IMPORT/, EXPORT/SAMPLE/, BKUP/); projects live in the device's own
 // storage, not here (SparkyMK2 spec 01-transport.md).
 
-import { signal } from "@preact/signals";
+import { computed, signal } from "@preact/signals";
 import { CARD, padName } from "../sp404";
 import { importFiles, log, notice, pads, project, writeBlockReason, withDevice } from "./store";
 
@@ -118,6 +118,42 @@ export async function previewCardFile(name: string): Promise<void> {
     cardBusy.value = null;
     notice.value = { kind: "error", text: `Не удалось прослушать ${name}: ${(e as Error).message}` };
   }
+}
+
+/** Files from the computer may go into IMPORT/ and its folders only (what the SP's own IMPORT browser reads). */
+export const canUploadHere = computed(() => cardDir.value[0]?.toUpperCase() === "IMPORT");
+
+/**
+ * Copy audio files from the computer into the open IMPORT/ folder, one by one with progress. Names
+ * already in the folder are skipped: nothing on the card is replaced.
+ */
+export async function uploadToCard(files: File[]): Promise<void> {
+  if (!canUploadHere.value) return void (notice.value = { kind: "error", text: "Файлы с компьютера кладутся только в папку IMPORT (и её подпапки)" });
+  if (cardBusy.value) return void (notice.value = { kind: "error", text: "Карта занята — дождитесь конца" });
+  const dir = cardDir.value;
+  const audio = files.filter((f) => AUDIO_RE.test(f.name));
+  const have = new Set((cardEntries.value ?? []).map((e) => e.name.toLowerCase()));
+  const skipped = audio.filter((f) => have.has(f.name.toLowerCase())).map((f) => f.name);
+  const todo = audio.filter((f) => !have.has(f.name.toLowerCase()));
+  const notAudio = files.length - audio.length;
+  let done = 0;
+  try {
+    for (const [i, f] of todo.entries()) {
+      const what = `Записываю на карту${todo.length > 1 ? ` ${i + 1} из ${todo.length}` : ""}: ${f.name}`;
+      cardBusy.value = { text: what, progress: 0 };
+      const data = new Uint8Array(await f.arrayBuffer());
+      await withDevice((d) => d.writeCardFile(cardPath(dir, f.name), data, (a, b) => (cardBusy.value = { text: what, progress: a / b })));
+      done++;
+    }
+  } catch (e) {
+    notice.value = { kind: "error", text: `Запись на карту: ${(e as Error).message}` };
+  } finally {
+    cardBusy.value = null;
+  }
+  if (done) log("info", `На карту в ${cardPath(dir).slice(CARD.length)}: ${todo.slice(0, done).map((f) => f.name).join(", ")}`);
+  const notes = [skipped.length && `уже есть на карте: ${skipped.join(", ")}`, notAudio && `не аудио: ${notAudio}`].filter(Boolean);
+  if (notes.length && !notice.value) notice.value = { kind: "info", text: `Пропущено — ${notes.join("; ")}` };
+  await openCardDir(dir);
 }
 
 const MIME: Record<string, string> = { wav: "audio/wav", aif: "audio/aiff", aiff: "audio/aiff", flac: "audio/flac", mp3: "audio/mpeg", ogg: "audio/ogg", m4a: "audio/mp4", aac: "audio/aac" };

@@ -5,12 +5,13 @@
 // (9A: the unit only loads another project, nothing is written), and moving pads (95): a swap
 // always, a move only onto the pad the device has just checked to be empty (overwrite deletes),
 // and deleting (91 … 00 00) only the one pad the device has just checked and the user confirmed.
+// On the SD card: reading anywhere, writing only the one new file going into IMPORT/.
 // Init (92), overwrite (95 mode 0 onto a sample), renames, mkdir/rmdir/rename on the card can never
 // leave the page.
 
 import { CH_CONTROL, CH_FILE, hex } from "./frame";
 import { GLOBAL_PARAM_RANGE, PAD_PARAM_RANGE, PAD_WRITE_LEN, PAD_COUNT, PROJECT_COUNT } from "./control";
-import { describeFileRequest, O_CREAT_TRUNC_RDWR, O_RDONLY, Op, remotePath, samplePath } from "./fileApi";
+import { describeFileRequest, isCardImportFile, O_CREAT_TRUNC_RDWR, O_RDONLY, Op, remotePath, samplePath } from "./fileApi";
 
 export interface WritePolicy {
   /** 1-based project the current import writes into; set by the device for the length of one import. */
@@ -21,6 +22,8 @@ export interface WritePolicy {
   moveToEmpty?: number | null;
   /** Pad just checked (loaded, current project, bank not protected): the one pad `91 … 00 00` may delete. */
   deletePad?: number | null;
+  /** Wire path of the one new file being written into the card's IMPORT/ folder. */
+  cardWrite?: string | null;
 }
 
 export type Guard = (channel: number, payload: Uint8Array) => void;
@@ -71,6 +74,10 @@ export function makeGuard(policy: WritePolicy): Guard {
     if (channel === CH_FILE && p[3] === 0x03) {
       const r = describeFileRequest(p);
       if (READ_FILE_OPS.has(r.op) || (r.op === Op.Open && r.first.i32 === O_RDONLY)) return;
+      if (policy.cardWrite && isCardImportFile(policy.cardWrite)) {
+        if (r.op === Op.Open && r.first.i32 === O_CREAT_TRUNC_RDWR && r.path === policy.cardWrite) return;
+        if ((r.op === Op.Write || r.op === Op.Seek) && policy.writableHandles.has(r.first.i32)) return;
+      }
       if (policy.importPad !== null && policy.importProject !== null) {
         const smp = remotePath(samplePath(policy.importProject, policy.importPad));
         const tmp = remotePath(samplePath(policy.importProject, policy.importPad, "TMP"));

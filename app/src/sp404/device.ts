@@ -3,7 +3,7 @@
 
 import { CH_CONTROL, CH_FILE, FrameDecoder, encodeLong, encodeShort, hex, type Message } from "./frame";
 import {
-  BULK_READ, CHUNK, FileReq, O_CREAT_TRUNC_RDWR, O_RDONLY, ROOT, WRITE_BATCH, parseFileReply, samplePath,
+  BULK_READ, CARD, CHUNK, FileReq, isCardImportFile, remotePath, O_CREAT_TRUNC_RDWR, O_RDONLY, ROOT, WRITE_BATCH, parseFileReply, samplePath,
 } from "./fileApi";
 import {
   BANKS, BPM_MAX_X100, BPM_MIN_X100, FLAG_ONE_SHOT, GLOBAL, PARAM_BANK_TEMPO, PARAM_PROJECT_TEMPO, PARAM_TEMPO_SELECT, LEVEL_MAX, PAD_COUNT, PROJECT_COUNT, PARAM_BPM, PARAM_CLEARED_BY_ONE_SHOT, PARAM_END,
@@ -499,6 +499,36 @@ export class SP404Device {
       await this.statusCall(FileReq.closedir(h), "closedir").catch(() => {});
     }
     return out;
+  }
+
+  /**
+   * Put a new file into the card's IMPORT/ folder (`sd:/IMPORT/…`), for the SP's own IMPORT
+   * browser: SparkyMK2 checked that a file written there over USB shows up on the unit. An
+   * existing name is refused, so nothing on the card is replaced; the size is checked after.
+   */
+  async writeCardFile(path: string, data: Uint8Array, onProgress: Progress = () => {}): Promise<void> {
+    const wire = remotePath(path);
+    if (!path.startsWith(CARD) || !isCardImportFile(wire)) throw new DeviceError(`на карту можно писать только в IMPORT: ${path}`);
+    if (await this.stat(path)) throw new DeviceError(`на карте уже есть ${wire}`);
+    this.policy.cardWrite = wire;
+    try {
+      const h = await this.statusCall(FileReq.open(path, O_CREAT_TRUNC_RDWR), `open ${wire}`);
+      this.policy.writableHandles.add(h);
+      const prevQuiet = this.quiet;
+      try {
+        this.quiet = true;
+        await this.writeData(h, data, (d) => onProgress(d, data.length));
+      } finally {
+        this.quiet = prevQuiet;
+        await this.statusCall(FileReq.close(h), "close", CLOSE_AFTER_WRITE);
+        this.policy.writableHandles.delete(h);
+      }
+    } finally {
+      this.policy.cardWrite = null;
+    }
+    const st = await this.stat(path);
+    if (!st || st.size !== data.length) throw new DeviceError(`проверка размера: на карте ${st?.size ?? "нет файла"}, ожидалось ${data.length}`);
+    onProgress(data.length, data.length);
   }
 
   /** Whole file, or its first `limit` bytes. `null` when it does not exist. */

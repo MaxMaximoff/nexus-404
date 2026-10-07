@@ -383,6 +383,8 @@ button, input { font: inherit; color: inherit; }
 .card-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; }
 .card-size { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .card-play { padding: 1px 4px; }
+.card-upload { padding: 4px 10px; font-size: 12px; }
+.card-browser.drop { box-shadow: 0 0 0 2px var(--accent), 0 0 30px 0 var(--glow); }
 .card-play.on { color: var(--danger); }
 .card-empty { padding: 8px; font-size: 13px; }
 .group-note { font-size: 12px; color: var(--muted); margin: 0 0 8px; }

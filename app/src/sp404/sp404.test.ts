@@ -151,6 +151,21 @@ describe("guard", () => {
     pol.deletePad = null;
     expect(() => gd(CH_CONTROL, Uint8Array.from([0x91, 34, 0, 0, 0]))).toThrow();
   });
+  it("lets one new file be written into the card's IMPORT/ and nothing else on the card", () => {
+    const pol = { importProject: null, importPad: null, writableHandles: new Set<number>([9]), cardWrite: "/IMPORT/pack/kick.wav" as string | null };
+    const gc = makeGuard(pol);
+    expect(() => gc(CH_FILE, FileReq.open("sd:/IMPORT/pack/kick.wav", O_CREAT_TRUNC_RDWR))).not.toThrow();
+    expect(() => gc(CH_FILE, FileReq.write(9, new Uint8Array(4), true))).not.toThrow();
+    expect(() => gc(CH_FILE, FileReq.open("sd:/IMPORT/pack/other.wav", O_CREAT_TRUNC_RDWR))).toThrow();
+    expect(() => gc(CH_FILE, FileReq.unlink("sd:/IMPORT/pack/kick.wav"))).toThrow();
+    expect(() => gc(CH_FILE, FileReq.open("ROLAND/SP-404MKII/PROJECT_04/PADCONF.BIN", O_CREAT_TRUNC_RDWR))).toThrow();
+    for (const bad of ["/EXPORT/a.wav", "/IMPORT/../SP404MKII_APP0.bin", "/IMPORT/", "/BKUP/x", "/SP404MKII_APP0.bin"]) {
+      pol.cardWrite = bad;
+      expect(() => gc(CH_FILE, FileReq.open(`sd:${bad}`, O_CREAT_TRUNC_RDWR))).toThrow();
+    }
+    pol.cardWrite = null;
+    expect(() => gc(CH_FILE, FileReq.write(9, new Uint8Array(4), true))).toThrow();
+  });
   it("blocks import traffic when no import is running", () => {
     const idle = makeGuard({ importProject: null, importPad: null, writableHandles: new Set() });
     expect(() => idle(CH_CONTROL, Uint8Array.from([0xfb, 0xa0, 0]))).toThrow();
@@ -474,6 +489,20 @@ describe("device against a scripted SP", () => {
     expect(remotePath("sd:/")).toBe("/");
     expect(remotePath("sd:/EXPORT/SAMPLE/a.wav")).toBe("/EXPORT/SAMPLE/a.wav");
     expect(remotePath("ROLAND/SP-404MKII")).toBe("/SP404REMOTE///ROLAND/SP-404MKII");
+  });
+  it("writes a new file into the card's IMPORT/, refusing other folders and existing names", async () => {
+    const sp = fakeSp();
+    const dev = new SP404Device(sp.t);
+    const data = Uint8Array.from({ length: 300000 }, (_, i) => i & 0xff); // more than one write batch
+    const progress: number[] = [];
+    await dev.exclusive((d) => d.writeCardFile("sd:/IMPORT/kick 90bpm.wav", data, (a, b) => progress.push(a / b)));
+    expect(hex(sp.files.get("/IMPORT/kick 90bpm.wav")!)).toBe(hex(data));
+    expect(progress.at(-1)).toBe(1);
+    expect(dev.policy.cardWrite).toBeNull();
+    await expect(dev.exclusive((d) => d.writeCardFile("sd:/IMPORT/kick 90bpm.wav", data))).rejects.toThrow(/уже есть/);
+    await expect(dev.exclusive((d) => d.writeCardFile("sd:/EXPORT/x.wav", data))).rejects.toThrow(/только в IMPORT/);
+    await expect(dev.exclusive((d) => d.writeCardFile("IMPORT/x.wav", data))).rejects.toThrow(/только в IMPORT/);
+    expect(sp.files.has("/EXPORT/x.wav")).toBe(false);
   });
   it("selects another project, and nothing when it is already current", async () => {
     const sp = fakeSp();

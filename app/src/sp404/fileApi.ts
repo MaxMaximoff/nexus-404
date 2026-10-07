@@ -45,6 +45,15 @@ export const remotePath = (p: string): string =>
     : p.startsWith(CARD) ? `/${p.slice(CARD.length).replace(/^[/\\]+/, "")}`
     : `${ROOT}/${p.replace(/^[/\\]+/, "")}`;
 
+/**
+ * The only place the client writes on the card: a file inside IMPORT/ (or a folder in it), for
+ * the SP's own IMPORT browser. Wire path, no "." / ".." segments, no empty names.
+ */
+export function isCardImportFile(wire: string): boolean {
+  const parts = wire.split("/");
+  return parts[0] === "" && parts[1]?.toUpperCase() === "IMPORT" && parts.length >= 3 && parts.slice(2).every((s) => s !== "" && s !== "." && s !== "..");
+}
+
 /** `ROLAND/SP-404MKII/PROJECT_NN/SMPL/BANKb-pp.SMP` (project 1-based, pad 0..159). */
 export const samplePath = (project1: number, pad: number, ext = "SMP"): string =>
   `ROLAND/SP-404MKII/PROJECT_${String(project1).padStart(2, "0")}/SMPL/BANK${(pad >> 4) + 1}-${String((pad & 15) + 1).padStart(2, "0")}.${ext}`;

@@ -1,9 +1,9 @@
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import {
-  CARD_DRAG, cardBusy, cardDir, cardEntries, cardError, cardPath, cardPlaying, isAudio, openCardDir, previewCardFile, type CardEntry,
+  CARD_DRAG, canUploadHere, uploadToCard, cardBusy, cardDir, cardEntries, cardError, cardPath, cardPlaying, isAudio, openCardDir, previewCardFile, type CardEntry,
 } from "./card";
 import { conn } from "./store";
-import { IconFile, IconFolder, IconPlay, IconRefresh, IconStop } from "./icons";
+import { IconFile, IconFolder, IconPlay, IconRefresh, IconStop, IconUpload } from "./icons";
 
 const fmtSize = (n: number | null) => (n === null ? "" : n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(0)} KB` : `${(n / 1048576).toFixed(1)} MB`);
 
@@ -16,6 +16,10 @@ export function CardBrowser() {
   const ready = conn.value === "ready";
   const [sel, setSel] = useState<ReadonlySet<string>>(new Set());
   const [anchor, setAnchor] = useState<string | null>(null);
+  const [dropping, setDropping] = useState(false);
+  const picker = useRef<HTMLInputElement>(null);
+  const upload = canUploadHere.value;
+  const fromComputer = (e: DragEvent) => !!e.dataTransfer?.types.includes("Files");
   const key = dir.join("/");
   useEffect(() => { if (ready && entries === null) void openCardDir(dir); }, [ready]);
   useEffect(() => { setSel(new Set()); setAnchor(null); }, [key]);
@@ -43,7 +47,15 @@ export function CardBrowser() {
   };
 
   return (
-    <aside class="inspector glass card-browser">
+    <aside class={`inspector glass card-browser ${dropping ? "drop" : ""}`}
+      onDragOver={(e) => { if (!fromComputer(e)) return; e.preventDefault(); e.dataTransfer!.dropEffect = upload ? "copy" : "none"; setDropping(upload); }}
+      onDragLeave={(e) => { if (!(e.currentTarget as Node).contains(e.relatedTarget as Node | null)) setDropping(false); }}
+      onDrop={(e) => {
+        if (!fromComputer(e)) return;
+        e.preventDefault();
+        setDropping(false);
+        void uploadToCard([...(e.dataTransfer?.files ?? [])]);
+      }}>
       <div class="card-path">
         <nav aria-label="Путь на карте">
           <button class="crumb" disabled={!dir.length || !!busy} onClick={() => openCardDir([])}>Карта</button>
@@ -54,6 +66,14 @@ export function CardBrowser() {
             </span>
           ))}
         </nav>
+        {upload && (
+          <button class="btn card-upload" disabled={!ready || !!busy} onClick={() => picker.current?.click()}
+            title="Скопировать аудио с компьютера в эту папку на карте — потом его видно в IMPORT на самом SP">
+            <IconUpload /> С компьютера…
+          </button>
+        )}
+        <input ref={picker} type="file" multiple accept="audio/*,.wav,.aif,.aiff,.flac,.mp3" hidden
+          onChange={(e) => { const f = (e.target as HTMLInputElement).files; if (f) void uploadToCard([...f]); (e.target as HTMLInputElement).value = ""; }} />
         <button class="icon-btn" disabled={!ready || !!busy} onClick={() => openCardDir(dir)} title="Перечитать папку" aria-label="Перечитать"><IconRefresh /></button>
       </div>
       {busy && (
@@ -93,7 +113,8 @@ export function CardBrowser() {
           </ul>
         </div>
       )}
-      <p class="hint">Перетащите аудио на пустой pad — файлы займут его и следующие пустые pad'ы банка. Ctrl/Shift-клик — несколько файлов. ▶ — прослушать на компьютере.</p>
+      <p class="hint">Перетащите аудио на пустой pad — файлы займут его и следующие пустые pad'ы банка. Ctrl/Shift-клик — несколько файлов. ▶ — прослушать на компьютере.
+        {upload ? " Файлы с компьютера можно бросить сюда — они лягут в эту папку (существующие не заменяются)." : " Файлы с компьютера кладутся в папку IMPORT."}</p>
     </aside>
   );
 }
