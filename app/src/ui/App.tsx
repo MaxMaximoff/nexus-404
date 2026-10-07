@@ -1,6 +1,8 @@
 import { BankRail } from "./BankRail";
 import { ImportPanel, LogPanel } from "./BottomPanels";
 import { Inspector } from "./Inspector";
+import { CardBrowser } from "./CardBrowser";
+import { sideTab } from "./card";
 import { PadGrid } from "./PadGrid";
 import { TopBar } from "./TopBar";
 import { useEffect } from "preact/hooks";
@@ -51,7 +53,7 @@ export function App() {
           <BankRail />
           <PadGrid />
         </div>
-        <Inspector />
+        {sideTab.value === "card" ? <CardBrowser /> : <Inspector />}
       </main>
       <div class="bottom">
         <ImportPanel />

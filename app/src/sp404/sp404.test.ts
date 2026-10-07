@@ -101,6 +101,7 @@ describe("guard", () => {
     [CH_CONTROL, [1, 0x21, 0, 0xff, 0xff, 0xa0, 0x0f, 0, 0]], [CH_CONTROL, [1, 0x2a, 0, 0xff, 0xff, 0x20, 0x4e, 0, 0]],
     [CH_FILE, FileReq.open(samplePath(4, 33), O_CREAT_TRUNC_RDWR)], [CH_FILE, FileReq.unlink(samplePath(4, 33, "TMP"))],
     [CH_FILE, FileReq.write(100, new Uint8Array(8), true)], [CH_FILE, FileReq.seek(100, 0)], [CH_FILE, FileReq.stat("x")],
+    [CH_FILE, FileReq.opendir("sd:/IMPORT")], [CH_FILE, FileReq.readdir(5)], [CH_FILE, FileReq.open("sd:/IMPORT/a.wav", 0)], // the card: reading only
   ];
   const blocked: [number, ArrayLike<number>][] = [
     [CH_CONTROL, [0x92, 0, 0, 0, 0, 0, 0]], [CH_CONTROL, [0x91, 33, 0, 0, 0]], [CH_CONTROL, [0x91, 34, 0, 1, 0]],
@@ -127,7 +128,8 @@ describe("guard", () => {
     [CH_CONTROL, [1, 0x35, 0, 0xff, 0xff, 0, 0, 0, 0]], [CH_CONTROL, [1, 0x0a, 0, 33, 0, 0x40, 0x1f, 0, 0]],
     [CH_CONTROL, [1, 0x17, 0, 0xff, 0xff, 1, 0, 0, 0]],
     [CH_FILE, FileReq.open(samplePath(4, 34), O_CREAT_TRUNC_RDWR)], [CH_FILE, FileReq.open(samplePath(1, 33), O_CREAT_TRUNC_RDWR)],
-    [CH_FILE, FileReq.unlink("ROLAND/SP-404MKII/PROJECT_04/PADCONF.BIN")], [CH_FILE, FileReq.write(101, new Uint8Array(4), true)],
+    [CH_FILE, FileReq.unlink("ROLAND/SP-404MKII/PROJECT_04/PADCONF.BIN")],
+    [CH_FILE, FileReq.open("sd:/IMPORT/a.wav", O_CREAT_TRUNC_RDWR)], [CH_FILE, FileReq.unlink("sd:/IMPORT/a.wav")], [CH_FILE, FileReq.write(101, new Uint8Array(4), true)],
   ];
   it.each(allowed)("allows ch%i %o", (c, p) => expect(() => g(c, Uint8Array.from(p))).not.toThrow());
   it.each(blocked)("blocks ch%i %o", (c, p) => expect(() => g(c, Uint8Array.from(p))).toThrow());
@@ -166,6 +168,9 @@ describe("device against a scripted SP", () => {
     const globals = new Map<number, number>([[0x0a, 9000], [0x0b, 0], ...Array.from({ length: 10 }, (_, b) => [0x21 + b, 9000] as [number, number])]);
     let blocks = new Map<number, Uint8Array>();
     const protectedBanks = new Set<number>();
+    const dirs = new Map<string, string[]>(); // path → entries, directories end in "/"
+    let listing: string[] = [];
+    let closedirs = 0;
     const t: SP404Transport = {
       async open() {}, async close() {}, onBytes: () => {}, onLost: () => {},
       async write(bytes) {
@@ -226,6 +231,15 @@ describe("device against a scripted SP", () => {
       }
       const op = p[4], first = septDec(p, 5).i32, second = septDec(p, 10);
       const path = new TextDecoder().decode(p.subarray(15, p.length - 2));
+      if (op === 0x0c) { listing = [".", "..", ...(dirs.get(path) ?? [])]; status(77); return; }
+      if (op === 0x0e) {
+        const e = listing.shift();
+        if (e === undefined) return status(-1);
+        const name = new TextEncoder().encode(e.replace(/\/$/, ""));
+        reply(CH_FILE, [0xf0, 0x41, 0x7a, 0x02, ...septEnc(77), ...septEnc(name.length + 7, 0x40), 0, 0, 0, 0, name.length, e.endsWith("/") ? 4 : 8, ...name, 0, 0xf7]);
+        return;
+      }
+      if (op === 0x0d) { closedirs++; return status(-1); } // the card refuses closedir after the end
       if (op === 0x0a) status(files.delete(path) ? 0 : -1);
       else if (op === 0x00) { if (first === O_CREAT_TRUNC_RDWR) files.set(path, new Uint8Array(0)); if (!files.has(path)) return status(-1); open = { path, pos: 0 }; status(0x114); }
       else if (op === 0x07) { open!.pos = second.i32; status(second.i32); }
@@ -250,7 +264,7 @@ describe("device against a scripted SP", () => {
       new DataView(b.buffer).setUint32(3 + field * 4, v, true);
       blocks.set(pad, b);
     };
-    return { t, files, sent, params, setField, globals, protectedBanks };
+    return { t, files, sent, params, setField, globals, protectedBanks, dirs, closedirs: () => closedirs };
   }
 
   it("imports into an empty pad and the device ends up with the exact SMP and block", async () => {
@@ -447,6 +461,19 @@ describe("device against a scripted SP", () => {
     const r = await dev.exclusive((d) => d.copyPad(4, 33, 60));
     expect(r.differs).toEqual([]);
     expect(r.block).toMatchObject({ loop: true, hold: 42, balance: 100 });
+  });
+  it("lists a card directory without . and .., folders marked, closedir refusal ignored", async () => {
+    const sp = fakeSp();
+    const dev = new SP404Device(sp.t);
+    sp.dirs.set("/IMPORT", ["Drums/", "kick_90bpm.wav", "Пэд.wav"]);
+    expect(await dev.exclusive((d) => d.listDir("sd:/IMPORT"))).toEqual([
+      { name: "Drums", dir: true }, { name: "kick_90bpm.wav", dir: false }, { name: "Пэд.wav", dir: false },
+    ]);
+    expect(sp.closedirs()).toBe(1);
+    expect(await dev.exclusive((d) => d.listDir("sd:/NOPE"))).toEqual([]);
+    expect(remotePath("sd:/")).toBe("/");
+    expect(remotePath("sd:/EXPORT/SAMPLE/a.wav")).toBe("/EXPORT/SAMPLE/a.wav");
+    expect(remotePath("ROLAND/SP-404MKII")).toBe("/SP404REMOTE///ROLAND/SP-404MKII");
   });
   it("selects another project, and nothing when it is already current", async () => {
     const sp = fakeSp();

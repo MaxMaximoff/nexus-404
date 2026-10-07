@@ -36,8 +36,14 @@ export function septDec(bytes: Uint8Array, at: number): Septets {
   return { i32: Number(BigInt.asIntN(32, raw)), u32: Number(BigInt.asUintN(32, raw)), high: Number(raw >> 32n) };
 }
 
-/** Device path: plain paths address the device's own storage. */
-export const remotePath = (p: string): string => (p.startsWith(ROOT) ? p : `${ROOT}/${p.replace(/^[/\\]+/, "")}`);
+/** Paths on the SD card are written `sd:/IMPORT/…`; on the wire the card is the bare `/` volume. */
+export const CARD = "sd:";
+
+/** Device path: plain paths address the device's own storage, `sd:/…` the SD card. */
+export const remotePath = (p: string): string =>
+  p.startsWith(ROOT) ? p
+    : p.startsWith(CARD) ? `/${p.slice(CARD.length).replace(/^[/\\]+/, "")}`
+    : `${ROOT}/${p.replace(/^[/\\]+/, "")}`;
 
 /** `ROLAND/SP-404MKII/PROJECT_NN/SMPL/BANKb-pp.SMP` (project 1-based, pad 0..159). */
 export const samplePath = (project1: number, pad: number, ext = "SMP"): string =>

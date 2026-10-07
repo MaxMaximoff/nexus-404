@@ -355,6 +355,36 @@ button, input { font: inherit; color: inherit; }
 .bpm-plan tr:not(.none):not(.same) td:nth-child(3) { color: var(--accent); font-weight: 700; }
 .bpm-plan tr.none td, .bpm-plan tr.same td { color: var(--muted); }
 .bpm-plan .row { display: flex; gap: 8px; }
+/* ---------- right column tabs, SD card browser ---------- */
+.card-toggle { padding: 5px 12px; font-size: 13px; margin-left: 6px; }
+.card-toggle.on { color: #fff; background: linear-gradient(180deg, #44a6ff, #1e8fff); border-color: transparent; box-shadow: 0 4px 12px -4px var(--glow); }
+.card-path { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.card-path nav { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; flex: 1; min-width: 0; font-weight: 700; }
+.crumb { font: inherit; border: 0; background: transparent; color: var(--accent); cursor: pointer; padding: 2px 4px; border-radius: 6px; }
+.crumb:disabled { color: inherit; cursor: default; }
+.card-path .sep { color: var(--muted); margin: 0 2px; }
+/* Floats over the bottom of the list, so the list does not move while a file is read. */
+.card-browser { position: relative; }
+.card-busy {
+  position: absolute; left: 16px; right: 16px; bottom: 16px; z-index: 5; display: flex; flex-direction: column; gap: 6px;
+  padding: 10px 14px; border-radius: var(--radius-m); font-size: 12px; color: var(--text);
+  background: var(--glass-strong); backdrop-filter: blur(14px); border: 1px solid rgba(30, 143, 255, 0.35);
+  box-shadow: 0 10px 30px -10px rgba(40, 75, 120, 0.45), 0 0 18px -8px var(--glow); pointer-events: none;
+}
+.card-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.card-row { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto 26px; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 10px; cursor: default; font-size: 13px; user-select: none; }
+.card-row:hover { background: rgba(255, 255, 255, 0.7); }
+.card-row.dir { cursor: pointer; font-weight: 700; }
+.card-row.audio { cursor: grab; }
+.card-row.other { color: var(--muted); }
+.card-row.sel { background: rgba(30, 143, 255, 0.12); box-shadow: inset 0 0 0 1px rgba(30, 143, 255, 0.45); }
+.card-row svg { color: var(--muted); }
+.card-row.dir svg { color: var(--accent); }
+.card-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; }
+.card-size { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.card-play { padding: 1px 4px; }
+.card-play.on { color: var(--danger); }
+.card-empty { padding: 8px; font-size: 13px; }
 .group-note { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
 .toggle.mixed .knob { background: linear-gradient(90deg, #6cc0ff 50%, rgba(120, 150, 185, 0.35) 50%); }
 .toggle.mixed .knob::after { transform: translateX(6px); }

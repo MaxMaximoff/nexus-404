@@ -21,6 +21,10 @@ export type LogLevel = "debug" | "info" | "warn" | "error";
 export type Logger = (level: LogLevel, text: string) => void;
 export type Progress = (done: number, total: number) => void;
 
+export interface DirEntry { name: string; dir: boolean }
+const DT_DIR = 4; // readdir entry type, Linux d_type
+const MAX_DIR_ENTRIES = 10000;
+
 const TIMEOUT = 5000;
 const CLOSE_AFTER_WRITE = 20000;
 
@@ -473,6 +477,28 @@ export class SP404Device {
       next = this.waitFor((m) => m.channel === CH_FILE && !m.short, TIMEOUT, "read");
     }
     return concat(chunks);
+  }
+
+  /**
+   * List a directory, without `.` and `..`: on the card (`/…`) or in the device's own storage
+   * (`/SP404REMOTE//…`). `opendir` hands back a handle even for a missing path, which then lists
+   * empty. The card closes the handle itself once readdir runs out and refuses closedir after
+   * that: not a failure.
+   */
+  async listDir(path: string): Promise<DirEntry[]> {
+    const h = await this.statusCall(FileReq.opendir(path), `opendir ${path}`);
+    const out: DirEntry[] = [];
+    try {
+      for (let n = 0; n < MAX_DIR_ENTRIES; n++) {
+        const r = await this.fileCall(FileReq.readdir(h), "readdir");
+        if (r.kind === "status") break;
+        const len = r.data[4] ?? 0, name = new TextDecoder().decode(r.data.subarray(6, 6 + len));
+        if (name !== "." && name !== "..") out.push({ name, dir: r.data[5] === DT_DIR });
+      }
+    } finally {
+      await this.statusCall(FileReq.closedir(h), "closedir").catch(() => {});
+    }
+    return out;
   }
 
   /** Whole file, or its first `limit` bytes. `null` when it does not exist. */

@@ -771,6 +771,13 @@ export async function stopPlaying(): Promise<void> {
 }
 
 /** Free pads from `startPad` to the end of its bank, skipping pads already queued. */
+/** Run `fn` with the device to itself (for modules beside the store, e.g. the card browser). */
+export function withDevice<T>(fn: (d: SP404Device) => Promise<T>): Promise<T> {
+  const d = device;
+  if (!d || conn.value !== "ready") return Promise.reject(new Error("SP не подключён"));
+  return d.exclusive(fn);
+}
+
 function targetPads(startPad: number, count: number): number[] {
   const out: number[] = [];
   for (let i = startPad; i < ((startPad >> 4) + 1) * 16 && out.length < count; i++)

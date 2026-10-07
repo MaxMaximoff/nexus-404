@@ -5,6 +5,7 @@ import {
   setTempoSelect, status, writeBlockReason,
 } from "./store";
 import { TempoField } from "./TempoField";
+import { CardToggle } from "./CardToggle";
 import { IconPlug, IconUnplug } from "./icons";
 
 const LABEL: Record<string, string> = {
@@ -92,6 +93,7 @@ export function TopBar() {
           <ProjectSelect />
           <TempoControl />
           {freeKb.value !== null && <span class="muted">· свободно {(freeKb.value / 1048576).toFixed(1)} GB</span>}
+          <CardToggle />
         </div>
       )}
 
