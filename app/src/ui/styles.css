@@ -121,6 +121,10 @@ button, input { font: inherit; color: inherit; }
 .segmented button { font: inherit; font-size: 12px; padding: 3px 10px; border: 0; border-radius: 999px; background: transparent; color: var(--muted); cursor: pointer; }
 .segmented button.on { background: #fff; color: var(--accent); font-weight: 700; box-shadow: 0 2px 6px -2px rgba(40, 75, 120, 0.35), 0 0 10px -4px var(--glow); }
 .segmented button:disabled { cursor: default; }
+.segmented button:disabled:not(.on) { opacity: 0.55; }
+/* Setting kept on the SP but not in effect (VARI with Vinyl on): the whole group fades, no highlight. */
+.segmented.muted { opacity: 0.45; filter: grayscale(1); }
+.segmented.muted button, .segmented.muted button.on { opacity: 1; background: transparent; box-shadow: none; color: var(--muted); font-weight: inherit; }
 .segmented button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .topbar-actions { margin-left: auto; display: flex; gap: 8px; }
 
@@ -132,7 +136,7 @@ button, input { font: inherit; color: inherit; }
 .layout { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(440px, 1fr); gap: 14px; align-items: start; }
 .workspace { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 
-/* ---------- bank rail (under the pads, 2 rows of 5) ---------- */
+/* ---------- bank rail (above the pads, 2 rows of 5) ---------- */
 .bank-rail { padding: 10px 14px 12px; display: flex; flex-direction: column; gap: 8px; }
 .bank-list { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
 .bank-tile {
@@ -201,7 +205,21 @@ button, input { font: inherit; color: inherit; }
 /* As tall as the pads + banks column (contain: size keeps it out of the row height) and scrolls inside. */
 .inspector { padding: 16px; display: flex; flex-direction: column; gap: 14px; contain: size; align-self: stretch; overflow-y: auto; }
 .inspector > * { flex-shrink: 0; }
-.inspector > .btn-wide:last-child { position: sticky; bottom: 0; z-index: 2; box-shadow: 0 -10px 18px -6px rgba(238, 243, 249, 0.95), 0 6px 16px -6px rgba(40, 75, 120, 0.35), var(--inset-hi); }
+/* Header and "Прослушать" stay put; only the sections scroll (the padding keeps their shadows unclipped). */
+.inspector > .insp-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; margin: -6px; padding: 6px; }
+.insp-scroll > * { flex-shrink: 0; }
+.play-row { display: flex; gap: 8px; }
+.play-row .btn-wide { flex: 1; width: auto; }
+/* Stop: smaller than play, red while something may still be playing. */
+.btn-stop { padding: 11px 14px; color: var(--danger); border-color: rgba(229, 72, 77, 0.45); }
+.btn-stop:not(:disabled) { background: rgba(255, 240, 240, 0.9); box-shadow: 0 0 12px -4px rgba(229, 72, 77, 0.6), var(--inset-hi); }
+.btn-stop:hover:not(:disabled) { background: var(--danger); color: #fff; box-shadow: 0 6px 16px -6px rgba(229, 72, 77, 0.7); }
+/* Thin blue scrollbars in the inner scroll areas (webkit pseudos: the app runs only in Chrome/Edge, for Web Serial). */
+:is(.inspector, .insp-scroll, .jobs, .log)::-webkit-scrollbar { width: 6px; height: 6px; }
+:is(.inspector, .insp-scroll, .jobs, .log)::-webkit-scrollbar-track { background: transparent; }
+:is(.inspector, .insp-scroll, .jobs, .log)::-webkit-scrollbar-thumb { background: rgba(30, 143, 255, 0.55); border-radius: 999px; }
+:is(.inspector, .insp-scroll, .jobs, .log)::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+:is(.inspector, .insp-scroll, .jobs, .log)::-webkit-scrollbar-button { display: none; }
 .insp-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .insp-name { font-weight: 700; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wave-box {
@@ -338,7 +356,7 @@ button, input { font: inherit; color: inherit; }
 /* ---------- responsive ---------- */
 @media (max-width: 1180px) {
   .layout { grid-template-columns: minmax(0, 1fr); }
-  .inspector { contain: none; overflow: visible; }
+  .inspector, .inspector > .insp-scroll { contain: none; overflow: visible; }
 }
 @media (max-width: 760px) {
   .app { padding: 10px; }

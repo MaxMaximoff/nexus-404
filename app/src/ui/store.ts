@@ -3,7 +3,7 @@
 import { batch, computed, signal } from "@preact/signals";
 import {
   PAD_COUNT, SP404Device, SampleUploader, WebSerialTransport, bpmFromFileName, computeEnvelope, computePeaks, isSp404Port,
-  newJob, padName, samplePath, smpToPcm,
+  VARI_MODES, newJob, padName, samplePath, smpToPcm,
   type DeviceStatus, type ImportJob, type LogLevel, type PadBlock, type ProjectSettings,
 } from "../sp404";
 
@@ -130,6 +130,7 @@ function teardown(): void {
   if (pollTimer) clearInterval(pollTimer);
   if (reloadTimer) clearTimeout(reloadTimer);
   pollTimer = reloadTimer = null;
+  playing.value = null;
   device = null;
   transport = null;
 }
@@ -348,6 +349,7 @@ export const setTimeStretch = (pad: number, x100: number) =>
   editPad(pad, `Time Stretch ${(x100 / 100).toFixed(2)} %`, (d, p1) => d.setTimeStretch(p1, pad, x100));
 export const setPitch = (pad: number, coarse: number, fine: number) =>
   editPad(pad, `Pitch ${coarse} st ${fine} ct`, (d, p1) => d.setPitch(p1, pad, coarse, fine));
+export const setVari = (pad: number, mode: number) => editPad(pad, `VARI MODE ${VARI_MODES[mode]}`, (d, p1) => d.setVari(p1, pad, mode));
 export const setOneShot = (pad: number, on: boolean) => editPad(pad, `One Shot ${onOff(on)}`, (d, p1) => d.setOneShot(p1, pad, on));
 export const setRange = (pad: number, start: number, end: number) =>
   editPad(pad, `Start/End ${start}–${end} кадров`, (d, p1) => d.setRange(p1, pad, start, end));
@@ -373,14 +375,32 @@ export const setBankTempo = (bank: number, x100: number) =>
 export const setTempoSelect = (useProject: boolean) =>
   editProject(`действует темп ${useProject ? "проекта" : "банков"}`, (d, p1) => d.setTempoSelect(p1, useProject));
 
+/** Pad started by preview that may still be playing (Gate off), for the stop button; null when none. */
+export const playing = signal<number | null>(null);
+
 export async function preview(pad: number, on: boolean): Promise<void> {
   const d = device;
   if (!d) return;
   try {
     await d.exclusive((x) => (on ? x.previewStart(pad) : x.previewStop(pad)));
+    if (on) playing.value = pad;
+    else if (pads.value[pad]?.gate) playing.value = null; // Gate on: the release has stopped it
   } catch (e) {
     fail(e, "Прослушивание");
   }
+}
+
+/** Stop the pad left playing by preview, then select the app's pad on the unit again. */
+export async function stopPlaying(): Promise<void> {
+  const pad = playing.value;
+  if (pad === null) return;
+  playing.value = null;
+  if (!(await editPad(pad, "стоп", (d, p1) => d.stopPad(p1, pad)))) return;
+  const sel = selectedPad.value;
+  if (sel === pad) return;
+  await device?.exclusive((x) => x.selectOnDevice(sel))
+    .then(() => { if (status.value) status.value = { ...status.value, bank: sel >> 4, pad: sel & 15 }; })
+    .catch((e) => log("warn", `Выбор pad'а на SP: ${(e as Error).message}`));
 }
 
 /** Free pads from `startPad` to the end of its bank, skipping pads already queued. */

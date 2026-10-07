@@ -60,6 +60,8 @@ export interface PadBlock {
   bpmX100: number;
   flags: number;
   oneShot: boolean;
+  /** VARI MODE (time-stretch algorithm with Vinyl off): bits 1–2 of the flags, see VARI_MODES. */
+  vari: number;
   pitchCoarse: number;
   pitchFine: number;
   timeStretchX100: number;
@@ -85,6 +87,7 @@ export function parsePadBlock(p: Uint8Array): PadBlock {
     bpmX100: f(9),
     flags: f(10),
     oneShot: (f(10) & 32) !== 0,
+    vari: (f(10) & VARI_MASK) >> 1,
     pitchCoarse: dv.getInt32(3 + 13 * 4, true),
     pitchFine: dv.getInt32(3 + 14 * 4, true),
     timeStretchX100: f(16),
@@ -144,6 +147,9 @@ export const PITCH_FINE_MAX = 100;
 export const STRETCH_MIN_X100 = 5000;
 export const STRETCH_MAX_X100 = 15000;
 export const FLAG_ONE_SHOT = 32;
+/** VARI MODE in the flags (checked on the unit): 0 Off, 2 Backing (bit 1), 4 Ensemble (bit 2). */
+export const VARI_MASK = 0x06;
+export const VARI_MODES = ["Off", "Backing", "Ensemble"] as const;
 export const BPM_MIN_X100 = 4000;
 export const BPM_MAX_X100 = 20000;
 export const LEVEL_MAX = 127;

@@ -163,6 +163,8 @@ describe("device against a scripted SP", () => {
           reply(ch, s);
           for (let n = 0; n < 16; n++) reply(ch, [0x35, n, ...new TextEncoder().encode(`PROJECT_${n + 1}`)]);
         }
+        else if (p[0] === 0x8e) reply(ch, [0x0e, p[1], p[2], 0]);
+        else if (p[0] === 0x8f) reply(ch, [0x0f, p[1], p[2], 0]);
         else if (p[0] === 0x91) reply(ch, [0x11, 0]);
         else if (p[0] === 0x9d) reply(ch, [0x1d, 0]);
         else if (p[0] === 0x1e) { blocks.set(p[1], Uint8Array.from([...p, ...new Uint8Array(128)])); reply(ch, [0x1e, 0]); }
@@ -275,6 +277,30 @@ describe("device against a scripted SP", () => {
     await dev.exclusive((d) => d.setOneShot(4, 33, true)); // already on: no side effects again
     await dev.exclusive((d) => d.setOneShot(4, 33, false));
     expect(sp.params).toEqual([[0x70, 33, 0x25], [0x70, 33, 0x05]]);
+  });
+  it("sets VARI MODE in flag bits 1–2, keeping the other bits", async () => {
+    const { sp, dev } = await loaded();
+    sp.setField(33, 10, 0x21); // One Shot and Fixed Velocity
+    expect(await dev.exclusive((d) => d.setVari(4, 33, 1))).toMatchObject({ vari: 1, flags: 0x23, oneShot: true });
+    expect(await dev.exclusive((d) => d.setVari(4, 33, 2))).toMatchObject({ vari: 2, flags: 0x25 });
+    expect(await dev.exclusive((d) => d.setVari(4, 33, 0))).toMatchObject({ vari: 0, flags: 0x21 });
+    expect(sp.params).toEqual([[0x70, 33, 0x23], [0x70, 33, 0x25], [0x70, 33, 0x21]]);
+    await expect(dev.exclusive((d) => d.setVari(4, 33, 3))).rejects.toThrow(/VARI/);
+  });
+  it("stops a pad playing with Gate off: Gate on, press and release, Gate back off", async () => {
+    const { sp, dev } = await loaded();
+    sp.setField(33, 4, 0); // Gate off
+    const before = sp.sent.length;
+    const b = await dev.exclusive((d) => d.stopPad(4, 33));
+    expect(b.gate).toBe(false);
+    expect(sp.params).toEqual([[0x6a, 33, 1], [0x6a, 33, 0]]);
+    expect(sp.sent.slice(before).filter((m) => /^5:(016a|8e|8f)/.test(m)).map((m) => m.slice(0, 4)))
+      .toEqual(["5:01", "5:8e", "5:8f", "5:01"]);
+    sp.params.length = 0;
+    sp.setField(33, 4, 1); // Gate on: a release alone
+    await dev.exclusive((d) => d.stopPad(4, 33));
+    expect(sp.params).toEqual([]);
+    expect(sp.sent.at(-2)?.slice(0, 4)).toBe("5:8f");
   });
   it("moves Start/End in frames, in an order that keeps Start < End", async () => {
     const { sp, dev } = await loaded();

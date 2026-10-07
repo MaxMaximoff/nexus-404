@@ -1,17 +1,17 @@
 import { signal } from "@preact/signals";
 import { useEffect, useRef, useState } from "preact/hooks";
 import {
-  LEVEL_MAX, PITCH_COARSE_MAX, PITCH_FINE_MAX, STRETCH_MAX_X100, STRETCH_MIN_X100, byteToFrame, findSound, formatBpm, padName, padSpeed,
+  LEVEL_MAX, PITCH_COARSE_MAX, PITCH_FINE_MAX, STRETCH_MAX_X100, STRETCH_MIN_X100, VARI_MODES, byteToFrame, findSound, formatBpm, padName, padSpeed,
   parseBpmInput,
 } from "../sp404";
 import {
-  channelsOf, conn, importFiles, loadWaveform, pads, preview, project, selectedPad, setBpm, setBpmSync, setGate, setLevel, setLoop, setOneShot, setPitch, setTimeStretch, setVinyl,
-  setRange, waveLoading, waveforms, writeBlockReason,
+  channelsOf, conn, importFiles, loadWaveform, pads, playing, preview, project, selectedPad, setBpm, setBpmSync, setGate, setLevel, setLoop, setOneShot, setPitch, setTimeStretch, setVari, setVinyl,
+  setRange, stopPlaying, waveLoading, waveforms, writeBlockReason,
 } from "./store";
 import { Waveform, type Range } from "./Waveform";
 import type { Waveform as Wave } from "./store";
 import { ValueField, intIn, signed, type Parse } from "./ValueField";
-import { IconCheck, IconPlay, IconUpload, IconWave } from "./icons";
+import { IconCheck, IconPlay, IconStop, IconUpload, IconWave } from "./icons";
 
 const RATE = 48000;
 const TRIM_THRESHOLDS = [-60, -48, -36, -24];
@@ -46,6 +46,7 @@ function FilledPad({ pad, ready }: { pad: number; ready: boolean }) {
   const sec = (f: number) => (f / RATE).toFixed(2);
   return (
     <>
+      <div class="insp-scroll">
       <Section id="sample" title="Сэмпл" summary={channels && total ? `${sec(byteToFrame(p.startByte, channels))}–${sec(byteToFrame(p.endByte, channels))} s из ${sec(total)} s` : undefined}>
         {wave ? <Waveform wave={wave} range={range} onCommit={total && !writeBlockReason.value ? (r) => commitDrag(pad, r, total) : undefined} /> : (
           <div class="wave-box">
@@ -67,7 +68,7 @@ function FilledPad({ pad, ready }: { pad: number; ready: boolean }) {
       </Section>
 
       <Section id="tempo" title="Темп и высота"
-        summary={[`${formatBpm(p.bpmX100)} BPM`, speed && `×${speed.ratio.toFixed(2)}`, p.bpmSync && "Sync", p.vinyl && "Vinyl"].filter(Boolean).join(" · ")}>
+        summary={[`${formatBpm(p.bpmX100)} BPM`, speed && `×${speed.ratio.toFixed(2)}`, p.bpmSync && "Sync", p.vinyl ? "Vinyl" : p.vari > 0 && VARI_MODES[p.vari]].filter(Boolean).join(" · ")}>
         <BpmEditor pad={pad} />
         <TempoPitch pad={pad} />
       </Section>
@@ -93,16 +94,28 @@ function FilledPad({ pad, ready }: { pad: number; ready: boolean }) {
         </dl>
       </Section>
 
-      <button
-        class="btn btn-wide"
-        disabled={!ready}
-        onPointerDown={() => preview(pad, true)}
-        onPointerUp={() => preview(pad, false)}
-        onPointerLeave={(e) => e.buttons && preview(pad, false)}
-        title="Держите, чтобы SP играл pad"
-      >
-        <IconPlay /> Прослушать на SP (удерживайте)
-      </button>
+      </div>
+      <div class="play-row">
+        <button
+          class="btn btn-wide"
+          disabled={!ready}
+          onPointerDown={() => preview(pad, true)}
+          onPointerUp={() => preview(pad, false)}
+          onPointerLeave={(e) => e.buttons && preview(pad, false)}
+          title="Держите, чтобы SP играл pad"
+        >
+          <IconPlay /> Прослушать на SP (удерживайте)
+        </button>
+        <button
+          class="btn btn-stop"
+          disabled={!ready || playing.value === null}
+          onClick={stopPlaying}
+          title={playing.value === null ? "Нечего останавливать" : `Остановить ${padName(playing.value)}: на миг включает Gate, нажимает pad и выключает Gate`}
+          aria-label="Стоп"
+        >
+          <IconStop /> Стоп
+        </button>
+      </div>
     </>
   );
 }
@@ -268,6 +281,7 @@ function TempoPitch({ pad }: { pad: number }) {
         <Toggle label="Vinyl" on={p.vinyl} onChange={(on) => setVinyl(pad, on)} hint="Смена темпа меняет и высоту, как у пластинки; без Vinyl высота сохраняется" />
       </div>
       <SpeedLine pad={pad} />
+      <VariControl pad={pad} />
       <div class="tp-row">
         <span>Stretch</span>
         <ValueField value={p.timeStretchX100} format={formatStretch} parse={parseStretch} label="Time Stretch" width={64}
@@ -285,6 +299,34 @@ function TempoPitch({ pad }: { pad: number }) {
         <span class="unit">ct</span>
         {pitchOff && <span class="note">{pitchOff}</span>}
       </div>
+    </div>
+  );
+}
+
+/** What each VARI MODE suits, after the Roland manual: Roland's names alone say little. */
+const VARI_HINTS = ["Обычный алгоритм; на сильном растяжении больше артефактов", "Drums / rhythmic: звуки с атакой и затуханием", "Sustained / tonal: пэды, струнные, хор"];
+
+/** Time-stretch algorithm; the SP offers it only with Vinyl off. */
+function VariControl({ pad }: { pad: number }) {
+  const p = pads.value[pad]!;
+  const [busy, setBusy] = useState(false);
+  const blocked = writeBlockReason.value ?? (p.vinyl ? "VARI MODE работает при выключенном Vinyl" : null);
+  const pick = async (mode: number) => {
+    if (mode === p.vari || busy) return;
+    setBusy(true);
+    await setVari(pad, mode);
+    setBusy(false);
+  };
+  return (
+    <div class="tp-row">
+      <span>VARI</span>
+      <span class={`segmented${p.vinyl ? " muted" : ""}`} role="group" aria-label="VARI MODE" title={blocked ?? "Алгоритм time-stretch (VARI MODE)"}>
+        {VARI_MODES.map((name, i) => (
+          <button key={name} type="button" aria-pressed={p.vari === i} class={p.vari === i ? "on" : ""} title={VARI_HINTS[i]}
+            disabled={!!blocked || busy} onClick={() => pick(i)}>{name}</button>
+        ))}
+      </span>
+      <span class="note">{p.vinyl ? "работает при выключенном Vinyl" : VARI_HINTS[p.vari] ?? `неизвестное значение ${p.vari}`}</span>
     </div>
   );
 }

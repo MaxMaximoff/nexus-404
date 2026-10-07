@@ -8,7 +8,7 @@ import {
 import {
   BPM_MAX_X100, BPM_MIN_X100, FLAG_ONE_SHOT, GLOBAL, PARAM_BANK_TEMPO, PARAM_PROJECT_TEMPO, PARAM_TEMPO_SELECT, LEVEL_MAX, PAD_COUNT, PARAM_BPM, PARAM_CLEARED_BY_ONE_SHOT, PARAM_END,
   PARAM_FLAGS, PARAM_GATE, PARAM_PITCH_COARSE, PARAM_PITCH_FINE, PARAM_TIME_STRETCH, PARAM_VINYL, PITCH_COARSE_MAX, PITCH_FINE_MAX,
-  STRETCH_MAX_X100, STRETCH_MIN_X100, PARAM_LEVEL, PARAM_LOOP, PARAM_BPM_SYNC, PARAM_START, assignSampleBlock, byteToFrame, deviceErrorText, padName,
+  STRETCH_MAX_X100, STRETCH_MIN_X100, VARI_MASK, VARI_MODES, PARAM_LEVEL, PARAM_LOOP, PARAM_BPM_SYNC, PARAM_START, assignSampleBlock, byteToFrame, deviceErrorText, padName,
   parsePadBlock, parseProjectSettings, parseStatus, setParamPayload,
   type DeviceStatus, type PadBlock, type ProjectSettings,
 } from "./control";
@@ -189,6 +189,24 @@ export class SP404Device {
     await this.ctl([0x8f, pad & 0xff, pad >> 8, 0x00], (p) => p[0] === 0x0f, "preview stop");
   }
 
+  /**
+   * Stop a pad that plays on after preview (Gate off: the SP ignores `8F` then). What one would do
+   * by hand: Gate on, press and release the pad, which cuts the old voice, then Gate back off.
+   * With Gate on, a release alone stops it. Returns the block re-read afterwards.
+   */
+  stopPad(project1: number, pad: number): Promise<PadBlock> {
+    return this.editPad(project1, pad, async (b) => {
+      if (b.gate) return this.previewStop(pad);
+      await this.setParam(pad, PARAM_GATE, 1);
+      try {
+        await this.previewStart(pad);
+        await this.previewStop(pad);
+      } finally {
+        await this.setParam(pad, PARAM_GATE, 0);
+      }
+    });
+  }
+
   /** What the official app sends when it lets go of the device. No reply. */
   async mkiiExit(): Promise<void> {
     await this.fire([0x3a, 0x00, 0x00, 0x00]);
@@ -257,6 +275,12 @@ export class SP404Device {
       if (coarse !== b.pitchCoarse) await this.setParam(pad, PARAM_PITCH_COARSE, coarse);
       if (fine !== b.pitchFine) await this.setParam(pad, PARAM_PITCH_FINE, fine);
     });
+  }
+
+  /** VARI MODE, index into VARI_MODES: sets bits 1–2 of the mode flags, keeping the other bits. */
+  setVari(project1: number, pad: number, mode: number): Promise<PadBlock> {
+    if (!(Number.isInteger(mode) && mode >= 0 && mode < VARI_MODES.length)) throw new DeviceError(`VARI MODE: 0–${VARI_MODES.length - 1}`);
+    return this.editPad(project1, pad, (b) => this.setParam(pad, PARAM_FLAGS, (b.flags & ~VARI_MASK) | (mode << 1)));
   }
 
   /**

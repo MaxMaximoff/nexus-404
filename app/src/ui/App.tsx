@@ -24,8 +24,8 @@ export function App() {
       )}
       <main class="layout">
         <div class="workspace">
-          <PadGrid />
           <BankRail />
+          <PadGrid />
         </div>
         <Inspector />
       </main>
