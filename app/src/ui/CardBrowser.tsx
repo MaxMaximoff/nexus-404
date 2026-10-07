@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import {
   CARD_DRAG, CARD_MOVE, canUploadHere, uploadToCard, cardBusy, cardConfirm, cardEdit, cardMoving, cardNameError, cardSel, createCardFolder, deleteCardSelection,
-  inImport, moveCardEntries, renameCardEntry, cardDir, cardEntries, cardError, cardPath, cardPlaying, isAudio, openCardDir, previewCardFile, type CardEntry,
+  downloadCardFiles, inImport, moveCardEntries, renameCardEntry, cardDir, cardEntries, cardError, cardPath, cardPlaying, isAudio, openCardDir, previewCardFile, type CardEntry,
 } from "./card";
 import { conn } from "./store";
-import { IconFile, IconFolder, IconFolderPlus, IconPencil, IconPlay, IconRefresh, IconStop, IconTrash, IconUpload } from "./icons";
+import { IconDownload, IconFile, IconFolder, IconFolderPlus, IconPencil, IconPlay, IconRefresh, IconStop, IconTrash, IconUpload } from "./icons";
 
 const fmtSize = (n: number | null) => (n === null ? "" : n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(0)} KB` : `${(n / 1048576).toFixed(1)} MB`);
 
@@ -29,6 +29,7 @@ export function CardBrowser() {
   useEffect(() => { if (cardConfirm.value) yes.current?.focus(); }, [cardConfirm.value]);
 
   const all = entries ?? [];
+  const pickedFiles = all.filter((e) => !e.dir && sel.has(e.name)).map((e) => e.name);
   const audio = all.filter(isAudio);
   // A plain click opens a folder; Ctrl/Shift-click picks it like a file (to delete it).
   const click = (e: MouseEvent, entry: CardEntry) => {
@@ -126,6 +127,10 @@ export function CardBrowser() {
             </span>
           ))}
         </nav>
+        {pickedFiles.length > 0 && (
+          <button class="icon-btn" disabled={!ready || !!busy} onClick={() => void downloadCardFiles(pickedFiles)}
+            title={`Скачать на компьютер: ${pickedFiles.join(", ")}`} aria-label="Скачать выбранные файлы"><IconDownload /></button>
+        )}
         {upload && sel.size > 0 && (
           <button class="btn insp-delete card-delete" disabled={!ready || !!busy} onClick={() => (cardConfirm.value = true)}
             title={`Удалить с карты выбранное (${sel.size}) — Delete`} aria-label="Удалить с карты"><IconTrash /></button>
@@ -197,7 +202,15 @@ export function CardBrowser() {
                       <button class="icon-btn card-row-act danger" disabled={!!busy} aria-label={`Удалить ${e.name}`} title="Удалить папку со всем содержимым"
                         onClick={(ev) => { ev.stopPropagation(); cardSel.value = new Set([e.name]); cardConfirm.value = true; }}><IconTrash /></button>
                     </>
-                  ) : <span class="card-size">{fmtSize(e.size)}</span>}
+                  ) : (
+                    <>
+                      <span class="card-size">{fmtSize(e.size)}</span>
+                      {!e.dir ? (
+                        <button class="icon-btn card-row-act" disabled={!!busy} aria-label={`Скачать ${e.name}`} title="Скачать на компьютер"
+                          onClick={(ev) => { ev.stopPropagation(); void downloadCardFiles([e.name]); }}><IconDownload /></button>
+                      ) : <span />}
+                    </>
+                  )}
                   {au && (
                     <button class={`icon-btn card-play ${playing ? "on" : ""}`} disabled={!!busy && !playing} aria-label={playing ? "Стоп" : "Прослушать"}
                       title={playing ? "Остановить" : "Прослушать на компьютере"} onClick={(ev) => { ev.stopPropagation(); void previewCardFile(e.name); }}>

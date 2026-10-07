@@ -1,9 +1,10 @@
 // App state (signals) and the controller that drives the device.
 
 import { batch, computed, effect, signal } from "@preact/signals";
+import { safeFileName, saveFile } from "./download";
 import {
   PAD_COUNT, SP404Device, SampleUploader, WebSerialTransport, bpmFromFileName, computeEnvelope, computePeaks, isSp404Port,
-  BANKS, BPM_MAX_X100, BPM_MIN_X100, BPM_RANGES, VARI_MODES, bpmFromLength, byteToFrame, detectBpm, formatBpm, newJob, padName, padSpeed, samplePath, smpToPcm,
+  BANKS, encodeWav, BPM_MAX_X100, BPM_MIN_X100, BPM_RANGES, VARI_MODES, bpmFromLength, byteToFrame, detectBpm, formatBpm, newJob, padName, padSpeed, samplePath, smpToPcm,
   type BpmResult, type DeviceStatus, type ImportJob, type LogLevel, type PadBlock, type ProjectSettings,
 } from "../sp404";
 
@@ -740,6 +741,24 @@ export async function planGroupBpm(how: "detect" | "range"): Promise<BpmPlan[] |
 export function applyGroupBpm(plan: BpmPlan[]): Promise<boolean> {
   const to = new Map(plan.flatMap((p) => (p.x100 === null ? [] : [[p.pad, p.x100] as const])));
   return editGroup("BPM по каждому pad'у", (d, p1, pad) => d.setBpm(p1, pad, to.get(pad)!), (b) => to.get(b.index) === undefined || to.get(b.index) === b.bpmX100);
+}
+
+/**
+ * Save a pad's whole sample to the computer as a 48 kHz 16-bit WAV: from the waveform cache when
+ * its PCM is there, else read from the SP. The BPM goes into the name, so importing the file
+ * again picks it up.
+ */
+export async function downloadPadWav(pad: number): Promise<void> {
+  const b = pads.value[pad];
+  if (!b?.size) return;
+  const cached = () => { const w = waveforms.value.get(pad); return w?.key === waveKey(b) && w.samples ? w : undefined; };
+  if (!cached()) await loadWaveform(pad);
+  const w = cached();
+  if (!w?.samples) return void (notice.value = { kind: "error", text: `${padName(pad)}: не удалось прочитать сэмпл` });
+  const base = safeFileName(b.name || padName(pad));
+  const name = bpmFromFileName(base) === null && b.bpmX100 >= 4000 && b.bpmX100 <= 20000 ? `${base}_${formatBpm(b.bpmX100)}bpm.wav` : `${base}.wav`;
+  saveFile(name, encodeWav(w.samples, w.channels), "audio/wav");
+  log("info", `${padName(pad)} → ${name} (${(w.frames / 48000).toFixed(2)} s, ${w.channels === 1 ? "моно" : "стерео"})`);
 }
 
 /** Pad started by preview that may still be playing (Gate off), for the stop button; null when none. */

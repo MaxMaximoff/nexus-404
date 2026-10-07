@@ -6,7 +6,7 @@ import {
   parseBpmInput,
 } from "../sp404";
 import {
-  bpmRange, channelsOf, confirmDelete, conn, deletePad, detectPadBpm, importFiles, loadWaveform, pads, playing, preview, project, selectedPad, setBpm, setBpmSync, setGate, setLevel, setLoop, setFixedVelocity, setOneShot, setPadParam, setPitch, setTimeStretch, setVari, setVinyl,
+  bpmRange, channelsOf, confirmDelete, conn, deletePad, detectPadBpm, downloadPadWav, importFiles, loadWaveform, pads, playing, preview, project, selectedPad, setBpm, setBpmSync, setGate, setLevel, setLoop, setFixedVelocity, setOneShot, setPadParam, setPitch, setTimeStretch, setVari, setVinyl,
   setRange, stopPlaying, waveLoading, waveforms, writeBlockReason, editGroup, pickedList, selectedBank, planGroupBpm, applyGroupBpm, type BpmPlan,
 } from "./store";
 import type { PadBlock } from "../sp404";
@@ -20,7 +20,7 @@ const MIDI_NOTE = { off: "MIDI подключится при ресэмпле", 
   denied: "доступ к MIDI запрещён", unsupported: "браузер без Web MIDI" } as const;
 import type { Waveform as Wave } from "./store";
 import { ValueField, intIn, signed, type Parse } from "./ValueField";
-import { IconCheck, IconPlay, IconStop, IconTrash, IconUpload, IconWave } from "./icons";
+import { IconCheck, IconDownload, IconPlay, IconStop, IconTrash, IconUpload, IconWave } from "./icons";
 
 const RATE = 48000;
 const TRIM_THRESHOLDS = [-60, -48, -36, -24];
@@ -78,7 +78,11 @@ function FilledPad({ pad, ready }: { pad: number; ready: boolean }) {
   const facts = [total !== null && `${sec(total)} s`, channels && (channels === 1 ? "mono" : "stereo"), `${(p.size / 1048576).toFixed(2)} MB`].filter(Boolean).join(" · ");
   return (
     <>
-      <div class="insp-facts">{facts}</div>
+      <div class="insp-facts">
+        <span>{facts}</span>
+        <button class="icon-btn insp-dl" disabled={!ready && !wave?.samples} onClick={() => void downloadPadWav(pad)}
+          title="Скачать весь сэмпл на компьютер как WAV 48 kHz / 16 bit (BPM — в имени файла)" aria-label="Скачать WAV"><IconDownload /> WAV</button>
+      </div>
       <PadChips pad={pad} />
       <Tabs />
       <div class="insp-scroll">

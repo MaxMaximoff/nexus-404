@@ -5,6 +5,7 @@
 
 import { computed, signal } from "@preact/signals";
 import { CARD, padName } from "../sp404";
+import { saveFile } from "./download";
 import { importFiles, log, notice, pads, project, writeBlockReason, withDevice } from "./store";
 
 export interface CardEntry { name: string; dir: boolean; size: number | null }
@@ -288,6 +289,24 @@ export async function moveCardEntries(names: string[], target: string[]): Promis
   if (moved.length) log("info", `На карте в ${to}: ${moved.join(", ")}`);
   if (skipped.length && !notice.value) notice.value = { kind: "info", text: `В ${to} уже есть: ${skipped.join(", ")} — эти не перенесены` };
   await refreshPicking(dir, []);
+}
+
+/** Save card files to the computer, one after another (read from the card, or from the cache). */
+export async function downloadCardFiles(names: string[]): Promise<void> {
+  if (!names.length || cardBusy.value) return;
+  const dir = cardDir.value;
+  try {
+    for (const [i, name] of names.entries()) {
+      const what = `Скачиваю${names.length > 1 ? ` ${i + 1} из ${names.length}` : ""}: ${name}`;
+      cardBusy.value = { text: what, progress: 0 };
+      saveFile(name, (await readCardFile(cardPath(dir, name), what)).slice(), MIME[name.split(".").pop()!.toLowerCase()] ?? "application/octet-stream");
+    }
+    log("info", `С карты на компьютер: ${names.join(", ")}`);
+  } catch (e) {
+    notice.value = { kind: "error", text: `Скачивание с карты: ${(e as Error).message}` };
+  } finally {
+    cardBusy.value = null;
+  }
 }
 
 const MIME: Record<string, string> = { wav: "audio/wav", aif: "audio/aiff", aiff: "audio/aiff", flac: "audio/flac", mp3: "audio/mpeg", ogg: "audio/ogg", m4a: "audio/mp4", aac: "audio/aac" };
