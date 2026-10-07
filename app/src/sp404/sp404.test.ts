@@ -166,6 +166,38 @@ describe("guard", () => {
     pol.cardWrite = null;
     expect(() => gc(CH_FILE, FileReq.write(9, new Uint8Array(4), true))).toThrow();
   });
+  it("lets only the one confirmed path inside the card's IMPORT/ be deleted", () => {
+    const pol = { importProject: null, importPad: null, writableHandles: new Set<number>(), cardDelete: "/IMPORT/Pack" as string | null };
+    const gd = makeGuard(pol);
+    expect(() => gd(CH_FILE, FileReq.rmdir("sd:/IMPORT/Pack"))).not.toThrow();
+    expect(() => gd(CH_FILE, FileReq.unlink("sd:/IMPORT/Pack"))).not.toThrow();
+    expect(() => gd(CH_FILE, FileReq.unlink("sd:/IMPORT/Other.wav"))).toThrow();
+    for (const bad of ["/IMPORT", "/EXPORT/SAMPLE/a.wav", "/BKUP", "/SP404MKII_APP0.bin", "/IMPORT/../BKUP"]) {
+      pol.cardDelete = bad;
+      expect(() => gd(CH_FILE, FileReq.unlink(`sd:${bad}`))).toThrow();
+      expect(() => gd(CH_FILE, FileReq.rmdir(`sd:${bad}`))).toThrow();
+    }
+    pol.cardDelete = null;
+    expect(() => gd(CH_FILE, FileReq.rmdir("sd:/IMPORT/Pack"))).toThrow();
+  });
+  it("lets one mkdir and one rename through, both inside the card's IMPORT/", () => {
+    const pol = { importProject: null, importPad: null, writableHandles: new Set<number>(),
+      cardMkdir: "/IMPORT/New" as string | null, cardRename: { from: "/IMPORT/a.wav", to: "/IMPORT/Pack/a.wav" } as { from: string; to: string } | null };
+    const g2 = makeGuard(pol);
+    expect(() => g2(CH_FILE, FileReq.mkdir("sd:/IMPORT/New"))).not.toThrow();
+    expect(() => g2(CH_FILE, FileReq.mkdir("sd:/IMPORT/Other"))).toThrow();
+    expect(() => g2(CH_FILE, FileReq.rename("sd:/IMPORT/a.wav", "sd:/IMPORT/Pack/a.wav"))).not.toThrow();
+    expect(() => g2(CH_FILE, FileReq.rename("sd:/IMPORT/a.wav", "sd:/IMPORT/b.wav"))).toThrow();
+    pol.cardRename = { from: "/IMPORT/a.wav", to: "/EXPORT/a.wav" };
+    expect(() => g2(CH_FILE, FileReq.rename("sd:/IMPORT/a.wav", "sd:/EXPORT/a.wav"))).toThrow();
+    pol.cardRename = { from: "/SP404MKII_APP0.bin", to: "/IMPORT/x.bin" };
+    expect(() => g2(CH_FILE, FileReq.rename("sd:/SP404MKII_APP0.bin", "sd:/IMPORT/x.bin"))).toThrow();
+    pol.cardMkdir = "/IMPORT";
+    expect(() => g2(CH_FILE, FileReq.mkdir("sd:/IMPORT"))).toThrow();
+    pol.cardMkdir = null; pol.cardRename = null;
+    expect(() => g2(CH_FILE, FileReq.mkdir("sd:/IMPORT/New"))).toThrow();
+    expect(() => FileReq.rename(`sd:/IMPORT/${"x".repeat(200)}`, "sd:/IMPORT/y")).toThrow(/длиннее/);
+  });
   it("blocks import traffic when no import is running", () => {
     const idle = makeGuard({ importProject: null, importPad: null, writableHandles: new Set() });
     expect(() => idle(CH_CONTROL, Uint8Array.from([0xfb, 0xa0, 0]))).toThrow();
@@ -255,7 +287,37 @@ describe("device against a scripted SP", () => {
         return;
       }
       if (op === 0x0d) { closedirs++; return status(-1); } // the card refuses closedir after the end
-      if (op === 0x0a) status(files.delete(path) ? 0 : -1);
+      const unlist = (p: string, entry: string) => {
+        const parent = p.slice(0, p.lastIndexOf("/")), list = dirs.get(parent);
+        if (list) dirs.set(parent, list.filter((x) => x !== entry));
+      };
+      if (op === 0x17) { // rename: two 200-byte slots
+        const slot = (i: number) => { const s = p.subarray(15 + i * 200, 15 + (i + 1) * 200); return new TextDecoder().decode(s.subarray(0, s.indexOf(0))); };
+        const from = slot(0), to = slot(1), name = (x: string) => x.slice(x.lastIndexOf("/") + 1);
+        const isDir = dirs.has(from);
+        if (!isDir && !files.has(from)) return status(-1);
+        for (const m of [files, dirs] as Map<string, unknown>[])
+          for (const k of [...m.keys()]) if (k === from || k.startsWith(`${from}/`)) { m.set(to + k.slice(from.length), m.get(k)); m.delete(k); }
+        unlist(from, isDir ? `${name(from)}/` : name(from));
+        const parent = to.slice(0, to.lastIndexOf("/"));
+        dirs.set(parent, [...(dirs.get(parent) ?? []), isDir ? `${name(to)}/` : name(to)]);
+        return status(0);
+      }
+      if (op === 0x09) { // mkdir
+        if (dirs.has(path) || files.has(path)) return status(-1);
+        dirs.set(path, []);
+        const parent = path.slice(0, path.lastIndexOf("/"));
+        dirs.set(parent, [...(dirs.get(parent) ?? []), `${path.slice(path.lastIndexOf("/") + 1)}/`]);
+        return status(0);
+      }
+      if (op === 0x0b) { // rmdir: empty folders only
+        if (!dirs.has(path) || dirs.get(path)!.length) return status(-1);
+        dirs.delete(path);
+        unlist(path, `${path.slice(path.lastIndexOf("/") + 1)}/`);
+        return status(0);
+      }
+      if (op === 0x0a && files.delete(path)) { unlist(path, path.slice(path.lastIndexOf("/") + 1)); return status(0); }
+      if (op === 0x0a) status(-1);
       else if (op === 0x00) { if (first === O_CREAT_TRUNC_RDWR) files.set(path, new Uint8Array(0)); if (!files.has(path)) return status(-1); open = { path, pos: 0 }; status(0x114); }
       else if (op === 0x07) { open!.pos = second.i32; status(second.i32); }
       else if (op === 0x06) {
@@ -264,6 +326,10 @@ describe("device against a scripted SP", () => {
         files.set(open!.path, n); open!.pos += len;
         if (second.high & 4) { const done = (globalThis as any).__batch + len; (globalThis as any).__batch = 0; status(done); } else (globalThis as any).__batch = ((globalThis as any).__batch ?? 0) + len;
       } else if (op === 0x03) status(0);
+      else if (op === 0x12 && dirs.has(path)) {
+        const d = new Uint8Array(8); new DataView(d.buffer).setUint32(0, 0x41ff, true);
+        reply(CH_FILE, [0xf0, 0x41, 0x7a, 0x02, ...septEnc(0), ...septEnc(8, 0x40), ...d, 0xf7]);
+      }
       else if (op === 0x12) {
         const f = files.get(path);
         if (!f) return status(-1);
@@ -503,6 +569,43 @@ describe("device against a scripted SP", () => {
     await expect(dev.exclusive((d) => d.writeCardFile("sd:/EXPORT/x.wav", data))).rejects.toThrow(/только в IMPORT/);
     await expect(dev.exclusive((d) => d.writeCardFile("IMPORT/x.wav", data))).rejects.toThrow(/только в IMPORT/);
     expect(sp.files.has("/EXPORT/x.wav")).toBe(false);
+  });
+  it("deletes a card file, and a folder with everything in it, inside IMPORT/ only", async () => {
+    const sp = fakeSp();
+    const dev = new SP404Device(sp.t);
+    sp.dirs.set("/IMPORT", ["Pack/", "a.wav"]);
+    sp.dirs.set("/IMPORT/Pack", ["k.wav", "Sub/"]);
+    sp.dirs.set("/IMPORT/Pack/Sub", ["s.wav"]);
+    for (const f of ["/IMPORT/a.wav", "/IMPORT/Pack/k.wav", "/IMPORT/Pack/Sub/s.wav"]) sp.files.set(f, new Uint8Array(4));
+    const gone: string[] = [];
+    expect(await dev.exclusive((d) => d.deleteCardPath("sd:/IMPORT/Pack", (w) => gone.push(w)))).toBe(4);
+    expect(gone).toEqual(["/IMPORT/Pack/k.wav", "/IMPORT/Pack/Sub/s.wav", "/IMPORT/Pack/Sub", "/IMPORT/Pack"]);
+    expect(sp.dirs.get("/IMPORT")).toEqual(["a.wav"]);
+    expect(await dev.exclusive((d) => d.deleteCardPath("sd:/IMPORT/a.wav"))).toBe(1);
+    expect(sp.files.size).toBe(0);
+    expect(dev.policy.cardDelete).toBeNull();
+    await expect(dev.exclusive((d) => d.deleteCardPath("sd:/IMPORT"))).rejects.toThrow(/только внутри IMPORT/);
+    await expect(dev.exclusive((d) => d.deleteCardPath("sd:/EXPORT/x.wav"))).rejects.toThrow(/только внутри IMPORT/);
+    await expect(dev.exclusive((d) => d.deleteCardPath("sd:/IMPORT/nope.wav"))).rejects.toThrow(/нет/);
+  });
+  it("creates folders and moves / renames inside the card's IMPORT/, replacing nothing", async () => {
+    const sp = fakeSp();
+    const dev = new SP404Device(sp.t);
+    sp.dirs.set("/IMPORT", ["a.wav", "b.wav"]);
+    sp.files.set("/IMPORT/a.wav", new Uint8Array(4));
+    sp.files.set("/IMPORT/b.wav", new Uint8Array(5));
+    await dev.exclusive((d) => d.mkdirCard("sd:/IMPORT/Pack"));
+    await expect(dev.exclusive((d) => d.mkdirCard("sd:/IMPORT/Pack"))).rejects.toThrow(/уже есть/);
+    await dev.exclusive((d) => d.renameCard("sd:/IMPORT/a.wav", "sd:/IMPORT/Pack/a.wav"));
+    expect(sp.files.has("/IMPORT/Pack/a.wav")).toBe(true);
+    await expect(dev.exclusive((d) => d.renameCard("sd:/IMPORT/b.wav", "sd:/IMPORT/Pack/a.wav"))).rejects.toThrow(/уже есть/);
+    await dev.exclusive((d) => d.renameCard("sd:/IMPORT/Pack", "sd:/IMPORT/Drums"));
+    expect(sp.files.has("/IMPORT/Drums/a.wav")).toBe(true);
+    await expect(dev.exclusive((d) => d.renameCard("sd:/IMPORT/Drums", "sd:/IMPORT/Drums/In"))).rejects.toThrow(/в саму себя/);
+    await expect(dev.exclusive((d) => d.renameCard("sd:/IMPORT/b.wav", "sd:/EXPORT/b.wav"))).rejects.toThrow(/только внутри IMPORT/);
+    await expect(dev.exclusive((d) => d.mkdirCard("sd:/BKUP/x"))).rejects.toThrow(/только внутри IMPORT/);
+    expect(dev.policy.cardRename).toBeNull();
+    expect(dev.policy.cardMkdir).toBeNull();
   });
   it("selects another project, and nothing when it is already current", async () => {
     const sp = fakeSp();

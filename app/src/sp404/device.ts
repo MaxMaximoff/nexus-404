@@ -24,6 +24,8 @@ export type Progress = (done: number, total: number) => void;
 export interface DirEntry { name: string; dir: boolean }
 const DT_DIR = 4; // readdir entry type, Linux d_type
 const MAX_DIR_ENTRIES = 10000;
+const MAX_CARD_DEPTH = 16;
+const S_IFMT = 0xf000, S_IFDIR = 0x4000; // stat mode: 0x41FF directory, 0x81FF file
 
 const TIMEOUT = 5000;
 const CLOSE_AFTER_WRITE = 20000;
@@ -529,6 +531,68 @@ export class SP404Device {
     const st = await this.stat(path);
     if (!st || st.size !== data.length) throw new DeviceError(`проверка размера: на карте ${st?.size ?? "нет файла"}, ожидалось ${data.length}`);
     onProgress(data.length, data.length);
+  }
+
+  /**
+   * Delete a file or a folder with everything in it, inside the card's IMPORT/ only (the user has
+   * confirmed it). The card removes only empty folders, so a folder is emptied first, depth first.
+   * `onItem` gets each wire path once it is gone; returns how many entries went.
+   */
+  async deleteCardPath(path: string, onItem: (wire: string) => void = () => {}): Promise<number> {
+    const wire = remotePath(path);
+    if (!path.startsWith(CARD) || !isCardImportFile(wire)) throw new DeviceError(`на карте можно удалять только внутри IMPORT: ${path}`);
+    const st = await this.stat(path);
+    if (!st) throw new DeviceError(`на карте нет ${wire}`);
+    let n = 0;
+    const remove = async (p: string, dir: boolean, depth: number): Promise<void> => {
+      if (depth > MAX_CARD_DEPTH) throw new DeviceError(`слишком глубокая вложенность: ${remotePath(p)}`);
+      if (dir) for (const e of await this.listDir(p)) await remove(`${p}/${e.name}`, e.dir, depth + 1);
+      this.policy.cardDelete = remotePath(p);
+      try {
+        await this.statusCall(dir ? FileReq.rmdir(p) : FileReq.unlink(p), `${dir ? "rmdir" : "unlink"} ${remotePath(p)}`);
+      } finally {
+        this.policy.cardDelete = null;
+      }
+      n++;
+      onItem(remotePath(p));
+    };
+    await remove(path.replace(/\/+$/, ""), (st.mode & S_IFMT) === S_IFDIR, 0);
+    return n;
+  }
+
+  /** Create a folder inside the card's IMPORT/; an existing name is refused. */
+  async mkdirCard(path: string): Promise<void> {
+    const wire = remotePath(path);
+    if (!path.startsWith(CARD) || !isCardImportFile(wire)) throw new DeviceError(`папки на карте создаются только внутри IMPORT: ${path}`);
+    if (await this.stat(path)) throw new DeviceError(`на карте уже есть ${wire}`);
+    this.policy.cardMkdir = wire;
+    try {
+      await this.statusCall(FileReq.mkdir(path), `mkdir ${wire}`);
+    } finally {
+      this.policy.cardMkdir = null;
+    }
+  }
+
+  /**
+   * Rename or move a file or folder, both paths inside the card's IMPORT/. The destination must
+   * not exist (nothing is replaced), and a folder cannot go into itself.
+   */
+  async renameCard(from: string, to: string): Promise<void> {
+    const a = remotePath(from), b = remotePath(to);
+    if (![from, to].every((p) => p.startsWith(CARD)) || !isCardImportFile(a) || !isCardImportFile(b))
+      throw new DeviceError(`переносить на карте можно только внутри IMPORT: ${a} → ${b}`);
+    if (a === b) return;
+    if (b.startsWith(`${a}/`)) throw new DeviceError(`папку нельзя перенести в саму себя: ${a} → ${b}`);
+    if (!(await this.stat(from))) throw new DeviceError(`на карте нет ${a}`);
+    // Only a change of case is the same entry on the card's filesystem; anything else that exists is refused.
+    if (a.toLowerCase() !== b.toLowerCase() && (await this.stat(to))) throw new DeviceError(`на карте уже есть ${b}`);
+    const req = FileReq.rename(from, to); // throws on a path that does not fit, before anything is sent
+    this.policy.cardRename = { from: a, to: b };
+    try {
+      await this.statusCall(req, `rename ${a} → ${b}`);
+    } finally {
+      this.policy.cardRename = null;
+    }
   }
 
   /** Whole file, or its first `limit` bytes. `null` when it does not exist. */

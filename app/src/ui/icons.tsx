@@ -16,6 +16,8 @@ export const IconLock = () => svg("M6 11h12v9H6zM8.5 11V8a3.5 3.5 0 0 1 7 0v3", 
 export const IconWave = () => svg("M2 12h2l2-6 3 12 3-15 3 18 3-12 2 3h2");
 export const IconX = () => svg("M18 6 6 18M6 6l12 12", 14);
 export const IconCard = () => svg("M7 3h8l4 4v14H7zM10 3v4M13 3v4M16 7v0", 14);
+export const IconFolderPlus = () => svg("M3 6h6l2 2h10v11H3zM12 11v5M9.5 13.5h5", 14);
+export const IconPencil = () => svg("M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4", 14);
 export const IconFolder = () => svg("M3 6h6l2 2h10v11H3z", 14);
 export const IconFile = () => svg("M6 3h8l4 4v14H6zM14 3v4h4", 14);
 export const IconTrash = () => svg("M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6", 14);

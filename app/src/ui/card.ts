@@ -11,6 +11,12 @@ export interface CardEntry { name: string; dir: boolean; size: number | null }
 
 /** Drag data for card files dropped on a pad: JSON array of card paths. */
 export const CARD_DRAG = "application/x-nexus-card";
+/** Drag data for entries moved to another folder inside IMPORT/: JSON array of names in the open folder. */
+export const CARD_MOVE = "application/x-nexus-card-move";
+/** Names being dragged within the card browser (drag data cannot be read before the drop). */
+export const cardMoving = signal<string[] | null>(null);
+/** A name being typed in the list: a new folder, or a new name for an entry. */
+export const cardEdit = signal<{ kind: "new" } | { kind: "rename"; name: string } | null>(null);
 export const AUDIO_RE = /\.(wav|aiff?|flac|mp3|ogg|m4a|aac)$/i;
 export const isAudio = (e: CardEntry) => !e.dir && AUDIO_RE.test(e.name);
 
@@ -29,6 +35,10 @@ export function showSide(tab: "pad" | "card"): void {
   sideTab.value = tab;
   try { localStorage.setItem(TAB_KEY, tab); } catch { /* private mode */ }
 }
+
+/** Picked entries of the open folder (names), and whether their deletion waits for confirmation. */
+export const cardSel = signal<ReadonlySet<string>>(new Set());
+export const cardConfirm = signal(false);
 
 /** Folders from the card root. */
 export const cardDir = signal<string[]>(savedPath());
@@ -60,6 +70,9 @@ export async function openCardDir(dir: string[]): Promise<void> {
       return out;
     });
     entries.sort((a, b) => (a.dir !== b.dir ? (a.dir ? -1 : 1) : collator.compare(a.name, b.name)));
+    if (dir.join("/") !== cardDir.value.join("/")) cardSel.value = new Set();
+    else cardSel.value = new Set([...cardSel.value].filter((n) => entries.some((e) => e.name === n)));
+    cardConfirm.value = false;
     cardDir.value = dir;
     cardEntries.value = entries;
     try { localStorage.setItem(PATH_KEY, JSON.stringify(dir)); } catch { /* private mode */ }
@@ -154,6 +167,126 @@ export async function uploadToCard(files: File[]): Promise<void> {
   const notes = [skipped.length && `уже есть на карте: ${skipped.join(", ")}`, notAudio && `не аудио: ${notAudio}`].filter(Boolean);
   if (notes.length && !notice.value) notice.value = { kind: "info", text: `Пропущено — ${notes.join("; ")}` };
   await openCardDir(dir);
+}
+
+/**
+ * Delete the picked files and folders (folders with everything in them) from the open folder,
+ * inside IMPORT/ only; the user has confirmed it. Stops at the first error.
+ */
+export async function deleteCardSelection(): Promise<void> {
+  cardConfirm.value = false;
+  if (!canUploadHere.value || cardBusy.value) return;
+  const dir = cardDir.value;
+  const names = (cardEntries.value ?? []).filter((e) => cardSel.value.has(e.name)).map((e) => e.name);
+  if (!names.length) return;
+  let n = 0;
+  try {
+    for (const name of names) {
+      cardBusy.value = { text: `Удаляю ${name}…`, progress: null };
+      n += await withDevice((d) => d.deleteCardPath(cardPath(dir, name), (wire) => {
+        cache.delete(CARD + wire);
+        if (cardPlaying.value === CARD + wire) stopCardPreview();
+        cardBusy.value = { text: `Удаляю ${wire}`, progress: null };
+      }));
+    }
+  } catch (e) {
+    notice.value = { kind: "error", text: `Удаление с карты: ${(e as Error).message}` };
+  } finally {
+    cardBusy.value = null;
+  }
+  if (n) log("info", `С карты удалено (${n}): ${names.map((x) => `${cardPath(dir, x).slice(CARD.length)}`).join(", ")}`);
+  cardSel.value = new Set();
+  await openCardDir(dir);
+}
+
+export const inImport = (dir: string[]) => dir[0]?.toUpperCase() === "IMPORT";
+
+/** Why the card would not take this file or folder name (FAT rules), or null. */
+export function cardNameError(name: string): string | null {
+  const n = name.trim();
+  if (!n) return "пустое имя";
+  if (n === "." || n === ".." || n.endsWith(".")) return "имя не может быть «.», «..» или кончаться точкой";
+  if (/[\\/:*?"<>|\u0000-\u001f]/.test(n)) return "нельзя символы \\ / : * ? \" < > |";
+  return null;
+}
+
+/** After a change on the card: re-read the folder, then pick `names` there. */
+async function refreshPicking(dir: string[], names: string[]): Promise<void> {
+  cache.clear(); // paths have changed
+  await openCardDir(dir);
+  cardSel.value = new Set(names.filter((n) => cardEntries.value?.some((e) => e.name === n)));
+}
+
+/** New folder in the open IMPORT/ folder. */
+export async function createCardFolder(name: string): Promise<boolean> {
+  const n = name.trim(), dir = cardDir.value, err = cardNameError(n);
+  if (err) { notice.value = { kind: "error", text: `Имя папки: ${err}` }; return false; }
+  if (!inImport(dir) || cardBusy.value) return false;
+  cardBusy.value = { text: `Создаю папку ${n}…`, progress: null };
+  try {
+    await withDevice((d) => d.mkdirCard(cardPath(dir, n)));
+    log("info", `Папка на карте: ${cardPath(dir, n).slice(CARD.length)}`);
+  } catch (e) {
+    notice.value = { kind: "error", text: `Новая папка: ${(e as Error).message}` };
+    return false;
+  } finally {
+    cardBusy.value = null;
+  }
+  await refreshPicking(dir, [n]);
+  return true;
+}
+
+/** Rename a file or folder in the open IMPORT/ folder. */
+export async function renameCardEntry(old: string, name: string): Promise<boolean> {
+  const n = name.trim(), dir = cardDir.value, err = cardNameError(n);
+  if (n === old) return true;
+  if (err) { notice.value = { kind: "error", text: `Новое имя: ${err}` }; return false; }
+  if (!inImport(dir) || cardBusy.value) return false;
+  if (cardPlaying.value === cardPath(dir, old)) stopCardPreview();
+  cardBusy.value = { text: `Переименовываю ${old}…`, progress: null };
+  try {
+    await withDevice((d) => d.renameCard(cardPath(dir, old), cardPath(dir, n)));
+    log("info", `На карте: ${old} → ${n}`);
+  } catch (e) {
+    notice.value = { kind: "error", text: `Переименование: ${(e as Error).message}` };
+    return false;
+  } finally {
+    cardBusy.value = null;
+  }
+  await refreshPicking(dir, [n]);
+  return true;
+}
+
+/**
+ * Move entries of the open folder into `target` (inside IMPORT/), one by one; names already in
+ * the target are skipped, nothing is replaced. Stops at any other error.
+ */
+export async function moveCardEntries(names: string[], target: string[]): Promise<void> {
+  const dir = cardDir.value;
+  if (!inImport(dir) || !inImport(target) || cardBusy.value || !names.length) return;
+  if (target.join("/") === dir.join("/")) return;
+  stopCardPreview();
+  const moved: string[] = [], skipped: string[] = [];
+  try {
+    for (const [i, name] of names.entries()) {
+      cardBusy.value = { text: `Переношу${names.length > 1 ? ` ${i + 1} из ${names.length}` : ""}: ${name}`, progress: null };
+      try {
+        await withDevice((d) => d.renameCard(cardPath(dir, name), cardPath(target, name)));
+        moved.push(name);
+      } catch (e) {
+        if (!/уже есть/.test((e as Error).message)) throw e;
+        skipped.push(name);
+      }
+    }
+  } catch (e) {
+    notice.value = { kind: "error", text: `Перенос: ${(e as Error).message}` };
+  } finally {
+    cardBusy.value = null;
+  }
+  const to = cardPath(target).slice(CARD.length);
+  if (moved.length) log("info", `На карте в ${to}: ${moved.join(", ")}`);
+  if (skipped.length && !notice.value) notice.value = { kind: "info", text: `В ${to} уже есть: ${skipped.join(", ")} — эти не перенесены` };
+  await refreshPicking(dir, []);
 }
 
 const MIME: Record<string, string> = { wav: "audio/wav", aif: "audio/aiff", aiff: "audio/aiff", flac: "audio/flac", mp3: "audio/mpeg", ogg: "audio/ogg", m4a: "audio/mp4", aac: "audio/aac" };

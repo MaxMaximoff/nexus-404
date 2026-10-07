@@ -2,7 +2,7 @@ import { BankRail } from "./BankRail";
 import { ImportPanel, LogPanel } from "./BottomPanels";
 import { Inspector } from "./Inspector";
 import { CardBrowser } from "./CardBrowser";
-import { sideTab } from "./card";
+import { canUploadHere, cardBusy, cardConfirm, cardEdit, cardSel, sideTab } from "./card";
 import { PadGrid } from "./PadGrid";
 import { TopBar } from "./TopBar";
 import { useEffect } from "preact/hooks";
@@ -16,6 +16,13 @@ export function App() {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       if (t?.closest("input, textarea, select, [contenteditable]")) return;
+      if (sideTab.value === "card" && (e.key === "Delete" || e.key === "Escape" || e.key === "F2")) {
+        // The card browser is shown: Delete / Esc act on the files picked there, not on pads.
+        if (e.key === "Delete" && cardSel.value.size && canUploadHere.value && !cardBusy.value) cardConfirm.value = true;
+        else if (e.key === "F2" && cardSel.value.size === 1 && canUploadHere.value && !cardBusy.value) { e.preventDefault(); cardEdit.value = { kind: "rename", name: [...cardSel.value][0] }; }
+        else if (e.key === "Escape") { if (cardConfirm.value) cardConfirm.value = false; else cardSel.value = new Set(); }
+        return;
+      }
       if (e.key === "Delete" && !writeBlockReason.value && !groupProgress.value) {
         if (pickedList.value.length) confirmGroupDelete.value = true;
         else if (pads.value[selectedPad.value]?.size) confirmDelete.value = selectedPad.value;

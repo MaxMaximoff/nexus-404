@@ -384,9 +384,22 @@ button, input { font: inherit; color: inherit; }
 .card-size { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .card-play { padding: 1px 4px; }
 .card-upload { padding: 4px 10px; font-size: 12px; }
+.card-path .card-delete { margin-left: 0; padding: 4px 6px; }
+.card-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.card-confirm .group-names { flex: 1 1 100%; max-height: 72px; overflow: auto; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 12px; }
 .card-browser.drop { box-shadow: 0 0 0 2px var(--accent), 0 0 30px 0 var(--glow); }
 .card-play.on { color: var(--danger); }
 .card-empty { padding: 8px; font-size: 13px; }
+.card-row-act { padding: 2px 4px; justify-self: end; opacity: 0; transition: opacity 0.12s; }
+.card-row:hover .card-row-act, .card-row-act:focus-visible { opacity: 1; }
+.card-row .card-row-act { color: var(--muted); }
+.card-row .card-row-act svg { color: inherit; }
+.card-row-act:hover:not(:disabled) { color: var(--accent); }
+.card-row-act.danger:hover:not(:disabled) { color: var(--danger); }
+.card-row.move-over, .crumb.move-over { background: rgba(30, 143, 255, 0.16); box-shadow: inset 0 0 0 2px var(--accent); }
+.card-edit input { width: 100%; font: inherit; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 13px; padding: 2px 6px; border-radius: 6px; border: 1px solid var(--accent); background: #fff; }
+.card-edit input.invalid { border-color: var(--danger); }
+.card-row.editing .card-size { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .group-note { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
 .toggle.mixed .knob { background: linear-gradient(90deg, #6cc0ff 50%, rgba(120, 150, 185, 0.35) 50%); }
 .toggle.mixed .knob::after { transform: translateX(6px); }
