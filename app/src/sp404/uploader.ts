@@ -15,7 +15,7 @@ export interface ImportJob {
   pad: number;
   bpmX100: number | null;
   /** Where the BPM came from; "detected" is filled in after decoding. */
-  bpmFrom: "name" | "detected" | "field" | null;
+  bpmFrom: "name" | "detected" | "field" | "source" | null;
   /** Detect the tempo when the file name has none: bottom of the range, and the BPM to use if no beat is found. */
   detect: { minBpm: number; fallbackX100: number | null } | null;
   state: JobState;
@@ -33,10 +33,11 @@ let nextId = 1;
  * A queued import. BPM: from the file name, else detected from the sound when `detect` is given,
  * else `fallbackX100` (the "BPM новых сэмплов" field), else left as the SP sets it.
  */
-export function newJob(file: File, pad: number, fromName: number | null, fallbackX100: number | null = null, detectMinBpm: number | null = null): ImportJob {
+/** `fromName`: BPM × 100 known before decoding (from the file name, or `given` by the caller, e.g. a resample's source pad). */
+export function newJob(file: File, pad: number, fromName: number | null, fallbackX100: number | null = null, detectMinBpm: number | null = null, given: "name" | "source" = "name"): ImportJob {
   const detect = fromName === null && detectMinBpm !== null ? { minBpm: detectMinBpm, fallbackX100 } : null;
   const bpmX100 = fromName ?? (detect ? null : fallbackX100);
-  const bpmFrom = fromName !== null ? "name" : bpmX100 !== null ? "field" : null;
+  const bpmFrom = fromName !== null ? given : bpmX100 !== null ? "field" : null;
   return { id: nextId++, file, pad, bpmX100, bpmFrom, detect, state: "queued", progress: 0, message: "в очереди" };
 }
 

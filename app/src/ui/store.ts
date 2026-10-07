@@ -785,7 +785,8 @@ function targetPads(startPad: number, count: number): number[] {
   return out;
 }
 
-export function importFiles(files: File[], startPad: number): void {
+/** `bpmX100`: the BPM for these files when the caller knows it (a resample takes its source pad's). */
+export function importFiles(files: File[], startPad: number, bpmX100?: number): void {
   const d = device;
   const audio = files.filter((f) => /^audio\//.test(f.type) || /\.(wav|aiff?|flac|mp3|ogg|m4a|aac)$/i.test(f.name));
   if (!audio.length) return void (notice.value = { kind: "error", text: "Перетащите аудиофайлы (WAV, AIFF, FLAC, MP3…)" });
@@ -800,7 +801,7 @@ export function importFiles(files: File[], startPad: number): void {
   else notice.value = null;
   const fallback = parseDefaultBpm();
   const detectMin = detectOnImport.value ? BPM_RANGES[bpmRange.value]![0] : null;
-  const newJobs = targets.map((pad, i) => newJob(audio[i], pad, bpmFromFileName(audio[i].name), fallback, detectMin));
+  const newJobs = targets.map((pad, i) => newJob(audio[i], pad, bpmX100 ?? bpmFromFileName(audio[i].name), fallback, detectMin, bpmX100 !== undefined ? "source" : "name"));
   newJobs.forEach((j) => reserved.add(j.pad));
   jobs.value = [...jobs.value.filter((j) => j.state !== "done"), ...newJobs];
   const p1 = project1.value;

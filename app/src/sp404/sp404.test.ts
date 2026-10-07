@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   CH_CONTROL, CH_FILE, FileReq, FrameDecoder, O_CREAT_TRUNC_RDWR, SP404Device, assignSampleBlock, bpmFromFileName,
-  padSpeed, padFieldOf, bpmFromLength, floatBlocksToPcm, encodeWav, decodeAudio, computePeaks, computeEnvelope, findSound, ENVELOPE_BLOCK, encodeLong, encodeShort, makeGuard, md5, parseBpmInput, parseFileReply, parsePadBlock, parseSmpHeader,
+  padSpeed, padFieldOf, bpmFromLength, trimAndNormalize, floatBlocksToPcm, encodeWav, decodeAudio, computePeaks, computeEnvelope, findSound, ENVELOPE_BLOCK, encodeLong, encodeShort, makeGuard, md5, parseBpmInput, parseFileReply, parsePadBlock, parseSmpHeader,
   samplePath, septDec, septEnc, smpHeader, buildSmp, SampleUploader, newJob, type ImportJob, smpToPcm, deviceErrorText, frameToByte, remotePath, type SP404Transport,
 } from "./index";
 
@@ -218,9 +218,11 @@ describe("device against a scripted SP", () => {
     const dirs = new Map<string, string[]>(); // path → entries, directories end in "/"
     let listing: string[] = [];
     let closedirs = 0;
+    let writes = 0;
     const t: SP404Transport = {
       async open() {}, async close() {}, onBytes: () => {}, onLost: () => {},
       async write(bytes) {
+        writes++;
         const dec = new FrameDecoder();
         dec.push(bytes);
         for (const m of dec.messages()) queueMicrotask(() => answer(m.channel, m.payload));
@@ -345,7 +347,7 @@ describe("device against a scripted SP", () => {
       new DataView(b.buffer).setUint32(3 + field * 4, v, true);
       blocks.set(pad, b);
     };
-    return { t, files, sent, params, setField, globals, protectedBanks, dirs, closedirs: () => closedirs };
+    return { t, files, sent, params, setField, globals, protectedBanks, dirs, closedirs: () => closedirs, writes: () => writes };
   }
 
   it("imports into an empty pad and the device ends up with the exact SMP and block", async () => {
@@ -732,5 +734,25 @@ describe("recording helpers", () => {
     expect(back.frames).toBe(4800);
     expect([...back.samples.subarray(0, 8)]).toEqual([...pcm.subarray(0, 8)]);
     expect(back.samples.every((v, i) => v === pcm[i])).toBe(true);
+  });
+});
+
+describe("resample take", () => {
+  it("cuts the silence at both ends, keeps a little around the sound, and normalizes in float", () => {
+    const l = new Float32Array(1000), r = new Float32Array(1000);
+    l[300] = 0.1; r[600] = -0.05; l[450] = 0.0000001; // the last one is below −60 dB
+    const t = trimAndNormalize([l, r], { thresholdDb: -60, preRoll: 10, keep: 20, normalizeDb: 0 })!;
+    expect([t.from, t.to]).toEqual([290, 621]);
+    expect(t.chans[0].length).toBe(331);
+    expect(t.chans[0][10]).toBeCloseTo(1, 5); // 0.1 × 10
+    expect(t.chans[1][310]).toBeCloseTo(-0.5, 5);
+    expect(t.gain).toBeCloseTo(10, 5);
+  });
+  it("keeps everything without a threshold, limits the gain, and gives null for silence", () => {
+    const quiet = Float32Array.of(0, 0.00001, 0);
+    const t = trimAndNormalize([quiet], { thresholdDb: null, normalizeDb: 0 })!;
+    expect([t.from, t.to, t.gain]).toEqual([0, 3, 1000]);
+    expect(trimAndNormalize([new Float32Array(10)], { thresholdDb: -60, normalizeDb: 0 })).toBeNull();
+    expect(trimAndNormalize([Float32Array.of(0.5)], { thresholdDb: -60, normalizeDb: null })!.gain).toBe(1);
   });
 });

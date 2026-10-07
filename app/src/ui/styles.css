@@ -422,6 +422,12 @@ button, input { font: inherit; color: inherit; }
 .rec-take-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; font-size: 13px; }
 .rec-take-actions { display: flex; gap: 8px; align-items: center; }
 .rec-take-actions .icon-btn { margin-left: auto; }
+.resample { display: flex; flex-direction: column; gap: 10px; }
+.resample .note { font-size: 12px; color: var(--muted); margin: 0; }
+.resample .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.resample-opts { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; font-size: 13px; }
+.resample-opts label { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; letter-spacing: 0; color: var(--text); font-size: 13px; }
+.resample-opts select { font: inherit; font-size: 13px; padding: 3px 6px; border-radius: 8px; border: 1px solid var(--stroke); background: rgba(255, 255, 255, 0.85); }
 .group-note { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
 .toggle.mixed .knob { background: linear-gradient(90deg, #6cc0ff 50%, rgba(120, 150, 185, 0.35) 50%); }
 .toggle.mixed .knob::after { transform: translateX(6px); }

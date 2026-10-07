@@ -166,3 +166,26 @@ export function encodeWav(samples: Int16Array, channels: number, rate = 48000): 
   new Int16Array(buf, 44).set(samples);
   return buf;
 }
+
+/**
+ * A recorded take, still in float (one array per channel): cut what is quieter than `thresholdDb`
+ * at both ends (keeping `preRoll` frames before the first sound and `keep` after the last), and
+ * scale the peak to `normalizeDb` (gain at most +60 dB). Done before 16-bit, so a quiet input loses
+ * nothing to quantisation. Null when nothing is louder than the threshold.
+ */
+export function trimAndNormalize(chans: Float32Array[], opts: { thresholdDb: number | null; preRoll?: number; keep?: number; normalizeDb: number | null }):
+  { chans: Float32Array[]; from: number; to: number; gain: number } | null {
+  const n = chans[0]?.length ?? 0;
+  const thr = opts.thresholdDb === null ? 0 : 10 ** (opts.thresholdDb / 20);
+  const loud = (i: number) => chans.some((c) => Math.abs(c[i]) > thr);
+  let first = 0, last = n - 1;
+  while (first < n && !loud(first)) first++;
+  if (first >= n) return null;
+  while (last > first && !loud(last)) last--;
+  const from = opts.thresholdDb === null ? 0 : Math.max(0, first - (opts.preRoll ?? 0));
+  const to = opts.thresholdDb === null ? n : Math.min(n, last + 1 + (opts.keep ?? 0));
+  let peak = 0;
+  for (const c of chans) for (let i = from; i < to; i++) { const v = Math.abs(c[i]); if (v > peak) peak = v; }
+  const gain = opts.normalizeDb === null || peak === 0 ? 1 : Math.min(1000, 10 ** (opts.normalizeDb / 20) / peak);
+  return { chans: chans.map((c) => { const out = c.slice(from, to); if (gain !== 1) for (let i = 0; i < out.length; i++) out[i] *= gain; return out; }), from, to, gain };
+}

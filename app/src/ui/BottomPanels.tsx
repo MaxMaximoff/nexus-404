@@ -2,7 +2,7 @@ import { useEffect, useRef } from "preact/hooks";
 import { BPM_RANGES, formatBpm, padName } from "../sp404";
 import { bpmRange, clearFinishedJobs, defaultBpm, detectOnImport, jobs, logLines, showDebug } from "./store";
 
-const BPM_FROM = { name: "из имени", detected: "определён", field: "из поля" } as const;
+const BPM_FROM = { name: "из имени", detected: "определён", field: "из поля", source: "от исходного pad'а" } as const;
 
 export function ImportPanel() {
   const list = jobs.value;

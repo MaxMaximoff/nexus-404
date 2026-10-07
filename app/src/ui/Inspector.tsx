@@ -1,7 +1,7 @@
 import { signal } from "@preact/signals";
 import { useEffect, useRef, useState } from "preact/hooks";
 import {
-  BALANCE_CENTRE, BPM_MAX_X100, BPM_MIN_X100, BPM_RANGES, LEVEL_MAX, PARAM_ATTACK, PARAM_BALANCE, PARAM_BUS_FX, PARAM_HOLD, PARAM_MUTE_GROUP, PARAM_PAD_LINK,
+  BALANCE_CENTRE, BANKS, BPM_MAX_X100, BPM_MIN_X100, BPM_RANGES, LEVEL_MAX, PARAM_ATTACK, PARAM_BALANCE, PARAM_BUS_FX, PARAM_HOLD, PARAM_MUTE_GROUP, PARAM_PAD_LINK,
   PARAM_PLAY_MODE, PARAM_RELEASE, PARAM_ROLL, PLAY_MODES, bpmFromLength, PITCH_COARSE_MAX, PITCH_FINE_MAX, STRETCH_MAX_X100, STRETCH_MIN_X100, VARI_MODES, byteToFrame, findSound, formatBpm, padName, padSpeed,
   parseBpmInput,
 } from "../sp404";
@@ -11,6 +11,13 @@ import {
 } from "./store";
 import type { PadBlock } from "../sp404";
 import { Waveform, type Range } from "./Waveform";
+import { InputPicker, RecMeter, TakeCard } from "./Recorder";
+import { disarm, recState, recTake, takeTarget } from "./rec";
+import { linkedPads, resamplePad, rsBusy, rsNormalize, rsTail } from "./resample";
+import { midiPort, midiState } from "./midi";
+
+const MIDI_NOTE = { off: "MIDI подключится при ресэмпле", asking: "жду разрешения на MIDI…", ready: "MIDI готов", nodevice: "MIDI-порт SP не найден",
+  denied: "доступ к MIDI запрещён", unsupported: "браузер без Web MIDI" } as const;
 import type { Waveform as Wave } from "./store";
 import { ValueField, intIn, signed, type Parse } from "./ValueField";
 import { IconCheck, IconPlay, IconStop, IconTrash, IconUpload, IconWave } from "./icons";
@@ -135,6 +142,10 @@ function FilledPad({ pad, ready }: { pad: number; ready: boolean }) {
           pick={(v) => setPadParam(pad, PARAM_BUS_FX, v, `BUS FX ${BUS_FX[v]}`)} hint="Через какую шину эффектов идёт pad" />
         <Choice label="Roll" value={p.roll} options={ROLL.map((n, i) => [i, n])} pick={(v) => setPadParam(pad, PARAM_ROLL, v, `Roll ${ROLL[v]}`)}
           hint="Шаг повтора при Roll" />
+      </Section>
+
+      <Section id="resample" title="Ресэмпл через эффекты SP" summary={rsBusy.value ?? (recTake.value?.source === pad ? "есть дубль" : undefined)}>
+        <Resample pad={pad} />
       </Section>
 
       <Section id="file" title="Файл"
@@ -507,6 +518,51 @@ function RangeEditor({ pad, channels, wave }: { pad: number; channels: number; w
       <span class={`bpm-note ${dirty && error ? "err" : ""}`}>
         {(dirty && error) || blocked || (dirty ? "Enter — применить, Esc — отменить" : `Звучит ${fmtSec(e0 - s0)} s из ${fmtSec(total)} s`)}
       </span>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ resample
+
+const TAILS = [0, 0.5, 1, 2, 3, 5, 8];
+
+/**
+ * Play the pad on the SP through the effect set there, record the SP's output on an input of the
+ * computer, and offer the take for an empty pad. The input closes when this section closes.
+ */
+function Resample({ pad }: { pad: number }) {
+  const busy = rsBusy.value, ready = conn.value === "ready";
+  useEffect(() => () => { if (recState.value !== "recording") disarm(); }, []);
+  const target = takeTarget();
+  const linked = linkedPads(pad);
+  return (
+    <div class="resample">
+      <p class="note">
+        Включите эффект на SP. Приложение нажмёт {padName(pad)} MIDI-нотой, запишет выход SP вместе с хвостом эффекта и предложит дубль.
+        Тишину в начале потом можно убрать кнопкой «Убрать тишину» в секции «Сэмпл».
+        Вход — линия SP по USB или выходы SP в звуковую карту. Во время ресэмпла ничего не играйте на SP: записывается весь его выход.
+      </p>
+      <InputPicker />
+      <RecMeter />
+      <div class="resample-opts">
+        <label>хвост
+          <select value={rsTail.value} onChange={(e) => (rsTail.value = +(e.target as HTMLSelectElement).value)}>
+            {TAILS.map((t) => <option key={t} value={t}>{t} s</option>)}
+          </select>
+        </label>
+        <label title="Пик дубля на −0.3 dB; усиление считается до перевода в 16 бит"><input type="checkbox" checked={rsNormalize.value} onChange={(e) => (rsNormalize.value = (e.target as HTMLInputElement).checked)} /> нормализовать</label>
+        <span class="note" title="Pad нажимается MIDI-нотой, как рукой: PAD Link играет слоями">{MIDI_NOTE[midiState.value]}{midiPort.value ? `: ${midiPort.value}` : ""}</span>
+      </div>
+      <div class="row">
+        <button class="btn btn-primary" disabled={!ready || !!busy || recState.value === "recording"} onClick={() => void resamplePad(pad)}>
+          {busy ?? `Ресэмпл ${padName(pad)}`}
+        </button>
+        {target !== null && <span class="note">дубль можно положить на {padName(target)}</span>}
+      </div>
+      {linked.length > 1 && (
+        <p class="note">PAD Link {BANKS[pads.value[pad]!.padLink - 1]}: {linked.map(padName).join(", ")} звучат вместе — запись длится до конца самого длинного из них.</p>
+      )}
+      <TakeCard />
     </div>
   );
 }

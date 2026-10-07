@@ -6,7 +6,11 @@ import { signal } from "@preact/signals";
 import { computeEnvelope, computePeaks, encodeWav, floatBlocksToPcm, padName } from "../sp404";
 import { importFiles, log, notice, pads, selectedPad, type Waveform } from "./store";
 
-export interface Take { samples: Int16Array; channels: 1 | 2; frames: number; name: string; wave: Waveform; peak: number }
+export interface Take {
+  samples: Int16Array; channels: 1 | 2; frames: number; name: string; wave: Waveform; peak: number;
+  /** A resample: the BPM it played at (put on the new pad) and the pad it came from. */
+  bpmX100?: number | null; source?: number;
+}
 
 /** Drag data for a take dropped on a pad. */
 export const TAKE_DRAG = "application/x-nexus-take";
@@ -164,17 +168,56 @@ export function stop(): void {
   recState.value = "armed";
   const samples = floatBlocksToPcm(blocks, channels);
   blocks = [];
-  const n = samples.length / channels;
-  if (!n) return;
+  if (!samples.length) return;
+  const d = new Date(), p2 = (x: number) => String(x).padStart(2, "0");
+  setTake(samples, channels, `rec_${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`);
+  log("info", `Записан дубль ${recTake.value!.name}: ${(recTake.value!.frames / RATE).toFixed(2)} s`);
+}
+
+/** Make interleaved 16-bit PCM the take (with its waveform). */
+export function setTake(samples: Int16Array, ch: 1 | 2, name: string, extra: Pick<Take, "bpmX100" | "source"> = {}): void {
+  stopTake();
+  const n = samples.length / ch;
   let peak = 0;
   for (let i = 0; i < samples.length; i++) { const v = Math.abs(samples[i]); if (v > peak) peak = v; }
-  const d = new Date(), p2 = (x: number) => String(x).padStart(2, "0");
-  const name = `rec_${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
   recTake.value = {
-    samples, channels, frames: n, name, peak: peak / 32768,
-    wave: { key: name, peaks: computePeaks(samples, channels, 640), envelope: computeEnvelope(samples, channels), channels, frames: n, samples },
+    samples, channels: ch, frames: n, name, peak: peak / 32768, ...extra,
+    wave: { key: `${name}:${n}`, peaks: computePeaks(samples, ch, 640), envelope: computeEnvelope(samples, ch), channels: ch, frames: n, samples },
   };
-  log("info", `Записан дубль ${name}: ${(n / RATE).toFixed(2)} s`);
+}
+
+/** Open the input if it is not open yet; true when it is ready to record. */
+export async function ensureArmed(): Promise<boolean> {
+  if (recState.value === "off") await arm();
+  return recState.value === "armed";
+}
+
+/**
+ * Record while `run` plays something (a resample), in float, one array per channel. The input
+ * must be open; the meter and the time show as for a recording.
+ */
+export async function capture(run: () => Promise<void>): Promise<{ chans: Float32Array[]; channels: 1 | 2 }> {
+  if (recState.value !== "armed") throw new Error("вход не открыт");
+  blocks = [];
+  frames = 0;
+  recSeconds.value = 0;
+  recClip.value = false;
+  recState.value = "recording";
+  try {
+    await run();
+  } finally {
+    if (recState.value === "recording") recState.value = "armed";
+  }
+  const got = blocks;
+  blocks = [];
+  const n = got.reduce((s, b) => s + (b[0]?.length ?? 0), 0);
+  const chans = Array.from({ length: channels }, (_, c) => {
+    const out = new Float32Array(n);
+    let o = 0;
+    for (const b of got) { out.set(b[c] ?? b[0], o); o += b[0]?.length ?? 0; }
+    return out;
+  });
+  return { chans, channels };
 }
 
 export function dropTake(): void {
@@ -222,5 +265,5 @@ export function takeToPad(pad: number): void {
   if (!t) return;
   const file = new File([encodeWav(t.samples, t.channels)], `${t.name}.wav`, { type: "audio/wav" });
   log("info", `Дубль ${t.name} → ${padName(pad)}`);
-  importFiles([file], pad);
+  importFiles([file], pad, t.bpmX100 ?? undefined);
 }
