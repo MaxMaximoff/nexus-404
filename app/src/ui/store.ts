@@ -3,8 +3,8 @@
 import { batch, computed, signal } from "@preact/signals";
 import {
   PAD_COUNT, SP404Device, SampleUploader, WebSerialTransport, bpmFromFileName, computeEnvelope, computePeaks, isSp404Port,
-  VARI_MODES, newJob, padName, samplePath, smpToPcm,
-  type DeviceStatus, type ImportJob, type LogLevel, type PadBlock, type ProjectSettings,
+  BPM_RANGES, VARI_MODES, byteToFrame, detectBpm, newJob, padName, samplePath, smpToPcm,
+  type BpmResult, type DeviceStatus, type ImportJob, type LogLevel, type PadBlock, type ProjectSettings,
 } from "../sp404";
 
 export type Conn = "unsupported" | "idle" | "connecting" | "loading" | "ready" | "lost";
@@ -374,6 +374,28 @@ export const setBankTempo = (bank: number, x100: number) =>
   editProject(`темп банка ${padName(bank * 16)[0]} ${bpmText(x100)}`, (d, p1) => d.setBankTempo(p1, bank, x100));
 export const setTempoSelect = (useProject: boolean) =>
   editProject(`действует темп ${useProject ? "проекта" : "банков"}`, (d, p1) => d.setTempoSelect(p1, useProject));
+
+/** Range of BPM detection, index into BPM_RANGES (80–159 by default), as BPM SET AUTO on the SP. */
+export const bpmRange = signal(1);
+
+/**
+ * Detect the tempo of a pad's sample between Start and End, reading the sample from the SP when
+ * its PCM is not cached. Null: no clear beat; undefined: could not read the sample.
+ */
+export async function detectPadBpm(pad: number): Promise<BpmResult | null | undefined> {
+  const b = pads.value[pad];
+  if (!b?.size) return undefined;
+  const cached = () => { const w = waveforms.value.get(pad); return w?.key === waveKey(b) ? w : undefined; };
+  if (!cached()?.samples) await loadWaveform(pad);
+  const w = cached();
+  if (!w?.samples) return undefined;
+  const ch = w.channels, from = Math.round(byteToFrame(b.startByte, ch)), to = Math.round(byteToFrame(b.endByte, ch));
+  await new Promise((r) => setTimeout(r, 0)); // let "анализ…" paint: a long sample takes up to a second
+  const [min, max] = BPM_RANGES[bpmRange.value]!;
+  const r = detectBpm(w.samples.subarray(from * ch, to * ch), ch, min);
+  log("info", `${padName(pad)}: BPM ${r ? (r.x100 / 100).toFixed(2) + (r.beats ? `, луп ${r.beats} долей` : "") + `, чёткость ${r.clarity.toFixed(2)}` : "не определён"} (диапазон ${min}–${max})`);
+  return r;
+}
 
 /** Pad started by preview that may still be playing (Gate off), for the stop button; null when none. */
 export const playing = signal<number | null>(null);

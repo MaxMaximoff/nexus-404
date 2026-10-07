@@ -1,11 +1,11 @@
 import { signal } from "@preact/signals";
 import { useEffect, useRef, useState } from "preact/hooks";
 import {
-  LEVEL_MAX, PITCH_COARSE_MAX, PITCH_FINE_MAX, STRETCH_MAX_X100, STRETCH_MIN_X100, VARI_MODES, byteToFrame, findSound, formatBpm, padName, padSpeed,
+  BPM_RANGES, LEVEL_MAX, PITCH_COARSE_MAX, PITCH_FINE_MAX, STRETCH_MAX_X100, STRETCH_MIN_X100, VARI_MODES, byteToFrame, findSound, formatBpm, padName, padSpeed,
   parseBpmInput,
 } from "../sp404";
 import {
-  channelsOf, conn, importFiles, loadWaveform, pads, playing, preview, project, selectedPad, setBpm, setBpmSync, setGate, setLevel, setLoop, setOneShot, setPitch, setTimeStretch, setVari, setVinyl,
+  bpmRange, channelsOf, conn, detectPadBpm, importFiles, loadWaveform, pads, playing, preview, project, selectedPad, setBpm, setBpmSync, setGate, setLevel, setLoop, setOneShot, setPitch, setTimeStretch, setVari, setVinyl,
   setRange, stopPlaying, waveLoading, waveforms, writeBlockReason,
 } from "./store";
 import { Waveform, type Range } from "./Waveform";
@@ -419,8 +419,26 @@ function BpmEditor({ pad }: { pad: number }) {
   const saved = formatBpm(p.bpmX100);
   const [text, setText] = useState(saved);
   const [state, setState] = useState<"idle" | "saving" | "saved">("idle");
+  const [detect, setDetect] = useState<{ busy: boolean; note: string | null }>({ busy: false, note: null });
   const inputRef = useRef<HTMLInputElement>(null);
+  const shownPad = useRef(pad);
+  shownPad.current = pad;
   useEffect(() => { setText(saved); setState("idle"); }, [pad, p.bpmX100]);
+  useEffect(() => setDetect({ busy: false, note: null }), [pad]);
+  const canDetect = conn.value === "ready" || !!waveforms.value.get(pad)?.samples;
+
+  const runDetect = async () => {
+    setDetect({ busy: true, note: null });
+    const r = await detectPadBpm(pad);
+    if (shownPad.current !== pad) return; // another pad is shown by now
+    if (r) setText(formatBpm(r.x100));
+    setDetect({
+      busy: false,
+      note: r === undefined ? "Не удалось прочитать сэмпл"
+        : r === null ? "Чёткого ритма не нашлось — задайте BPM вручную"
+        : `Найдено ${formatBpm(r.x100)}${r.beats ? ` · луп ровно ${r.beats} долей` : ""}${r.clarity < 0.4 ? " · ритм нечёткий, проверьте на слух" : ""}`,
+    });
+  };
 
   const parsed = parseBpmInput(text);
   const error = parsed && "error" in parsed ? parsed.error : null;
@@ -458,6 +476,19 @@ function BpmEditor({ pad }: { pad: number }) {
         {state === "saving" ? "…" : state === "saved" ? <><IconCheck /> Сохранено</> : "Сохранить"}
       </button>
       <span class={`bpm-note ${error ? "err" : ""}`}>{error ?? blocked ?? (dirty ? "Enter — сохранить, Esc — отменить" : "40–200, например 93.25")}</span>
+      <div class="trim">
+        <button class="btn" disabled={detect.busy || !canDetect} onClick={runDetect}
+          title="Определить темп по звуку между Start и End, как BPM SET AUTO на SP; результат попадёт в поле, записывается кнопкой «Сохранить»">
+          {detect.busy ? "Анализ…" : "Определить"}
+        </button>
+        <label title="Темп сворачивается в этот диапазон удвоением или делением, как на SP">
+          <span>диапазон</span>
+          <select value={bpmRange.value} onChange={(e) => (bpmRange.value = +(e.target as HTMLSelectElement).value)}>
+            {BPM_RANGES.map(([a, b], i) => <option value={i}>{a}–{b}</option>)}
+          </select>
+        </label>
+        {detect.note && <span class="muted">{detect.note}</span>}
+      </div>
     </div>
   );
 }
