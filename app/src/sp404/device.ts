@@ -208,6 +208,29 @@ export class SP404Device {
   }
 
   /**
+   * Move a pad's sample with its settings, as the official app's drag does: onto an empty pad
+   * (`95 src dst 0`), or swap with an occupied one (`95 src dst 1`). Overwrite (mode 0 onto a
+   * sample) is never sent: it deletes the destination. The unit answers `15 00` and, once the
+   * project is updated, `1A proj`; both blocks are re-read after that.
+   */
+  async movePad(project1: number, src: number, dst: number): Promise<{ src: PadBlock; dst: PadBlock; swapped: boolean }> {
+    for (const p of [src, dst]) if (!(Number.isInteger(p) && p >= 0 && p < PAD_COUNT)) throw new DeviceError(`нет pad'а ${p}`);
+    if (src === dst) throw new DeviceError("pad переносится сам на себя");
+    await this.requireCurrent(project1);
+    if (!(await this.padBlock(src)).size) throw new DeviceError(`${padName(src)} пуст`);
+    const swapped = !!(await this.padBlock(dst)).size;
+    this.policy.moveToEmpty = swapped ? null : dst;
+    try {
+      await this.command([0x95, src & 0xff, src >> 8, dst & 0xff, dst >> 8, swapped ? 1 : 0, 0], 0x15, "перенос pad'а");
+    } finally {
+      this.policy.moveToEmpty = null;
+    }
+    await this.waitFor((m) => m.channel === CH_CONTROL && m.payload[0] === 0x1a, 3000, "project update").catch(() =>
+      this.log("warn", "SP не прислал 1A после переноса, читаю блоки так"));
+    return { src: await this.padBlock(src), dst: await this.padBlock(dst), swapped };
+  }
+
+  /**
    * Select a project (1-based) on the unit. It answers `1A 00` and then loads the project: pad
    * blocks read empty for a while, so the caller waits before reading them (report §0).
    */

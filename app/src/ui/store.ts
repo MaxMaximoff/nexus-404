@@ -346,6 +346,46 @@ function setPad(block: PadBlock): void {
   pads.value = next;
 }
 
+/** Drag type of a pad dragged within the app; the data is its index. */
+export const PAD_DRAG = "application/x-nexus-pad";
+
+/**
+ * Move a pad onto an empty pad, or swap two pads, on the SP (any banks of the current project).
+ * Cached waveforms and channel counts travel with the samples.
+ */
+export async function movePad(src: number, dst: number): Promise<boolean> {
+  const d = device;
+  const blocked = writeBlockReason.value ?? (importing.value ? "Идёт импорт — дождитесь конца" : null);
+  if (!d || src === dst) return false;
+  if (blocked) {
+    notice.value = { kind: "error", text: blocked };
+    return false;
+  }
+  try {
+    const r = await d.exclusive((x) => x.movePad(project1.value, src, dst));
+    const swap = <T,>(m: Map<number, T>) => {
+      const n = new Map(m), a = m.get(src), b = m.get(dst);
+      n.delete(src); n.delete(dst);
+      if (a) n.set(dst, a);
+      if (b && r.swapped) n.set(src, b);
+      return n;
+    };
+    batch(() => {
+      setPad(r.src);
+      setPad(r.dst);
+      waveforms.value = swap(waveforms.value);
+      padChannels.value = swap(padChannels.value);
+      if (playing.value === src || playing.value === dst) playing.value = null;
+    });
+    log("info", r.swapped ? `${padName(src)} ⇄ ${padName(dst)}: поменялись местами` : `${padName(src)} → ${padName(dst)}: перенесён`);
+    selectPad(dst);
+    return true;
+  } catch (e) {
+    fail(e, `Перенос ${padName(src)} → ${padName(dst)}`);
+    return false;
+  }
+}
+
 /** Run one pad edit on the device and show the block it returns. */
 async function editPad(pad: number, what: string, fn: (d: SP404Device, p1: number) => Promise<PadBlock>): Promise<boolean> {
   const d = device;

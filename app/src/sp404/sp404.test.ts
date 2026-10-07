@@ -83,7 +83,8 @@ describe("guard", () => {
   const policy = { importProject: 4, importPad: 33, writableHandles: new Set([100]) };
   const g = makeGuard(policy);
   const allowed: [number, ArrayLike<number>][] = [
-    [CH_CONTROL, [0xfe, 0x66, 0]], [CH_CONTROL, [0x9e, 5, 0]], [CH_CONTROL, [0x9a, 0, 0]], [CH_CONTROL, [0x9a, 15, 0]], [CH_CONTROL, [0x8e, 5, 0, 0x7f, 0xff]], [CH_CONTROL, [0x8f, 5, 0, 0]],
+    [CH_CONTROL, [0xfe, 0x66, 0]], [CH_CONTROL, [0x9e, 5, 0]], [CH_CONTROL, [0x9a, 0, 0]], [CH_CONTROL, [0x9a, 15, 0]],
+    [CH_CONTROL, [0x95, 33, 0, 159, 0, 1, 0]], // swap [CH_CONTROL, [0x8e, 5, 0, 0x7f, 0xff]], [CH_CONTROL, [0x8f, 5, 0, 0]],
     [CH_CONTROL, [0xfb, 0xa0, 0]], [CH_CONTROL, [0x91, 33, 0, 1, 0]], [CH_CONTROL, [0x9d]], [CH_CONTROL, [0x9f, 33, 0]],
     [CH_CONTROL, [1, 0x6f, 0, 7, 0, 0xe0, 0x2e, 0, 0]],
     [CH_CONTROL, [1, 0x69, 0, 159, 0, 127, 0, 0, 0]], [CH_CONTROL, [1, 0x6a, 0, 33, 0, 1, 0, 0, 0]], [CH_CONTROL, [1, 0x6b, 0, 33, 0, 0, 0, 0, 0]],
@@ -100,7 +101,8 @@ describe("guard", () => {
   ];
   const blocked: [number, ArrayLike<number>][] = [
     [CH_CONTROL, [0x92, 0, 0, 0, 0, 0, 0]], [CH_CONTROL, [0x91, 33, 0, 0, 0]], [CH_CONTROL, [0x91, 34, 0, 1, 0]],
-    [CH_CONTROL, [0x95, 0, 0, 1, 0, 0, 0]], [CH_CONTROL, [0x35, 3, 65]], [CH_CONTROL, [0x02, 33, 0, 65]],
+    [CH_CONTROL, [0x95, 0, 0, 1, 0, 0, 0]], [CH_CONTROL, [0x95, 33, 0, 33, 0, 1, 0]], [CH_CONTROL, [0x95, 33, 0, 160, 0, 1, 0]],
+    [CH_CONTROL, [0x95, 33, 0, 34, 0, 2, 0]], [CH_CONTROL, [0x95, 33, 0, 34, 0, 1]], [CH_CONTROL, [0x35, 3, 65]], [CH_CONTROL, [0x02, 33, 0, 65]],
     [CH_CONTROL, [0x9a, 16, 0]], [CH_CONTROL, [0x9a, 1, 1]], [CH_CONTROL, [0x9a, 1]], [CH_CONTROL, [0xb1, 3, 0]],
     // per-pad parameters: unknown ids, values out of range, a pad past J16
     [CH_CONTROL, [1, 0x6d, 0, 33, 0, 1, 0, 0, 0]], [CH_CONTROL, [1, 0x6e, 0, 33, 0, 2, 0, 0, 0]], [CH_CONTROL, [1, 0x75, 0, 33, 0, 1, 0, 0, 0]],
@@ -123,6 +125,14 @@ describe("guard", () => {
   ];
   it.each(allowed)("allows ch%i %o", (c, p) => expect(() => g(c, Uint8Array.from(p))).not.toThrow());
   it.each(blocked)("blocks ch%i %o", (c, p) => expect(() => g(c, Uint8Array.from(p))).toThrow());
+  it("lets a move (95 mode 0) through only onto the pad checked to be empty", () => {
+    const pol = { importProject: null, importPad: null, writableHandles: new Set<number>(), moveToEmpty: 34 };
+    const gm = makeGuard(pol);
+    expect(() => gm(CH_CONTROL, Uint8Array.from([0x95, 33, 0, 34, 0, 0, 0]))).not.toThrow();
+    expect(() => gm(CH_CONTROL, Uint8Array.from([0x95, 33, 0, 35, 0, 0, 0]))).toThrow();
+    pol.moveToEmpty = null as unknown as number;
+    expect(() => gm(CH_CONTROL, Uint8Array.from([0x95, 33, 0, 34, 0, 0, 0]))).toThrow();
+  });
   it("blocks import traffic when no import is running", () => {
     const idle = makeGuard({ importProject: null, importPad: null, writableHandles: new Set() });
     expect(() => idle(CH_CONTROL, Uint8Array.from([0xfb, 0xa0, 0]))).toThrow();
@@ -167,6 +177,14 @@ describe("device against a scripted SP", () => {
         else if (p[0] === 0x8f) reply(ch, [0x0f, p[1], p[2], 0]);
         else if (p[0] === 0x91) reply(ch, [0x11, 0]);
         else if (p[0] === 0x9a) reply(ch, [0x1a, 0]);
+        else if (p[0] === 0x95) {
+          const src = p[1] | (p[2] << 8), dst = p[3] | (p[4] << 8), a = blocks.get(src), b = blocks.get(dst);
+          const at = (blk: Uint8Array | undefined, pad: number) => { if (blk) { blk[1] = pad & 0xff; blk[2] = pad >> 8; blocks.set(pad, blk); } else blocks.delete(pad); };
+          at(a, dst);
+          at(p[5] === 1 ? b : undefined, src);
+          reply(ch, [0x15, 0]);
+          reply(ch, [0x1a, 3]);
+        }
         else if (p[0] === 0x9d) reply(ch, [0x1d, 0]);
         else if (p[0] === 0x1e) { blocks.set(p[1], Uint8Array.from([...p, ...new Uint8Array(128)])); reply(ch, [0x1e, 0]); }
         else if (p[0] === 0x9f) reply(ch, [0x1f, p[1], p[2], 0]);
@@ -333,6 +351,19 @@ describe("device against a scripted SP", () => {
     await dev.exclusive((d) => d.stopPad(4, 33));
     expect(sp.params).toEqual([]);
     expect(sp.sent.at(-2)?.slice(0, 4)).toBe("5:8f");
+  });
+  it("moves a pad onto an empty one and swaps with an occupied one; never overwrites", async () => {
+    const { sp, dev } = await loaded(); // a sample on pad 33
+    let r = await dev.exclusive((d) => d.movePad(4, 33, 40));
+    expect(r).toMatchObject({ swapped: false, src: { size: 0 }, dst: { index: 40 } });
+    expect(r.dst.size).toBeGreaterThan(0);
+    await dev.exclusive((d) => d.importSmp(4, 33, buildSmp(new Int16Array(8), 2), "b"));
+    r = await dev.exclusive((d) => d.movePad(4, 33, 40));
+    expect(r).toMatchObject({ swapped: true, src: { name: "s" }, dst: { name: "b" } });
+    expect(sp.sent.filter((m) => m.startsWith("5:95"))).toEqual(["5:9521002800", "5:9521002800"]);
+    expect(dev.policy.moveToEmpty).toBeNull();
+    await expect(dev.exclusive((d) => d.movePad(4, 34, 41))).rejects.toThrow(/пуст/);
+    await expect(dev.exclusive((d) => d.movePad(4, 33, 33))).rejects.toThrow(/сам на себя/);
   });
   it("selects another project, and nothing when it is already current", async () => {
     const sp = fakeSp();

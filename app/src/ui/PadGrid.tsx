@@ -1,13 +1,14 @@
 import { useState } from "preact/hooks";
 import { BANKS, formatBpm, padName } from "../sp404";
 import {
-  conn, connect, hasGrant, importFiles, jobs, pads, project, reconnect, reload, selectPad, selectedBank, selectedPad, setBankTempo, status,
-  waveforms,
+  PAD_DRAG, conn, connect, hasGrant, importFiles, jobs, movePad, pads, project, reconnect, reload, selectPad, selectedBank, selectedPad, setBankTempo, status,
+  waveforms, writeBlockReason,
 } from "./store";
 import { IconLock, IconRefresh } from "./icons";
 import { TempoField } from "./TempoField";
 
 const hasFiles = (e: DragEvent) => !!e.dataTransfer?.types.includes("Files");
+export const hasPad = (e: DragEvent) => !!e.dataTransfer?.types.includes(PAD_DRAG);
 
 export function PadGrid() {
   const b = selectedBank.value;
@@ -37,7 +38,7 @@ export function PadGrid() {
         {Array.from({ length: 16 }, (_, i) => <PadCard key={b * 16 + i} index={b * 16 + i} />)}
         {c !== "ready" && c !== "loading" && <ConnectOverlay />}
       </div>
-      <p class="hint">Перетащите один или несколько файлов на пустой pad — они займут его и следующие пустые pad'ы банка.</p>
+      <p class="hint">Перетащите файлы на пустой pad — они займут его и следующие пустые pad'ы банка. Pad на pad: на пустой — перенос, на занятый — обмен; задержите над банком, чтобы перейти в него.</p>
     </section>
   );
 }
@@ -61,23 +62,36 @@ function ConnectOverlay() {
 }
 
 function PadCard({ index }: { index: number }) {
-  const [over, setOver] = useState(false);
+  const [over, setOver] = useState<false | "files" | "move" | "swap">(false);
   const p = pads.value[index];
   const job = jobs.value.find((j) => j.pad === index && (j.state !== "done" && j.state !== "error"));
   const selected = selectedPad.value === index;
   const onDevice = status.value && status.value.bank * 16 + status.value.pad === index;
   const wave = waveforms.value.get(index);
   const secs = p?.size && wave ? (p.endByte - p.startByte) / (2 * wave.channels) / 48000 : null;
-  const cls = ["pad", p?.size ? "full" : "empty", selected && "selected", over && "drop", job && "busy"].filter(Boolean).join(" ");
+  const canMove = !!p?.size && !job && !writeBlockReason.value;
+  const cls = ["pad", p?.size ? "full" : "empty", selected && "selected", over && "drop", over === "swap" && "drop-swap", job && "busy"].filter(Boolean).join(" ");
   return (
     <button
       class={cls}
+      draggable={canMove}
+      title={canMove ? "Перетащите на другой pad: на пустой — перенос, на занятый — обмен местами" : undefined}
       onClick={() => selectPad(index)}
-      onDragOver={(e) => { if (hasFiles(e)) { e.preventDefault(); setOver(true); } }}
+      onDragStart={(e) => {
+        if (!canMove || !e.dataTransfer) return;
+        e.dataTransfer.setData(PAD_DRAG, String(index));
+        e.dataTransfer.effectAllowed = "move";
+      }}
+      onDragOver={(e) => {
+        if (hasFiles(e)) { e.preventDefault(); setOver("files"); }
+        else if (hasPad(e) && !job) { e.preventDefault(); e.dataTransfer!.dropEffect = "move"; setOver(p?.size ? "swap" : "move"); }
+      }}
       onDragLeave={() => setOver(false)}
       onDrop={(e) => {
         e.preventDefault();
         setOver(false);
+        const src = e.dataTransfer?.getData(PAD_DRAG);
+        if (src) return void movePad(+src, index);
         selectPad(index);
         importFiles([...(e.dataTransfer?.files ?? [])], index);
       }}

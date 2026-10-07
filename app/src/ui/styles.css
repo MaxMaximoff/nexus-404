@@ -188,6 +188,10 @@ button, input { font: inherit; color: inherit; }
 .pad.empty.selected { box-shadow: 0 0 0 2px var(--accent), 0 0 22px -2px var(--glow), inset 0 2px 6px rgba(0, 0, 0, 0.45); }
 .pad.drop { box-shadow: 0 0 0 2px var(--accent), 0 0 30px 0 var(--glow) !important; }
 .pad.drop.empty { background: linear-gradient(170deg, #2b4766, #1d2f45); }
+/* Dropping a pad onto an occupied one swaps them: say so on the target. */
+.pad.drop-swap { box-shadow: 0 0 0 2px var(--warn), 0 0 26px 0 rgba(194, 122, 0, 0.45) !important; }
+.pad.drop-swap::after { content: "⇄ обмен"; position: absolute; right: 10px; top: 8px; font-size: 11px; font-weight: 800; color: var(--warn); }
+.pad.full[draggable="true"] { cursor: grab; }
 .pad-label { font-size: 12px; font-weight: 800; letter-spacing: 0.04em; display: flex; align-items: center; gap: 5px; opacity: 0.8; }
 .pad-name { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 12.5px; font-weight: 600; line-height: 1.3; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: break-all; }
 .pad-meta { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
