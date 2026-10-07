@@ -3,8 +3,9 @@
 // the per-pad parameters in PAD_PARAM_RANGE (Start, End, Level, Gate, Loop, BPM Sync, BPM, flags)
 // and the tempos in GLOBAL_PARAM_RANGE (project, banks, tempo select), and selecting a project
 // (9A: the unit only loads another project, nothing is written), and moving pads (95): a swap
-// always, a move only onto the pad the device has just checked to be empty (overwrite deletes).
-// Init (92), delete (91 … 00 00), move (95), renames, mkdir/rmdir/rename on the card can never
+// always, a move only onto the pad the device has just checked to be empty (overwrite deletes),
+// and deleting (91 … 00 00) only the one pad the device has just checked and the user confirmed.
+// Init (92), overwrite (95 mode 0 onto a sample), renames, mkdir/rmdir/rename on the card can never
 // leave the page.
 
 import { CH_CONTROL, CH_FILE, hex } from "./frame";
@@ -18,6 +19,8 @@ export interface WritePolicy {
   writableHandles: Set<number>;
   /** Pad just checked to be empty: the one destination `95 … mode 0` may target (mode 0 onto a sample deletes it). */
   moveToEmpty?: number | null;
+  /** Pad just checked (loaded, current project, bank not protected): the one pad `91 … 00 00` may delete. */
+  deletePad?: number | null;
 }
 
 export type Guard = (channel: number, payload: Uint8Array) => void;
@@ -41,6 +44,7 @@ export function makeGuard(policy: WritePolicy): Guard {
         const dst = p[3] | (p[4] << 8), mode = p[5] | (p[6] << 8);
         if (pad < PAD_COUNT && dst < PAD_COUNT && pad !== dst && (mode === 1 || (mode === 0 && dst === policy.moveToEmpty))) return;
       }
+      if (c === 0x91 && p.length === 5 && p[3] === 0x00 && p[4] === 0x00 && pad < PAD_COUNT && pad === policy.deletePad) return; // delete
       if (c === 0x01 && p.length === 9 && p[2] === 0 && (p[3] | (p[4] << 8)) < PAD_COUNT) {
         // Set a per-pad parameter: only the ids and values in PAD_PARAM_RANGE.
         const range = PAD_PARAM_RANGE.get(p[1]);

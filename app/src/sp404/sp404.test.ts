@@ -133,6 +133,16 @@ describe("guard", () => {
     pol.moveToEmpty = null as unknown as number;
     expect(() => gm(CH_CONTROL, Uint8Array.from([0x95, 33, 0, 34, 0, 0, 0]))).toThrow();
   });
+  it("lets a delete (91 … 00 00) through only for the pad just checked", () => {
+    const pol = { importProject: null, importPad: null, writableHandles: new Set<number>(), deletePad: 34 as number | null };
+    const gd = makeGuard(pol);
+    expect(() => gd(CH_CONTROL, Uint8Array.from([0x91, 34, 0, 0, 0]))).not.toThrow();
+    expect(() => gd(CH_CONTROL, Uint8Array.from([0x91, 35, 0, 0, 0]))).toThrow();
+    expect(() => gd(CH_CONTROL, Uint8Array.from([0x91, 34, 0, 0, 1]))).toThrow();
+    expect(() => gd(CH_CONTROL, Uint8Array.from([0x91, 34, 0, 0]))).toThrow();
+    pol.deletePad = null;
+    expect(() => gd(CH_CONTROL, Uint8Array.from([0x91, 34, 0, 0, 0]))).toThrow();
+  });
   it("blocks import traffic when no import is running", () => {
     const idle = makeGuard({ importProject: null, importPad: null, writableHandles: new Set() });
     expect(() => idle(CH_CONTROL, Uint8Array.from([0xfb, 0xa0, 0]))).toThrow();
@@ -149,6 +159,7 @@ describe("device against a scripted SP", () => {
     const params: [number, number, number][] = []; // per-pad set-parameter: id, pad, value
     const globals = new Map<number, number>([[0x0a, 9000], [0x0b, 0], ...Array.from({ length: 10 }, (_, b) => [0x21 + b, 9000] as [number, number])]);
     let blocks = new Map<number, Uint8Array>();
+    const protectedBanks = new Set<number>();
     const t: SP404Transport = {
       async open() {}, async close() {}, onBytes: () => {}, onLost: () => {},
       async write(bytes) {
@@ -169,12 +180,16 @@ describe("device against a scripted SP", () => {
           const s = new Uint8Array(147), dv = new DataView(s.buffer);
           s.set([0x7d, p[1], 0]);
           dv.setUint32(3, globals.get(0x0a)! | (globals.get(0x0b)! << 16), true);
-          for (let b = 0; b < 10; b++) dv.setUint32(3 + (12 + b) * 4, globals.get(0x21 + b)! << 1, true);
+          for (let b = 0; b < 10; b++) dv.setUint32(3 + (12 + b) * 4, (globals.get(0x21 + b)! << 1) | +protectedBanks.has(b), true);
           reply(ch, s);
           for (let n = 0; n < 16; n++) reply(ch, [0x35, n, ...new TextEncoder().encode(`PROJECT_${n + 1}`)]);
         }
         else if (p[0] === 0x8e) reply(ch, [0x0e, p[1], p[2], 0]);
         else if (p[0] === 0x8f) reply(ch, [0x0f, p[1], p[2], 0]);
+        else if (p[0] === 0x91 && p[3] === 0) { // delete: two 11 00, then 1A (spec 03-parameters)
+          blocks.delete(p[1] | (p[2] << 8));
+          reply(ch, [0x11, 0]); reply(ch, [0x11, 0]); reply(ch, [0x1a, 3]);
+        }
         else if (p[0] === 0x91) reply(ch, [0x11, 0]);
         else if (p[0] === 0x9a) reply(ch, [0x1a, 0]);
         else if (p[0] === 0x95) {
@@ -229,7 +244,7 @@ describe("device against a scripted SP", () => {
       new DataView(b.buffer).setUint32(3 + field * 4, v, true);
       blocks.set(pad, b);
     };
-    return { t, files, sent, params, setField, globals };
+    return { t, files, sent, params, setField, globals, protectedBanks };
   }
 
   it("imports into an empty pad and the device ends up with the exact SMP and block", async () => {
@@ -366,6 +381,38 @@ describe("device against a scripted SP", () => {
     await expect(dev.exclusive((d) => d.movePad(4, 33, 33))).rejects.toThrow(/сам на себя/);
     await expect(dev.exclusive((d) => d.movePad(4, 33, 40, true))).rejects.toThrow(/занят/);
     expect(sp.sent.filter((m) => m.startsWith("5:95"))).toHaveLength(2);
+  });
+  it("deletes a loaded pad, and refuses empty pads, protected banks and other projects", async () => {
+    const { sp, dev } = await loaded(); // a sample on pad 33 (C2)
+    sp.protectedBanks.add(2);
+    await expect(dev.exclusive((d) => d.deletePad(4, 33))).rejects.toThrow(/защищён/);
+    sp.protectedBanks.clear();
+    await expect(dev.exclusive((d) => d.deletePad(5, 33))).rejects.toThrow(/проект/);
+    await expect(dev.exclusive((d) => d.deletePad(4, 34))).rejects.toThrow(/пуст/);
+    expect(sp.sent.filter((m) => m.startsWith("5:91") && m.endsWith("0000"))).toEqual([]);
+    expect((await dev.exclusive((d) => d.deletePad(4, 33))).size).toBe(0);
+    expect(sp.sent.filter((m) => m.startsWith("5:91") && m.endsWith("0000"))).toEqual(["5:9121000000"]);
+    expect(dev.policy.deletePad).toBeNull();
+    // both late replies were taken: the next command gets its own answer
+    expect((await dev.exclusive((d) => d.status())).project).toBe(3);
+  });
+  it("copies a pad onto an empty one: the same SMP, name and settings", async () => {
+    const { sp, dev } = await loaded(); // "s" on pad 33, stereo, 1 s
+    await dev.exclusive((d) => d.setRange(4, 33, 100, 40000));
+    await dev.exclusive((d) => d.setBpm(4, 33, 12345));
+    await dev.exclusive((d) => d.setLevel(4, 33, 77));
+    await dev.exclusive((d) => d.setVari(4, 33, 2));
+    await dev.exclusive((d) => d.setPitch(4, 33, -3, 25));
+    const progress: number[] = [];
+    const r = await dev.exclusive((d) => d.copyPad(4, 33, 50, (a, b) => progress.push(a / b)));
+    expect(r.differs).toEqual([]);
+    const src = await dev.exclusive((d) => d.padBlock(33));
+    expect(r.block).toMatchObject({ name: "s", size: src.size, startByte: src.startByte, endByte: src.endByte, bpmX100: 12345, level: 77, vari: 2, pitchCoarse: -3, pitchFine: 25 });
+    expect(hex(sp.files.get(remotePath(samplePath(4, 50)))!)).toBe(hex(sp.files.get(remotePath(samplePath(4, 33)))!));
+    expect(progress.at(-1)).toBe(1);
+    expect(Math.max(...progress.filter((_, i) => i < progress.length / 2))).toBeLessThanOrEqual(0.5);
+    await expect(dev.exclusive((d) => d.copyPad(4, 33, 50))).rejects.toThrow(/занят/);
+    await expect(dev.exclusive((d) => d.copyPad(4, 34, 51))).rejects.toThrow(/пуст/);
   });
   it("selects another project, and nothing when it is already current", async () => {
     const sp = fakeSp();

@@ -6,10 +6,10 @@ import {
   BULK_READ, CHUNK, FileReq, O_CREAT_TRUNC_RDWR, O_RDONLY, ROOT, WRITE_BATCH, parseFileReply, samplePath,
 } from "./fileApi";
 import {
-  BPM_MAX_X100, BPM_MIN_X100, FLAG_ONE_SHOT, GLOBAL, PARAM_BANK_TEMPO, PARAM_PROJECT_TEMPO, PARAM_TEMPO_SELECT, LEVEL_MAX, PAD_COUNT, PROJECT_COUNT, PARAM_BPM, PARAM_CLEARED_BY_ONE_SHOT, PARAM_END,
+  BANKS, BPM_MAX_X100, BPM_MIN_X100, FLAG_ONE_SHOT, GLOBAL, PARAM_BANK_TEMPO, PARAM_PROJECT_TEMPO, PARAM_TEMPO_SELECT, LEVEL_MAX, PAD_COUNT, PROJECT_COUNT, PARAM_BPM, PARAM_CLEARED_BY_ONE_SHOT, PARAM_END,
   PARAM_FLAGS, PARAM_GATE, PARAM_PITCH_COARSE, PARAM_PITCH_FINE, PARAM_TIME_STRETCH, PARAM_VINYL, PITCH_COARSE_MAX, PITCH_FINE_MAX,
   STRETCH_MAX_X100, STRETCH_MIN_X100, VARI_MASK, VARI_MODES, PARAM_LEVEL, PARAM_LOOP, PARAM_BPM_SYNC, PARAM_START, assignSampleBlock, byteToFrame, deviceErrorText, padName,
-  parsePadBlock, parseProjectSettings, parseStatus, setParamPayload,
+  PAD_PARAM_RANGE, parsePadBlock, parseProjectSettings, parseStatus, setParamPayload,
   type DeviceStatus, type PadBlock, type ProjectSettings,
 } from "./control";
 import { SMP_HEADER_LEN, parseSmpHeader } from "./smp";
@@ -230,6 +230,31 @@ export class SP404Device {
     await this.waitFor((m) => m.channel === CH_CONTROL && m.payload[0] === 0x1a, 3000, "project update").catch(() =>
       this.log("warn", "SP не прислал 1A после переноса, читаю блоки так"));
     return { src: await this.padBlock(src), dst: await this.padBlock(dst), swapped };
+  }
+
+  /**
+   * Delete a pad's sample (`91 pad 00 00`), for good: the user has confirmed it. Only a loaded pad
+   * of the current project, outside the menu, in a bank that is not protected. The unit answers
+   * `11 00` twice and then `1A proj`; the block is re-read after that and must be empty.
+   */
+  async deletePad(project1: number, pad: number): Promise<PadBlock> {
+    if (!(Number.isInteger(pad) && pad >= 0 && pad < PAD_COUNT)) throw new DeviceError(`нет pad'а ${pad}`);
+    await this.requireCurrent(project1);
+    if (!(await this.padBlock(pad)).size) throw new DeviceError(`${padName(pad)} уже пуст`);
+    if ((await this.projectSettings(project1 - 1)).banks[pad >> 4]?.protected) throw new DeviceError(`банк ${BANKS[pad >> 4]} защищён (BANK Protect)`);
+    this.policy.deletePad = pad;
+    try {
+      await this.command([0x91, pad & 0xff, pad >> 8, 0x00, 0x00], 0x11, "удаление pad'а");
+    } finally {
+      this.policy.deletePad = null;
+    }
+    // The second 11 00 and the 1A may come in either order; take both so neither is mistaken for a later reply.
+    const ctl = (c: number) => (m: Message) => m.channel === CH_CONTROL && m.payload[0] === c;
+    await this.waitFor(ctl(0x11), 2000, "второй ответ на удаление").catch(() => this.log("warn", "SP не прислал второй 11 00 после удаления"));
+    await this.waitFor(ctl(0x1a), 3000, "project update").catch(() => this.log("warn", "SP не прислал 1A после удаления, читаю блок так"));
+    const block = await this.padBlock(pad);
+    if (block.size) throw new DeviceError(`${padName(pad)}: после удаления блок не пуст`);
+    return block;
   }
 
   /**
@@ -484,6 +509,48 @@ export class SP404Device {
    * Import a complete SMP file into an EMPTY pad of the current project, following the official
    * app's sequence (SparkyMK2 sp404-device/src/control.rs import_smp; verified on hardware).
    */
+  /**
+   * Copy a pad onto an empty one. The unit has no copy command: the source SMP is read and imported
+   * unchanged under the same name, then the settings in PAD_PARAM_RANGE are sent as set-parameters.
+   * Chop points and anything else outside that list stay as on a fresh pad. Progress: reading is the
+   * first half, writing the second. Returns the new block and the settings that did not come out equal.
+   */
+  async copyPad(project1: number, src: number, dst: number, onProgress: Progress = () => {}): Promise<{ block: PadBlock; differs: string[] }> {
+    for (const p of [src, dst]) if (!(Number.isInteger(p) && p >= 0 && p < PAD_COUNT)) throw new DeviceError(`нет pad'а ${p}`);
+    if (src === dst) throw new DeviceError("pad копируется сам на себя");
+    await this.requireCurrent(project1);
+    const s = await this.padBlock(src);
+    if (!s.size) throw new DeviceError(`${padName(src)} пуст`);
+    if ((await this.padBlock(dst)).size) throw new DeviceError(`${padName(dst)} уже занят`); // before the long read
+    const smp = await this.readFile(samplePath(project1, src), Infinity, (d, t) => onProgress(d, 2 * t));
+    if (!smp || smp.length !== s.size) throw new DeviceError(`${padName(src)}: не удалось прочитать сэмпл (${smp?.length ?? "нет файла"} из ${s.size} байт)`);
+    const ch = parseSmpHeader(smp)?.channels;
+    if (ch !== 1 && ch !== 2) throw new DeviceError(`${padName(src)}: не удалось прочитать заголовок сэмпла`);
+    const b = await this.importSmp(project1, dst, smp, s.name, (d, t) => onProgress(t + d, 2 * t));
+
+    // Start, then End: the fresh pad spans the whole file, so Start < End holds at every step.
+    if (s.startByte !== b.startByte) await this.setParam(dst, PARAM_START, byteToFrame(s.startByte, ch));
+    if (s.endByte !== b.endByte) await this.setParam(dst, PARAM_END, byteToFrame(s.endByte, ch));
+    const field = (blk: PadBlock, id: number) => new DataView(blk.raw.buffer, blk.raw.byteOffset).getInt32(3 + (id - 0x66) * 4, true);
+    // Flags first: One Shot on the unit may touch Gate and Loop, which come after it.
+    const ids = [PARAM_FLAGS, ...[...PAD_PARAM_RANGE.keys()].filter((id) => id !== PARAM_FLAGS && id !== PARAM_START && id !== PARAM_END)];
+    const skipped: string[] = [];
+    for (const id of ids) {
+      const v = field(s, id), range = PAD_PARAM_RANGE.get(id)!;
+      if (v === field(b, id)) continue;
+      if (v < range[0] || v > range[1]) { skipped.push(`${id.toString(16)}=${v}`); continue; }
+      await this.setParam(dst, id, v);
+    }
+    if (skipped.length) this.log("warn", `${padName(dst)}: не скопировано (вне разрешённого): ${skipped.join(", ")}`);
+
+    const out = await this.padBlock(dst);
+    const differs = [
+      ...(out.startByte !== s.startByte ? ["Start"] : []), ...(out.endByte !== s.endByte ? ["End"] : []),
+      ...ids.filter((id) => field(out, id) !== field(s, id)).map((id) => id.toString(16)),
+    ];
+    return { block: out, differs };
+  }
+
   async importSmp(project1: number, pad: number, smp: Uint8Array, name: string, onProgress: Progress = () => {}): Promise<PadBlock> {
     await this.requireCurrent(project1);
     const block = await this.padBlock(pad);

@@ -1,10 +1,10 @@
-import { useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { BANKS, formatBpm, padName } from "../sp404";
 import {
-  PAD_DRAG, conn, dragOverBank, draggedPad, endPadDrag, moveSpeedChange, connect, hasGrant, importFiles, jobs, movePad, pads, project, reconnect, reload, selectPad, selectedBank, selectedPad, setBankTempo, status,
+  PAD_DRAG, copyPad, copying, dragCopy, dragGroup, dropGroup, groupDrop, groupTargets, clearPicked, confirmGroupDelete, deletePicked, groupProgress, pickPad, picked, pickedList, conn, dragOverBank, draggedPad, endPadDrag, moveSpeedChange, connect, hasGrant, importFiles, jobs, movePad, pads, project, reconnect, reload, selectPad, selectedBank, selectedPad, setBankTempo, status,
   waveforms, writeBlockReason,
 } from "./store";
-import { IconLock, IconRefresh } from "./icons";
+import { IconLock, IconRefresh, IconTrash } from "./icons";
 import { TempoField } from "./TempoField";
 
 const hasFiles = (e: DragEvent) => !!e.dataTransfer?.types.includes("Files");
@@ -35,12 +35,53 @@ export function PadGrid() {
         {c === "ready" && <button class="btn btn-ghost" onClick={reload} title="Перечитать проект с SP"><IconRefresh /> Обновить</button>}
       </div>
 
+      <GroupBar />
       <div class="pad-grid">
         {Array.from({ length: 16 }, (_, i) => <PadCard key={i} index={b * 16 + i} />)}
         {c !== "ready" && c !== "loading" && <ConnectOverlay />}
       </div>
-      <p class="hint">Перетащите файлы на пустой pad — они займут его и следующие пустые pad'ы банка. Pad на pad: на пустой — перенос, на занятый — обмен; на плитку банка — на его первый пустой pad; задержите над банком, чтобы перейти в него.</p>
+      <p class="hint">Ctrl-клик, Shift-клик или Ctrl+A выделяют pad'ы для группового удаления. Перетащите файлы на пустой pad — они займут его и следующие пустые pad'ы банка. Pad на pad: на пустой — перенос, на занятый — обмен; на плитку банка — на его первый пустой pad; с Ctrl — копия на пустой pad; задержите над банком, чтобы перейти в него.</p>
     </section>
+  );
+}
+
+const padsWord = (n: number) => (n % 10 === 1 && n % 100 !== 11 ? "pad" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? "pad'а" : "pad'ов");
+
+/** Picked pads: what is picked and the group delete, with one confirmation listing every pad. */
+function GroupBar() {
+  const list = pickedList.value, prog = groupProgress.value;
+  const yes = useRef<HTMLButtonElement>(null);
+  const confirming = confirmGroupDelete.value;
+  useEffect(() => { if (confirming) yes.current?.focus(); }, [confirming]);
+  if (prog) {
+    return (
+      <div class="group-bar">
+        <span>{prog.verb} {Math.min(prog.done + 1, prog.total)} из {prog.total}…</span>
+        <span class="bar"><span style={{ width: `${(prog.done / prog.total) * 100}%` }} /></span>
+      </div>
+    );
+  }
+  if (!list.length) return null;
+  const names = list.map((i) => `${padName(i)} «${pads.value[i]!.name || "без имени"}»`);
+  if (confirming) {
+    return (
+      <div class="group-bar confirm-delete" role="alertdialog" aria-label="Подтверждение удаления"
+        onKeyDown={(e) => { if (e.key === "Escape") confirmGroupDelete.value = false; }}>
+        <span class="confirm-text">Удалить {list.length} {padsWord(list.length)} с SP? Вернуть будет нельзя.</span>
+        <span class="group-names">{names.join(", ")}</span>
+        <button ref={yes} class="btn btn-danger" onClick={deletePicked}><IconTrash /> Удалить {list.length}</button>
+        <button class="btn" onClick={() => (confirmGroupDelete.value = false)}>Отмена</button>
+      </div>
+    );
+  }
+  return (
+    <div class="group-bar">
+      <span class="group-count">Выбрано {list.length}</span>
+      <span class="group-names muted" title={names.join(", ")}>{list.map(padName).join(", ")}</span>
+      <button class="btn insp-delete" disabled={!!writeBlockReason.value} onClick={() => (confirmGroupDelete.value = true)}
+        title={writeBlockReason.value ?? `Удалить выбранные (${list.length}) с SP (Delete)`} aria-label="Удалить выбранные"><IconTrash /></button>
+      <button class="btn" onClick={clearPicked} title="Esc">Снять выделение</button>
+    </div>
   );
 }
 
@@ -70,39 +111,70 @@ function ConnectOverlay() {
 }
 
 function PadCard({ index }: { index: number }) {
-  const [over, setOver] = useState<false | "files" | "move" | "swap">(false);
+  const [over, setOver] = useState<false | "files" | "move" | "swap" | "copy">(false);
   const p = pads.value[index];
   const job = jobs.value.find((j) => j.pad === index && (j.state !== "done" && j.state !== "error"));
   const selected = selectedPad.value === index;
   const onDevice = status.value && status.value.bank * 16 + status.value.pad === index;
   const wave = waveforms.value.get(index);
   const secs = p?.size && wave ? (p.endByte - p.startByte) / (2 * wave.channels) / 48000 : null;
-  const canMove = !!p?.size && !job && !writeBlockReason.value;
-  const cls = ["pad", p?.size ? "full" : "empty", selected && "selected", over && "drop", over === "swap" && "drop-swap", job && "busy"].filter(Boolean).join(" ");
+  const copy = copying.value;
+  const copyHere = copy?.dst === index ? copy : null;
+  const canMove = !!p?.size && !job && !copyHere && !writeBlockReason.value;
+  const groupHere = !!groupDrop.value?.includes(index);
+  const cls = ["pad", p?.size ? "full" : "empty", selected && "selected", picked.value.has(index) && "picked", (over || groupHere) && "drop", over === "swap" && "drop-swap",
+    (over === "copy" || (groupHere && dragCopy.value)) && "drop-copy", (job || copyHere) && "busy"].filter(Boolean).join(" ");
   return (
     <button
       class={cls}
       draggable={canMove}
-      title={canMove ? "Перетащите на другой pad: на пустой — перенос, на занятый — обмен местами" : undefined}
-      onClick={() => selectPad(index)}
+      title={canMove ? "Перетащите на другой pad: на пустой — перенос, на занятый — обмен местами; с Ctrl — копия на пустой" : undefined}
+      onClick={(e) => {
+        if (e.ctrlKey || e.metaKey) return pickPad(index, "toggle");
+        if (e.shiftKey) return pickPad(index, "range");
+        clearPicked();
+        selectPad(index);
+      }}
       onDragStart={(e) => {
         if (!canMove || !e.dataTransfer) return;
         e.dataTransfer.setData(PAD_DRAG, String(index));
-        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.effectAllowed = "copyMove";
         draggedPad.value = index;
       }}
       onDragEnd={endPadDrag}
       onDragOver={(e) => {
         if (hasFiles(e)) { e.preventDefault(); setOver("files"); }
-        else if (hasPad(e) && !job && draggedPad.value !== index) {
-          dragOverBank.value = index >> 4; e.preventDefault(); e.dataTransfer!.dropEffect = "move"; setOver(p?.size ? "swap" : "move"); }
+        else if (hasPad(e) && dragGroup.value) {
+          // A group lands on this pad and the empty ones after it; no swaps for groups.
+          const g = dragGroup.value;
+          dragOverBank.value = index >> 4;
+          const t = g.includes(index) || p?.size || job || copyHere ? null : groupTargets(index >> 4, index, g.length);
+          groupDrop.value = t;
+          if (!t) return setOver(false);
+          e.preventDefault();
+          e.dataTransfer!.dropEffect = e.ctrlKey ? "copy" : "move";
+          setOver(e.ctrlKey ? "copy" : "move");
+        }
+        else if (hasPad(e) && !job && !copyHere && draggedPad.value !== index) {
+          dragOverBank.value = index >> 4;
+          if (e.ctrlKey && p?.size) return setOver(false); // a copy goes onto an empty pad only
+          e.preventDefault();
+          e.dataTransfer!.dropEffect = e.ctrlKey ? "copy" : "move";
+          setOver(e.ctrlKey ? "copy" : p?.size ? "swap" : "move");
+        }
       }}
       onDragLeave={() => setOver(false)}
       onDrop={(e) => {
         e.preventDefault();
         setOver(false);
         const src = e.dataTransfer?.getData(PAD_DRAG);
-        if (src) return void movePad(+src, index);
+        const g = dragGroup.value;
+        if (src && g) {
+          const t = groupTargets(index >> 4, index, g.length);
+          return void (t && dropGroup(t, e.ctrlKey));
+        }
+        if (src && e.ctrlKey && p?.size) return; // a copy goes onto an empty pad only
+        if (src) return void (e.ctrlKey ? copyPad(+src, index) : movePad(+src, index));
         selectPad(index);
         importFiles([...(e.dataTransfer?.files ?? [])], index);
       }}
@@ -118,6 +190,12 @@ function PadCard({ index }: { index: number }) {
         </>
       ) : (
         <span class="pad-empty">{job ? "" : "+"}</span>
+      )}
+      {copyHere && (
+        <span class="pad-progress">
+          <span style={{ width: `${Math.round(copyHere.progress * 100)}%` }} />
+          <em>копия {Math.round(copyHere.progress * 100)} %</em>
+        </span>
       )}
       {job && (
         <span class="pad-progress">

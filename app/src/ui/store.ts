@@ -1,6 +1,6 @@
 // App state (signals) and the controller that drives the device.
 
-import { batch, computed, signal } from "@preact/signals";
+import { batch, computed, effect, signal } from "@preact/signals";
 import {
   PAD_COUNT, SP404Device, SampleUploader, WebSerialTransport, bpmFromFileName, computeEnvelope, computePeaks, isSp404Port,
   BANKS, BPM_RANGES, VARI_MODES, byteToFrame, detectBpm, formatBpm, newJob, padName, padSpeed, samplePath, smpToPcm,
@@ -182,6 +182,7 @@ async function loadAll(first = false): Promise<void> {
         status.value = st;
         project.value = ps;
         pads.value = blocks;
+        picked.value = new Set();
         freeKb.value = kb;
         waveforms.value = new Map();
         padChannels.value = new Map();
@@ -351,11 +352,16 @@ export const PAD_DRAG = "application/x-nexus-pad";
 /** The pad being dragged in the grid (drop targets elsewhere can't read the drag data until drop). */
 export const draggedPad = signal<number | null>(null);
 
+/** Ctrl held while a pad is dragged: the drop copies instead of moving. */
+export const dragCopy = signal(false);
+/** A copy in progress: shown on the destination pad (read, then write: 0..1). */
+export const copying = signal<{ src: number; dst: number; progress: number } | null>(null);
+
 /** The bank under the pointer while a pad is dragged (a bank tile or a pad of the grid). */
 export const dragOverBank = signal<number | null>(null);
 
 export function endPadDrag(): void {
-  batch(() => { draggedPad.value = null; dragOverBank.value = null; });
+  batch(() => { draggedPad.value = null; dragOverBank.value = null; dragCopy.value = false; groupDrop.value = null; });
 }
 
 /** The tempo a pad in `bank` plays to: the project's, or the bank's when Tempo Select is on banks. */
@@ -389,6 +395,167 @@ export function firstEmptyPad(bank: number): number | null {
  * Move a pad onto an empty pad, or swap two pads, on the SP (any banks of the current project).
  * Cached waveforms and channel counts travel with the samples.
  */
+// ------------------------------------------------------------------ group selection
+
+/** Pads picked for group actions (Ctrl-click, Shift-click, Ctrl+A): only pads with a sample, current project. */
+export const picked = signal<ReadonlySet<number>>(new Set());
+// Picked pads belong to one project: another project on the SP must never inherit them.
+effect(() => { void project1.value; picked.value = new Set(); });
+/** The group delete waits for confirmation above the grid. */
+export const confirmGroupDelete = signal(false);
+export const groupProgress = signal<{ done: number; total: number; verb: string } | null>(null);
+
+export const pickedList = computed(() => [...picked.value].filter((i) => pads.value[i]?.size).sort((a, b) => a - b));
+
+/** Ctrl-click toggles a pad (the selected one joins on the first pick); Shift-click adds the range from the selected pad (from the bank's first pad when that is in another bank). */
+export function pickPad(pad: number, how: "toggle" | "range"): void {
+  const n = new Set(picked.value), sel = selectedPad.value;
+  if (how === "toggle") {
+    if (!n.size && sel !== pad && pads.value[sel]?.size) n.add(sel);
+    if (n.has(pad)) n.delete(pad);
+    else if (pads.value[pad]?.size) n.add(pad);
+  } else {
+    const from = sel >> 4 === pad >> 4 ? sel : pad & ~15; // within the clicked pad's bank only
+    for (let i = Math.min(from, pad); i <= Math.max(from, pad); i++) if (pads.value[i]?.size) n.add(i);
+  }
+  batch(() => {
+    picked.value = n;
+    confirmGroupDelete.value = false;
+  });
+  if (how === "toggle") selectPad(pad);
+}
+
+/** Ctrl+A: every pad with a sample in the bank. */
+export function pickBank(bank: number): void {
+  const n = new Set<number>();
+  for (let i = bank * 16; i < bank * 16 + 16; i++) if (pads.value[i]?.size) n.add(i);
+  batch(() => { picked.value = n; confirmGroupDelete.value = false; });
+}
+
+export function clearPicked(): void {
+  batch(() => { picked.value = new Set(); confirmGroupDelete.value = false; });
+}
+
+/** Delete the picked pads one by one (confirmed by the user); stops at the first one that fails. */
+export async function deletePicked(): Promise<void> {
+  confirmGroupDelete.value = false;
+  const list = pickedList.value;
+  if (!list.length || groupProgress.value) return;
+  let done = 0;
+  groupProgress.value = { done, total: list.length, verb: "Удаляю" };
+  try {
+    for (const pad of list) {
+      if (!(await deletePad(pad))) break;
+      done++;
+      const n = new Set(picked.value);
+      n.delete(pad);
+      batch(() => { picked.value = n; groupProgress.value = { done, total: list.length, verb: "Удаляю" }; });
+    }
+  } finally {
+    groupProgress.value = null;
+  }
+  log(done === list.length ? "info" : "warn", done === list.length ? `Удалено pad'ов: ${done}` : `Удалено ${done} из ${list.length}: остановлено на ошибке`);
+}
+
+/** The pads that travel with the dragged one: the picked group, when the drag starts on one of them. */
+export const dragGroup = computed(() => {
+  const d = draggedPad.value, list = pickedList.value;
+  return d !== null && list.length > 1 && list.includes(d) ? list : null;
+});
+/** Pads a group drop would fill, highlighted while dragging. */
+export const groupDrop = signal<number[] | null>(null);
+
+/**
+ * Where a group of `n` lands in `bank`: the pad `from` and the empty pads after it (like files
+ * dropped on a pad), or the bank's first empty pads for a bank tile. Null when they don't fit.
+ */
+export function groupTargets(bank: number, from: number | null, n: number): number[] | null {
+  const out: number[] = [];
+  for (let i = from ?? bank * 16; i < bank * 16 + 16 && out.length < n; i++) if (!pads.value[i]?.size) out.push(i);
+  return out.length === n ? out : null;
+}
+
+/** Move (or copy) the picked pads onto `targets`, in order, one by one; stops at the first that fails. */
+export async function dropGroup(targets: number[], copy: boolean): Promise<void> {
+  const list = pickedList.value;
+  if (list.length !== targets.length || groupProgress.value) return;
+  const verb = copy ? "Копирую" : "Переношу";
+  let done = 0;
+  groupProgress.value = { done, total: list.length, verb };
+  try {
+    for (let i = 0; i < list.length; i++) {
+      if (!(await (copy ? copyPad(list[i], targets[i]) : movePad(list[i], targets[i], true)))) break;
+      groupProgress.value = { done: ++done, total: list.length, verb };
+    }
+  } finally {
+    groupProgress.value = null;
+  }
+  // Done: nothing stays picked. Stopped by an error: the pads not handled yet stay picked.
+  picked.value = new Set(list.slice(done));
+  const what = copy ? "Скопировано" : "Перенесено";
+  log(done === list.length ? "info" : "warn", done === list.length ? `${what} pad'ов: ${done}` : `${what} ${done} из ${list.length}: остановлено на ошибке`);
+}
+
+/** Pad whose deletion waits for the user's confirmation in the inspector header. */
+export const confirmDelete = signal<number | null>(null);
+
+/** Delete a pad's sample on the SP, for good (the user has confirmed it). */
+export async function deletePad(pad: number): Promise<boolean> {
+  confirmDelete.value = null;
+  const d = device;
+  const blocked = writeBlockReason.value ?? (importing.value ? "Идёт импорт — дождитесь конца" : null);
+  if (!d) return false;
+  if (blocked) {
+    notice.value = { kind: "error", text: blocked };
+    return false;
+  }
+  const name = pads.value[pad]?.name || "без имени";
+  try {
+    const b = await d.exclusive((x) => x.deletePad(project1.value, pad));
+    const drop = <T,>(m: Map<number, T>) => { const n = new Map(m); n.delete(pad); return n; };
+    batch(() => {
+      setPad(b);
+      waveforms.value = drop(waveforms.value);
+      padChannels.value = drop(padChannels.value);
+      if (playing.value === pad) playing.value = null;
+    });
+    log("info", `${padName(pad)}: удалён «${name}»`);
+    return true;
+  } catch (e) {
+    fail(e, `Удаление ${padName(pad)}`);
+    return false;
+  }
+}
+
+/** Copy a pad onto an empty one (Ctrl-drag): read its sample, import it there, copy the settings. */
+export async function copyPad(src: number, dst: number): Promise<boolean> {
+  const d = device;
+  const blocked = writeBlockReason.value ?? (importing.value ? "Идёт импорт — дождитесь конца" : copying.value ? "Уже идёт копирование" : null);
+  if (!d || src === dst) return false;
+  if (blocked) {
+    notice.value = { kind: "error", text: blocked };
+    return false;
+  }
+  copying.value = { src, dst, progress: 0 };
+  try {
+    const r = await d.exclusive((x) => x.copyPad(project1.value, src, dst, (a, b) => (copying.value = { src, dst, progress: a / b })));
+    batch(() => {
+      setPad(r.block);
+      const ch = padChannels.value.get(src);
+      if (ch) padChannels.value = new Map(padChannels.value).set(dst, ch);
+    });
+    if (r.differs.length) log("warn", `${padName(src)} ⧉ ${padName(dst)}: скопирован, но отличаются параметры ${r.differs.join(", ")}`);
+    else log("info", `${padName(src)} ⧉ ${padName(dst)}: скопирован «${r.block.name}»`);
+    selectPad(dst);
+    return true;
+  } catch (e) {
+    fail(e, `Копирование ${padName(src)} → ${padName(dst)}`);
+    return false;
+  } finally {
+    copying.value = null;
+  }
+}
+
 export async function movePad(src: number, dst: number, onlyToEmpty = false): Promise<boolean> {
   const d = device;
   const blocked = writeBlockReason.value ?? (importing.value ? "Идёт импорт — дождитесь конца" : null);

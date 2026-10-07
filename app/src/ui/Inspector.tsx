@@ -5,13 +5,13 @@ import {
   parseBpmInput,
 } from "../sp404";
 import {
-  bpmRange, channelsOf, conn, detectPadBpm, importFiles, loadWaveform, pads, playing, preview, project, selectedPad, setBpm, setBpmSync, setGate, setLevel, setLoop, setOneShot, setPitch, setTimeStretch, setVari, setVinyl,
+  bpmRange, channelsOf, confirmDelete, conn, deletePad, detectPadBpm, importFiles, loadWaveform, pads, playing, preview, project, selectedPad, setBpm, setBpmSync, setGate, setLevel, setLoop, setOneShot, setPitch, setTimeStretch, setVari, setVinyl,
   setRange, stopPlaying, waveLoading, waveforms, writeBlockReason,
 } from "./store";
 import { Waveform, type Range } from "./Waveform";
 import type { Waveform as Wave } from "./store";
 import { ValueField, intIn, signed, type Parse } from "./ValueField";
-import { IconCheck, IconPlay, IconStop, IconUpload, IconWave } from "./icons";
+import { IconCheck, IconPlay, IconStop, IconTrash, IconUpload, IconWave } from "./icons";
 
 const RATE = 48000;
 const TRIM_THRESHOLDS = [-60, -48, -36, -24];
@@ -25,12 +25,35 @@ export function Inspector() {
   const protectedBank = !!project.value?.banks[pad >> 4]?.protected;
   return (
     <aside class="inspector glass">
-      <div class="insp-head">
-        <span class="chip chip-accent">{padName(pad)}</span>
-        <span class="insp-name" title={p?.name}>{p?.size ? p.name || "без имени" : "Пустой pad"}</span>
-      </div>
+      {p?.size && confirmDelete.value === pad ? <ConfirmDelete pad={pad} /> : (
+        <div class="insp-head">
+          <span class="chip chip-accent">{padName(pad)}</span>
+          <span class="insp-name" title={p?.name}>{p?.size ? p.name || "без имени" : "Пустой pad"}</span>
+          {!!p?.size && (
+            <button class="btn insp-delete" disabled={!!writeBlockReason.value} onClick={() => (confirmDelete.value = pad)}
+              title={writeBlockReason.value ?? `Удалить ${padName(pad)} с SP (Delete)`} aria-label="Удалить pad">
+              <IconTrash />
+            </button>
+          )}
+        </div>
+      )}
       {p?.size ? <FilledPad pad={pad} ready={ready} /> : <EmptyPad pad={pad} ready={ready} protectedBank={protectedBank} />}
     </aside>
+  );
+}
+
+/** Delete asks once, right in the header: Enter or the button deletes, Esc or Отмена keeps the pad. */
+function ConfirmDelete({ pad }: { pad: number }) {
+  const p = pads.value[pad]!;
+  const yes = useRef<HTMLButtonElement>(null);
+  useEffect(() => yes.current?.focus(), [pad]); // so Delete then Enter deletes, like a y/n prompt
+  return (
+    <div class="insp-head confirm-delete" role="alertdialog" aria-label="Подтверждение удаления"
+      onKeyDown={(e) => { if (e.key === "Escape") confirmDelete.value = null; }}>
+      <span class="confirm-text">Удалить <b>{padName(pad)}</b> «{p.name || "без имени"}» с SP? Вернуть будет нельзя.</span>
+      <button ref={yes} class="btn btn-danger" onClick={() => deletePad(pad)}><IconTrash /> Удалить</button>
+      <button class="btn" onClick={() => (confirmDelete.value = null)}>Отмена</button>
+    </div>
   );
 }
 
