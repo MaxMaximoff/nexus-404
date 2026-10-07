@@ -1,6 +1,8 @@
 import { useEffect, useRef } from "preact/hooks";
-import { formatBpm, padName } from "../sp404";
-import { clearFinishedJobs, defaultBpm, jobs, logLines, showDebug } from "./store";
+import { BPM_RANGES, formatBpm, padName } from "../sp404";
+import { bpmRange, clearFinishedJobs, defaultBpm, detectOnImport, jobs, logLines, showDebug } from "./store";
+
+const BPM_FROM = { name: "из имени", detected: "определён", field: "из поля" } as const;
 
 export function ImportPanel() {
   const list = jobs.value;
@@ -8,22 +10,32 @@ export function ImportPanel() {
     <section class="import-panel glass">
       <div class="panel-row">
         <div class="panel-title">Импорт</div>
-        <label class="default-bpm" title="Для файлов, в имени которых нет «120bpm» и т.п.">
-          BPM новых сэмплов
-          <input type="text" inputMode="decimal" placeholder="из имени файла" value={defaultBpm.value}
+        <label class="default-bpm detect-bpm" title="Для файлов, в имени которых нет «120bpm» и т.п.: темп определяется по звуку">
+          <input type="checkbox" checked={detectOnImport.value} onChange={(e) => (detectOnImport.value = (e.target as HTMLInputElement).checked)} />
+          определять BPM
+          <select value={bpmRange.value} disabled={!detectOnImport.value} title="Темп сворачивается в этот диапазон, как на SP"
+            onChange={(e) => (bpmRange.value = +(e.target as HTMLSelectElement).value)}>
+            {BPM_RANGES.map(([a, b], i) => <option value={i}>{a}–{b}</option>)}
+          </select>
+        </label>
+        <label class="default-bpm" title={detectOnImport.value ? "Если в имени файла нет BPM и по звуку он не определился" : "Для файлов, в имени которых нет «120bpm» и т.п."}>
+          {detectOnImport.value ? "иначе BPM" : "BPM новых сэмплов"}
+          <input type="text" inputMode="decimal" placeholder="—" value={defaultBpm.value}
             onInput={(e) => (defaultBpm.value = (e.target as HTMLInputElement).value)} />
         </label>
         {list.some((j) => j.state === "done" || j.state === "error") && <button class="btn btn-ghost" onClick={clearFinishedJobs}>Очистить</button>}
       </div>
       {list.length === 0 ? (
-        <p class="muted small">Очередь пуста. BPM берётся из имени файла («loop_96bpm.wav»), иначе из поля выше, иначе остаётся 90.</p>
+        <p class="muted small">Очередь пуста. BPM берётся из имени файла («loop_96bpm.wav»){detectOnImport.value ? ", иначе определяется по звуку" : ""}, иначе из поля выше, иначе остаётся 90.</p>
       ) : (
         <ul class="jobs">
           {list.map((j) => (
             <li key={j.id} class={`job job-${j.state}`}>
               <span class="job-name" title={j.file.name}>{j.file.name}</span>
               <span class="chip">{padName(j.pad)}</span>
-              <span class="muted">{j.bpmX100 !== null ? `${formatBpm(j.bpmX100)} BPM` : ""}</span>
+              <span class="muted" title={j.bpmFrom ? `BPM ${BPM_FROM[j.bpmFrom]}` : undefined}>
+                {j.bpmX100 !== null ? `${formatBpm(j.bpmX100)} BPM${j.bpmFrom === "detected" ? " ✓" : ""}` : j.detect && j.state !== "done" && j.state !== "error" ? "BPM?" : ""}
+              </span>
               <span class="bar"><span style={{ width: `${Math.round(j.progress * 100)}%` }} /></span>
               <span class="job-msg" title={j.message}>{j.message}</span>
             </li>

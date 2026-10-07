@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   CH_CONTROL, CH_FILE, FileReq, FrameDecoder, O_CREAT_TRUNC_RDWR, SP404Device, assignSampleBlock, bpmFromFileName,
   padSpeed, computePeaks, computeEnvelope, findSound, ENVELOPE_BLOCK, encodeLong, encodeShort, makeGuard, md5, parseBpmInput, parseFileReply, parsePadBlock, parseSmpHeader,
-  samplePath, septDec, septEnc, smpHeader, buildSmp, smpToPcm, deviceErrorText, frameToByte, remotePath, type SP404Transport,
+  samplePath, septDec, septEnc, smpHeader, buildSmp, SampleUploader, newJob, type ImportJob, smpToPcm, deviceErrorText, frameToByte, remotePath, type SP404Transport,
 } from "./index";
 
 const hex = (a: ArrayLike<number>) => Buffer.from(Uint8Array.from(a)).toString("hex");
@@ -239,6 +239,37 @@ describe("device against a scripted SP", () => {
     await expect(dev.exclusive((d) => d.importSmp(1, 33, buildSmp(new Int16Array(4), 2), "a"))).rejects.toThrow(/проект 4/);
   });
   /** SP with a 1 s stereo sample (48 000 frames) imported on C2. */
+  /** A 48 kHz/16-bit stereo WAV of clicks, `seconds` long. */
+  function clickWav(name: string, bpm: number, seconds: number): File {
+    const frames = Math.round(seconds * 48000), pcm = new Int16Array(frames * 2);
+    for (let t = 0; t < seconds; t += 60 / bpm)
+      for (let i = 0, at = Math.round(t * 48000); i < 960 && at + i < frames; i++) pcm[2 * (at + i)] = pcm[2 * (at + i) + 1] = Math.round(Math.sin(i * 0.9) * 20000 * Math.exp(-i / 150));
+    const head = new DataView(new ArrayBuffer(44));
+    [..."RIFF"].forEach((c, i) => head.setUint8(i, c.charCodeAt(0)));
+    head.setUint32(4, 36 + pcm.byteLength, true);
+    [..."WAVEfmt "].forEach((c, i) => head.setUint8(8 + i, c.charCodeAt(0)));
+    head.setUint32(16, 16, true); head.setUint16(20, 1, true); head.setUint16(22, 2, true);
+    head.setUint32(24, 48000, true); head.setUint32(28, 48000 * 4, true); head.setUint16(32, 4, true); head.setUint16(34, 16, true);
+    [..."data"].forEach((c, i) => head.setUint8(36 + i, c.charCodeAt(0)));
+    head.setUint32(40, pcm.byteLength, true);
+    return new File([head.buffer, pcm.buffer], name, { type: "audio/wav" });
+  }
+  it("imports with BPM from the name, else detected, else from the field", async () => {
+    const sp = fakeSp();
+    const dev = new SP404Device(sp.t);
+    const seen: ImportJob[] = [];
+    const up = new SampleUploader(dev, { onJob: (j) => seen.push(j), onPad: () => {} }, () => {});
+    const jobs = [
+      newJob(clickWav("a_96bpm.wav", 120, 4), 33, 9600, 9000, 80), // the name wins
+      newJob(clickWav("b.wav", 120, 4), 34, null, 9000, 80), // detected: 8 beats in 4 s
+      newJob(new File([clickWav("c.wav", 120, 4)], "c.wav"), 35, null, 9000, null), // detection off: the field
+    ];
+    jobs.push(newJob(clickWav("d.wav", 0.001, 4), 36, null, 9000, 80)); // one click, no beat: the field
+    expect(await up.run(4, jobs)).toBe(4);
+    expect(sp.params.filter(([id]) => id === 0x6f)).toEqual([[0x6f, 33, 9600], [0x6f, 34, 12000], [0x6f, 35, 9000], [0x6f, 36, 9000]]);
+    expect(jobs.map((j) => j.bpmFrom)).toEqual(["name", "detected", "field", "field"]);
+  });
+
   async function loaded() {
     const sp = fakeSp();
     const dev = new SP404Device(sp.t);

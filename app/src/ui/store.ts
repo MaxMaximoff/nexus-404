@@ -42,6 +42,8 @@ export const padChannels = signal(new Map<number, { key: string; channels: numbe
 export const logLines = signal<LogLine[]>([]);
 export const showDebug = signal(false);
 export const defaultBpm = signal("");
+/** Detect the tempo of imported files whose names carry none (range: bpmRange). */
+export const detectOnImport = signal(true);
 export const notice = signal<{ kind: "error" | "info"; text: string } | null>(null);
 
 export const project1 = computed(() => (status.value ? status.value.project + 1 : 0));
@@ -447,7 +449,8 @@ export function importFiles(files: File[], startPad: number): void {
     notice.value = { kind: "info", text: `В банке хватает места для ${targets.length} из ${audio.length} файлов — остальные пропущены` };
   else notice.value = null;
   const fallback = parseDefaultBpm();
-  const newJobs = targets.map((pad, i) => newJob(audio[i], pad, bpmFromFileName(audio[i].name) ?? fallback));
+  const detectMin = detectOnImport.value ? BPM_RANGES[bpmRange.value]![0] : null;
+  const newJobs = targets.map((pad, i) => newJob(audio[i], pad, bpmFromFileName(audio[i].name), fallback, detectMin));
   newJobs.forEach((j) => reserved.add(j.pad));
   jobs.value = [...jobs.value.filter((j) => j.state !== "done"), ...newJobs];
   const p1 = project1.value;
