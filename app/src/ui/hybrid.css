@@ -1,59 +1,8 @@
-/* Opt-in proof of concept (?graphics=hybrid).
-   Only A5 (loaded), A11 (empty), and the inspector participate. The adjacent pads are controls.
-   Raster = material and optical bounce; 9-slice SVG = precise light paths; HTML = every live value.
-   All selectors are scoped; this chunk and its assets are absent from the normal screen. */
+/* Existing opt-in inspector study (?graphics=hybrid), unchanged during pad integration.
+   The shared pad materials now live in styles.css and are enabled in every mode. */
 .hybrid-poc {
-  --hybrid-loaded: url("../assets/nexus-ui/pads/pad-light.webp");
-  --hybrid-empty: url("../assets/nexus-ui/pads/pad-graphite.webp");
   --hybrid-panel: url("../assets/nexus-ui/panels/panel-light.webp");
-  --hybrid-emitter: url("../assets/nexus-ui/lighting/pad-emitter.svg");
   --hybrid-corners: url("../assets/nexus-ui/details/panel-corners.svg");
-}
-
-/* Fill uses the quiet center of the generated image. 100 source pixels form each corner.
-   Border width stays 1px in layout; border-image-width only controls painting. */
-.hybrid-poc .pad[data-pad="A5"].full,
-.hybrid-poc .pad[data-pad="A11"].empty {
-  isolation: isolate;
-  overflow: visible;
-  background: none;
-  border: 1px solid transparent;
-  border-image: var(--hybrid-loaded) 100 fill / 12px / 2px stretch;
-  box-shadow: none;
-  transition: transform 80ms ease, box-shadow 140ms ease;
-}
-.hybrid-poc .pad[data-pad="A11"].empty {
-  border-image-source: var(--hybrid-empty);
-}
-/* Keep generated optical layers behind the live labels and the drag operation badges. */
-.hybrid-poc .pad[data-pad="A5"].full::before {
-  content: "";
-  position: absolute;
-  inset: -1px;
-  border: 0;
-  border-image: var(--hybrid-emitter) 44 / 13px / 0 stretch;
-  border-radius: inherit;
-  pointer-events: none;
-  z-index: 0;
-  opacity: .32;
-  box-shadow: none;
-  transition: opacity 140ms ease;
-}
-.hybrid-poc .pad[data-pad="A5"].full.selected {
-  box-shadow: 0 0 3px #00c8ff, 0 0 10px #00a5ff4d, 0 4px 8px -4px #00a5ff70;
-}
-.hybrid-poc .pad[data-pad="A5"].full.selected::before { opacity: 1; }
-.hybrid-poc .pad[data-pad="A5"].full:not(.selected):hover::before { opacity: .85; }
-.hybrid-poc .pad[data-pad="A5"].full:active {
-  transform: translateY(1px);
-  box-shadow: 0 0 5px #00c8ff70;
-}
-.hybrid-poc .pad[data-pad="A11"].empty:hover { box-shadow: 0 0 0 1px #93bdd066; }
-.hybrid-poc .pad[data-pad="A11"].empty.selected {
-  box-shadow: 0 0 0 1px #00c8ff, 0 0 7px #00a5ff45;
-}
-.hybrid-poc .pad:is([data-pad="A5"], [data-pad="A11"]):is(.full, .empty).picked {
-  box-shadow: 0 0 0 2px #e5484d, 0 0 8px #e5484d55;
 }
 
 /* The graphic is the container's own border painting, so it does not scroll with its content.
@@ -80,9 +29,3 @@
   box-shadow: inset 0 1px 0 #ffffffd9, 0 1px 0 #ffffffa6;
 }
 .hybrid-poc .inspector .card-title { color: #006bbd; }
-
-@media (prefers-reduced-motion: reduce) {
-  .hybrid-poc .pad[data-pad="A5"].full,
-  .hybrid-poc .pad[data-pad="A11"].empty,
-  .hybrid-poc .pad[data-pad="A5"].full::before { transition: none; }
-}

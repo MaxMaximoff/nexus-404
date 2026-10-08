@@ -5,7 +5,7 @@ import "@fontsource/ibm-plex-mono/500.css";
 import "@fontsource/ibm-plex-mono/600.css";
 import "./ui/styles.css";
 
-// Opt-in material study: no device/store behavior changes, no extra assets in the default UI.
+// The inspector material study remains opt-in; shared pad skins are part of styles.css.
 async function mount() {
   if (new URLSearchParams(location.search).get("graphics") === "hybrid") {
     await import("./ui/hybrid.css");

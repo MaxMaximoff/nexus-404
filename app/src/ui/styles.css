@@ -29,6 +29,10 @@
   --ok: #12a36b;
   --warn: #c27a00;
   --mono: "IBM Plex Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
+  /* Shared pad skins from the approved A5/A11 experiment. No state-specific bitmaps. */
+  --pad-skin-light: url("../assets/nexus-ui/pads/pad-light.webp");
+  --pad-skin-empty: url("../assets/nexus-ui/pads/pad-graphite.webp");
+  --pad-emitter: url("../assets/nexus-ui/lighting/pad-emitter.svg");
 
   /* Radii */
   --r-panel: 18px;
@@ -63,18 +67,8 @@
     0 1px 0 #91aabd, 0 2px 2px rgba(30, 60, 90, 0.22), 0 4px 5px -3px rgba(35, 70, 100, 0.28);
   --key-pressed: inset 0 1px 3px rgba(35, 65, 95, 0.34), inset 0 0 0 1px rgba(255, 255, 255, 0.3), 0 1px 0 rgba(255, 255, 255, 0.8);
   --action-face: var(--led-glints), linear-gradient(180deg, #34aaff 0%, var(--blue) 46%, var(--blue-deep) 100%);
-  /* Broad pad caps catch light differently from small keys. No brushing on either. */
-  --pad-face: linear-gradient(155deg, #fcfeff 0%, #eaf3f9 42%, #d4e4ee 86%, #c5d9e6 100%);
-  --pad-reflection: linear-gradient(90deg, transparent 8%, rgba(115, 237, 255, 0.65) 28%, rgba(0, 200, 255, 0.28) 60%, transparent 94%) left bottom 2px / 100% 1px no-repeat;
-  --pad-depth: inset 0 2px 0 rgba(255, 255, 255, 0.98), inset 2px 0 0 rgba(255, 255, 255, 0.65),
-    inset -1px 0 0 rgba(85, 125, 155, 0.16), inset 0 -2px 0 rgba(85, 125, 155, 0.18),
-    0 1px 0 #91aec2, 0 3px 0 -1px #a7bfce, 0 4px 3px -1px rgba(30, 60, 90, 0.3), 0 7px 8px -5px rgba(35, 70, 100, 0.26);
-
-  /* D — recessed graphite: empty pads and deep wells. Matte, no brushing, lit lip on top, dark floor. */
+  /* Small bank occupancy indicators retain a CSS graphite fill. Pad faces use raster skins. */
   --graphite-face: linear-gradient(175deg, #354352 0%, var(--graphite) 46%, var(--graphite-deep) 100%);
-  --graphite-depth: inset 0 1px 0 rgba(210, 230, 243, 0.2), inset 0 4px 6px rgba(0, 0, 0, 0.55),
-    inset 2px 0 3px rgba(0, 0, 0, 0.22), inset 0 -12px 16px -8px rgba(0, 0, 0, 0.4),
-    0 -1px 0 rgba(55, 80, 105, 0.35), 0 1px 0 rgba(255, 255, 255, 0.95);
 
   /* Recessed light fields and displays (inputs, readouts): smooth, an inner shadow, a lit lower lip. */
   --well: linear-gradient(180deg, #e3edf4 0%, #f2f7fb 40%, #f8fbfe 100%);
@@ -357,68 +351,51 @@ button, input, select { font: inherit; color: inherit; }
   /* Height from the viewport, so top bar, pads, banks and inspector fit on one screen (~440 px is the rest);
      import and log sit below and are reached by scrolling. */
   position: relative; height: clamp(60px, calc((100dvh - 440px) / 4), 112px); border-radius: var(--r-card); padding: 9px 12px; cursor: pointer; text-align: left;
-  display: flex; flex-direction: column; justify-content: space-between; overflow: hidden;
-  transition: box-shadow 0.14s, border-color 0.14s, transform 0.06s;
+  display: flex; flex-direction: column; justify-content: space-between; overflow: visible;
+  isolation: isolate; background: none; border: 1px solid transparent;
+  /* Layout border stays 1px. Fixed painted corners preserve the baseline cap geometry. */
+  border-image: var(--pad-skin-light) 100 fill / 12px / 2px stretch;
+  box-shadow: none;
+  transition: transform 80ms ease, box-shadow 140ms ease;
 }
 .pad:active { transform: translateY(1px); }
-/* A loaded pad (material C, raised): smooth satin, a bright top bevel, thin side rims, a dense lower
-   edge with the key's thickness under it, a narrow cyan reflex along the top and left edges. */
-.pad.full {
-  border: 1px solid var(--key-border); border-bottom-color: #8aa4b8;
-  background:
-    linear-gradient(90deg, rgba(0, 200, 255, 0) 10%, rgba(0, 200, 255, 0.4) 38%, rgba(115, 237, 255, 0.55) 55%, rgba(0, 200, 255, 0) 90%) top 1px left 0 / 100% 1px no-repeat,
-    linear-gradient(180deg, rgba(0, 200, 255, 0.35), rgba(0, 200, 255, 0) 65%) left 0 top 0 / 1px 70% no-repeat,
-    var(--pad-reflection), var(--pad-face);
-  box-shadow: var(--pad-depth);
-}
-.pad.full:hover { border-color: #93b7cf; border-bottom-color: #7f9db3; }
-.pad.full:active { box-shadow: inset 0 1px 0 #fff, inset 0 -1px 2px rgba(68, 110, 145, 0.14), 0 1px 0 #b7c9d7, 0 1px 1px rgba(30, 60, 90, 0.22); }
-/* A crisp cap bevel, independent of the face and of the LED emitter. */
+/* Occupied: the same raster face in normal and selected states; only the SVG emitter changes. */
 .pad.full::before {
-  content: ""; position: absolute; inset: 2px; border-radius: calc(var(--r-card) - 3px); pointer-events: none;
-  border: 1px solid rgba(255, 255, 255, 0.7); border-bottom-color: rgba(108, 149, 177, 0.18);
+  content: ""; position: absolute; inset: -1px; border: 0; border-radius: inherit;
+  border-image: var(--pad-emitter) 44 / 13px / 0 stretch;
+  pointer-events: none; z-index: 0; opacity: .32; box-shadow: none;
+  transition: opacity 140ms ease;
 }
-/* An empty pad (material D, sunk): matte graphite, a lit upper lip, a dark floor, no light of its own. */
+.pad.full:not(.selected):hover::before { opacity: .85; }
+/* Empty: shared graphite material, with a quiet rim and subdued live plus sign. */
 .pad.empty {
-  border: 1px solid var(--graphite-deep); border-top-color: #111920;
-  background: var(--graphite-face);
-  box-shadow: var(--graphite-depth);
+  border-image-source: var(--pad-skin-empty);
   color: #5a6d80;
 }
 .pad.empty .pad-label { color: #9bb0c2; }
 .pad.empty .pad-empty { color: #7d94a8; }
-.pad.empty:hover { box-shadow: var(--graphite-depth), 0 0 0 1px rgba(110, 160, 200, 0.4); }
+.pad.empty:hover { box-shadow: 0 0 0 1px #93bdd066; }
 .pad.empty:hover .pad-empty { color: #7f95aa; }
-/* Selected: the same pad with its light on — a narrow bright cyan rim, white-cyan hot spots on the top edge,
-   a soft bloom and a cyan cast on the panel around it. The face keeps its colour. */
+/* Selected: preserve the approved A5 light, with no change to its raster or geometry. */
 .pad.full.selected {
-  border-color: var(--led-border); border-bottom-color: #00b4f0;
-  background:
-    var(--led-glints),
-    linear-gradient(180deg, rgba(0, 200, 255, 0.4), rgba(0, 200, 255, 0) 70%) left 0 top 0 / 1px 75% no-repeat,
-    var(--pad-reflection), var(--pad-face);
-  box-shadow: var(--led-strong), var(--pad-depth);
+  box-shadow: 0 0 3px #00c8ff, 0 0 10px #00a5ff4d, 0 4px 8px -4px #00a5ff70;
 }
-.pad.full.selected::before { border-color: rgba(233, 253, 255, 0.94); border-bottom-color: rgba(115, 237, 255, 0.55); }
-.pad.full.selected:active { box-shadow: var(--led), var(--key-pressed); }
+.pad.full.selected::before { opacity: 1; }
+.pad.full:active { box-shadow: 0 0 5px #00c8ff70; }
 .pad.empty.selected {
-  border-color: var(--led-border);
-  box-shadow: var(--graphite-depth), inset 0 0 0 1px rgba(0, 200, 255, 0.3), 0 0 3px rgba(0, 200, 255, 0.8), 0 0 12px rgba(0, 165, 255, 0.25);
+  box-shadow: 0 0 0 1px #00c8ff, 0 0 7px #00a5ff45;
 }
 .pad.empty.selected .pad-label { color: #7fd8ff; }
-/* No SP: light, empty keys with a dark LED each; the connect overlay sits on top. */
-.pad-grid.offline .pad.empty {
-  border-color: #b4c8d7;
-  background: linear-gradient(90deg, rgba(0, 200, 255, 0) 10%, rgba(0, 200, 255, 0.35) 50%, rgba(0, 200, 255, 0) 90%) top / 100% 1px no-repeat, linear-gradient(180deg, #f6fafd, #e2ecf3);
-  box-shadow: inset 0 1px 0 #fff, inset 0 -2px 3px rgba(85, 120, 150, 0.12), 0 1px 2px rgba(44, 75, 100, 0.18);
-}
+/* No SP: retain the connection overlay and hidden pad content on the shared graphite skin. */
 .pad-grid.offline .pad.empty > * { visibility: hidden; }
 .pad-grid.offline .pad.empty::before {
   content: ""; position: absolute; left: 11px; top: 11px; width: 7px; height: 7px; border-radius: 50%;
   background: radial-gradient(circle at 40% 35%, #8a9cad, #56687a); box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.35), 0 1px 0 #fff;
 }
-.pad.picked { border-color: var(--danger); box-shadow: inset 0 0 0 1px rgba(255, 235, 235, 0.9), 0 0 0 2px rgba(229, 72, 77, 0.35), 0 0 10px rgba(229, 72, 77, 0.3); }
-.pad.picked.selected { box-shadow: inset 0 0 0 1px rgba(255, 235, 235, 0.9), 0 0 0 2px #eef6fb, 0 0 0 3px rgba(0, 200, 255, 0.75), 0 0 10px rgba(229, 72, 77, 0.35); }
+.pad:is(.full, .empty).picked { box-shadow: 0 0 0 2px #e5484d, 0 0 8px #e5484d55; }
+@media (prefers-reduced-motion: reduce) {
+  .pad, .pad.full::before { transition: none; }
+}
 .group-bar {
   display: flex; align-items: center; gap: 10px; margin-bottom: 12px; padding: 6px 10px; border-radius: 10px; font-size: 13px; min-width: 0;
   background: var(--well); border: 1px solid var(--bevel); box-shadow: var(--well-shadow);
@@ -430,11 +407,13 @@ button, input, select { font: inherit; color: inherit; }
 .group-bar.confirm-delete { flex-wrap: wrap; }
 .group-bar.confirm-delete .group-names { flex: 1 1 100%; max-height: 72px; overflow: auto; white-space: normal; font-family: var(--mono); font-size: 12px; }
 .pad.drop { border-color: var(--led-border) !important; box-shadow: var(--led) !important; }
-.pad.drop.empty { background: radial-gradient(130% 95% at 50% 0%, #2f5672, #1f3a52 60%, #182c3e); }
+.pad-grid .pad.full.drop::before { opacity: 1; }
 /* Dropping a pad onto an occupied one swaps them: say so on the target. */
 .pad.drop-swap { border-color: #f0a630 !important; box-shadow: inset 0 0 0 1px rgba(255, 244, 225, 0.9), 0 0 3px rgba(240, 160, 40, 0.85), 0 0 12px rgba(240, 160, 40, 0.3) !important; }
+.pad-grid .pad.full.drop-swap::before { opacity: 0; }
 .pad.drop-copy::after { content: "+ копия"; position: absolute; right: 10px; top: 8px; font-size: 11px; font-weight: 800; color: var(--accent); }
 .pad.drop-swap::after { content: "⇄ обмен"; position: absolute; right: 10px; top: 8px; font-size: 11px; font-weight: 800; color: var(--warn); }
+.pad.drop-copy::after, .pad.drop-swap::after { pointer-events: none; }
 .pad.full[draggable="true"] { cursor: grab; }
 .pad-tags { position: absolute; top: 9px; right: 11px; display: flex; gap: 3px; }
 .pad.drop .pad-tags { visibility: hidden; } /* the drop label (обмен / копия) takes that corner */
@@ -455,6 +434,10 @@ button, input, select { font: inherit; color: inherit; }
 .overlay {
   position: absolute; inset: -6px; border-radius: var(--r-card); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
   text-align: center; padding: 24px; background: radial-gradient(closest-side, rgba(237, 244, 250, 0.94) 35%, rgba(237, 244, 250, 0) 100%);
+}
+/* The connection message needs a broad light veil over the shared dark empty pads. */
+.pad-grid.offline .overlay {
+  background: radial-gradient(ellipse 85% 42% at 50% 50%, rgba(237, 244, 250, 0.97) 35%, rgba(237, 244, 250, 0.85) 65%, rgba(237, 244, 250, 0) 100%);
 }
 .overlay b { font-size: 16px; font-weight: 700; }
 .overlay span { color: var(--text-2); max-width: 420px; font-size: 13px; }
@@ -796,8 +779,8 @@ button, input, select { font: inherit; color: inherit; }
   .project-info { flex-basis: 100%; }
 }
 @media (max-width: 480px) {
-  .pad-tags { position: static; align-self: flex-end; min-height: 12px; }
-  .pad-tag { font-size: 9px; line-height: 12px; padding: 0 2px; }
+  .pad-tags { position: static; align-self: flex-end; min-height: 12px; gap: 2px; max-width: 100%; }
+  .pad-tag { font-size: 9px; line-height: 12px; padding: 0 1px; letter-spacing: 0; }
   .pad-label { font-size: 11px; }
   .pad-meta { flex-wrap: wrap; gap: 0 3px; font-size: 10px; }
   .pad-meta span { white-space: nowrap; }
