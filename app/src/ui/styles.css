@@ -20,11 +20,11 @@
   --blue: #078fff;
   --blue-deep: #005dd9;
   --glint: #e9fdff;
-  /* Current bank/pad: --accent edge and glow, --blue-deep ink, distinct from cyan navigation and drop cues. */
-  --selection-edge: var(--accent);
+  /* Current bank/pad (and the note picked in a pattern): --neon edge and glow, --blue-deep ink. */
+  --selection-edge: var(--neon);
   --selection-ink: var(--blue-deep);
-  --selection-glow: 0 0 0 2px var(--selection-edge), 0 0 8px #007bffcc, 0 0 22px #007bff80, 0 0 38px #007bff40;
-  --selection-glow-press: 0 0 0 2px var(--selection-edge), 0 0 12px #007bff99, 0 0 24px #007bff50;
+  --selection-glow: 0 0 0 2px var(--selection-edge), 0 0 8px #00c8ffcc, 0 0 22px #00c8ff80, 0 0 38px #00c8ff40;
+  --selection-glow-press: 0 0 0 2px var(--selection-edge), 0 0 12px #00c8ff99, 0 0 24px #00c8ff50;
   /* Type */
   --text: #14283e;
   --text-2: #516980;
@@ -325,11 +325,24 @@ button, input, select { font: inherit; color: inherit; }
 /* ---------- layout ---------- */
 /* Top bar + work area: at least the window's height less the .app padding above and below. */
 .screen { min-height: calc(100dvh - 32px); display: flex; flex-direction: column; gap: 14px; }
-.layout { flex: 1; display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(440px, 1fr); gap: 14px; align-items: start; }
-.layout-ptn { grid-template-columns: minmax(0, 1.5fr) minmax(400px, 0.9fr); }
-/* The left column stretches with the row, its last panel takes the spare height (bottoms line up with the inspector). */
-.workspace { display: flex; flex-direction: column; gap: 14px; min-width: 0; align-self: stretch; }
+/* Three columns: pads, patterns, inspector. Switching view only moves their widths: one column grows to the
+   split's share, the other shrinks to nothing (and is inert), the inspector narrows or widens beside them. */
+.layout { flex: 1; display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 0fr) minmax(454px, 1fr); align-items: start; }
+.layout-ptn { grid-template-columns: minmax(0, 0fr) minmax(0, 1.5fr) minmax(414px, 0.9fr); }
+.layout > :last-child { margin-left: 14px; }
+.layout { transition: grid-template-columns 0.45s cubic-bezier(0.4, 0, 0.2, 1); }
+.slot { min-width: 0; transition: opacity 0.26s ease 0.12s; }
+.slot > * { min-width: 520px; }
+.slot[inert] { opacity: 0; overflow: hidden; contain: size; pointer-events: none; }
+.layout.switching .slot { overflow: hidden; }
+@media (prefers-reduced-motion: reduce) {
+  .layout, .slot { transition: none; }
+}
+/* The left blocks stretch with the row; the pads' last panel takes the spare height (bottoms line up with the inspector). */
+.workspace { display: flex; flex-direction: column; gap: 14px; align-self: stretch; }
 .workspace > :last-child { flex: 1; }
+.ptn-col { display: flex; flex-direction: column; align-self: stretch; }
+.ptn-col > .ptn-area { flex: 1; }
 
 /* Shared hybrid shells: reuse one material without changing layout or hit areas. */
 :is(.bank-rail, .pad-area, .inspector, .topbar, .ptn-area, .import-panel, .log-panel).glass {
@@ -371,7 +384,7 @@ button, input, select { font: inherit; color: inherit; }
 .mini-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; padding: 2px; border-radius: 4px; background: rgba(38, 50, 63, 0.1); box-shadow: inset 0 1px 1px rgba(44, 75, 100, 0.22), 0 1px 0 rgba(255, 255, 255, 0.8); }
 .mini-grid i { aspect-ratio: 1; border-radius: 1.5px; background: var(--graphite-face); }
 .mini-grid i.on { background: linear-gradient(#ffffff, #cfe2ee); box-shadow: inset 0 0 0 0.5px rgba(80, 140, 180, 0.55); }
-.bank-tile.active .mini-grid i.on { background: linear-gradient(#f0f5ff, #b5c9ff); box-shadow: 0 0 2px #007bff80; }
+.bank-tile.active .mini-grid i.on { background: linear-gradient(#f0f5ff, #b5c9ff); box-shadow: 0 0 2px #00c8ff80; }
 .bank-meta { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .bank-letter { font-weight: 800; font-size: 15px; color: var(--text); display: inline-flex; align-items: center; gap: 4px; }
 .bank-tile.active .bank-meta, .bank-tile.active .bank-letter { color: var(--selection-ink); }
@@ -815,7 +828,10 @@ button, input, select { font: inherit; color: inherit; }
 
 /* ---------- responsive ---------- */
 @media (max-width: 1180px) {
-  .layout { grid-template-columns: minmax(0, 1fr); }
+  .layout { grid-template-columns: minmax(0, 1fr); row-gap: 14px; transition: none; }
+  .layout > :last-child { margin-left: 0; }
+  .slot > * { min-width: 0; }
+  .slot[inert] { display: none; }
   .inspector, .inspector > .insp-scroll { contain: none; overflow: visible; }
 }
 @media (max-width: 760px) {
@@ -967,3 +983,6 @@ button, input, select { font: inherit; color: inherit; }
 .ptn-bounce-prog { display: flex; align-items: center; gap: 10px; font-size: 13px; flex: 1; }
 .ptn-bounce-prog .bar { flex: 1; max-width: 260px; }
 .ptn-bounce-row .insp-dl { margin-left: 0; }
+/* Long lists (Off, A–J): narrow keys of equal width, so the row stays one control. */
+.segmented.dense button { padding: 4px 0; min-width: 22px; text-align: center; }
+.segmented.dense button:first-child { padding: 4px 7px; }

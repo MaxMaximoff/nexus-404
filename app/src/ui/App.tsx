@@ -7,12 +7,21 @@ import { canUploadHere, cardBusy, cardConfirm, cardEdit, cardSel, sideTab } from
 import { PadGrid } from "./PadGrid";
 import { PatternsPane, mainView } from "./Patterns";
 import { TopBar } from "./TopBar";
-import { useEffect } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { dragCopy, draggedPad, groupDrop, clearPicked, confirmDelete, confirmGroupDelete, groupProgress, notice, pads, pickBank, pickedList, selectedBank, selectedPad, writeBlockReason } from "./store";
 import { IconX } from "./icons";
 
 export function App() {
-  const n = notice.value;
+  const n = notice.value, ptn = mainView.value === "patterns";
+  // While the pads and the patterns trade width, the slots clip their content (not otherwise: pad glows reach out).
+  const [switching, setSwitching] = useState(false), lastPtn = useRef(ptn);
+  useLayoutEffect(() => {
+    if (lastPtn.current === ptn) return;
+    lastPtn.current = ptn;
+    setSwitching(true);
+    const t = setTimeout(() => setSwitching(false), 520);
+    return () => clearTimeout(t);
+  }, [ptn]);
   useEffect(() => {
     // Delete on the selected pad asks for confirmation in the inspector (not while typing in a field).
     const onKey = (e: KeyboardEvent) => {
@@ -59,9 +68,13 @@ export function App() {
             <button class="icon-btn" onClick={() => (notice.value = null)} aria-label="Закрыть"><IconX /></button>
           </div>
         )}
-        <main class={`layout ${mainView.value === "patterns" ? "layout-ptn" : ""}`}>
-          <div class="workspace">
-            {mainView.value === "patterns" ? <PatternsPane /> : <><BankRail /><PadGrid /></>}
+        <main class={`layout ${ptn ? "layout-ptn" : ""} ${switching ? "switching" : ""}`}>
+          {/* Both blocks stay mounted: switching view only moves their widths. The hidden one is inert and collapses. */}
+          <div class="workspace slot" inert={ptn} aria-hidden={ptn}>
+            <BankRail /><PadGrid />
+          </div>
+          <div class="ptn-col slot" inert={!ptn} aria-hidden={!ptn}>
+            <PatternsPane />
           </div>
           {sideTab.value === "card" ? <CardBrowser /> : sideTab.value === "rec" ? <Recorder /> : <Inspector />}
         </main>

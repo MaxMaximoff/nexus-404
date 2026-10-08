@@ -142,9 +142,9 @@ function FilledPad({ pad, ready }: { pad: number; ready: boolean }) {
 
         <TabPanel id="mix">
           <Card>
-            <Choice label="Mute Group" value={p.muteGroup} options={OFF_A_J} pick={(v) => setPadParam(pad, PARAM_MUTE_GROUP, v, `Mute Group ${OFF_A_J[v][1]}`)}
+            <Choice label="Mute Group" value={p.muteGroup} options={OFF_A_J} kind="segmented" pick={(v) => setPadParam(pad, PARAM_MUTE_GROUP, v, `Mute Group ${OFF_A_J[v][1]}`)}
               hint="Pad'ы одной группы глушат друг друга" />
-            <Choice label="PAD Link" value={p.padLink} options={OFF_A_J} pick={(v) => setPadParam(pad, PARAM_PAD_LINK, v, `PAD Link ${OFF_A_J[v][1]}`)}
+            <Choice label="PAD Link" value={p.padLink} options={OFF_A_J} kind="segmented" pick={(v) => setPadParam(pad, PARAM_PAD_LINK, v, `PAD Link ${OFF_A_J[v][1]}`)}
               hint="Pad'ы одной группы звучат вместе" />
             <Choice label="BUS FX" value={p.busFx} options={BUS_FX.map((n, i) => [i, n])} kind="segmented"
               pick={(v) => setPadParam(pad, PARAM_BUS_FX, v, `BUS FX ${BUS_FX[v]}`)} hint="Через какую шину эффектов идёт pad" />
@@ -382,7 +382,7 @@ function Choice({ label, value, options, kind = "select", hint, mixed, disabled,
     <div class="tp-row choice" title={blocked ?? hint}>
       <span>{label}</span>
       {kind === "segmented" ? (
-        <span class="segmented" role="group" aria-label={label}>
+        <span class={`segmented ${options.length > 4 ? "dense" : ""}`} role="group" aria-label={label}>
           {options.map(([v, name]) => (
             <button key={v} type="button" aria-pressed={!mixed && v === value} class={!mixed && v === value ? "on" : ""} disabled={!!blocked || busy} onClick={() => run(v)}>{name}</button>
           ))}
@@ -728,9 +728,9 @@ function GroupInspector() {
 
         <TabPanel id="mix">
           <Card>
-            <Choice label="Mute Group" value={mute ?? -1} mixed={mute === null} options={OFF_A_J}
+            <Choice label="Mute Group" value={mute ?? -1} mixed={mute === null} options={OFF_A_J} kind="segmented"
               pick={param(PARAM_MUTE_GROUP, (v) => `Mute Group ${OFF_A_J[v][1]}`, (b) => b.muteGroup)} />
-            <Choice label="PAD Link" value={link ?? -1} mixed={link === null} options={OFF_A_J}
+            <Choice label="PAD Link" value={link ?? -1} mixed={link === null} options={OFF_A_J} kind="segmented"
               pick={param(PARAM_PAD_LINK, (v) => `PAD Link ${OFF_A_J[v][1]}`, (b) => b.padLink)} />
             <Choice label="BUS FX" value={bus ?? -1} mixed={bus === null} options={BUS_FX.map((n, i) => [i, n])} kind="segmented"
               pick={param(PARAM_BUS_FX, (v) => `BUS FX ${BUS_FX[v]}`, (b) => b.busFx)} />
