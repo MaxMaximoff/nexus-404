@@ -136,3 +136,113 @@ export function copyBar(p: Pattern, from: number, to: number): Pattern {
   });
   return withNotes(p, [...p.notes.filter((n) => !inBar(n, to)), ...copies]);
 }
+
+// ------------------------------------------------------------------ rows and bars
+
+/** Replace the notes of `pad` with one every `every` ticks from `offset`, each one step long (`gate`) at most. */
+export function fillPad(p: Pattern, pad: number, every: number, offset = 0, gate = gateFor(STEP), velocity = DEFAULT_VELOCITY): Pattern {
+  every = Math.max(1, Math.round(every));
+  let q = clearPad(p, pad);
+  for (let t = Math.max(0, Math.round(offset)); t < q.length; t += every) q = addNote(q, pad, t, Math.min(gate, every - 1 || 1), velocity).pattern;
+  return q;
+}
+
+/** Move every note of `pad` by `ticks`, round the pattern: what leaves at the end comes back at the start. */
+export function shiftPad(p: Pattern, pad: number, ticks: number): Pattern {
+  ticks = Math.round(ticks);
+  const mine = p.notes.filter((n) => n.pad === pad);
+  if (!ticks || !mine.length || p.length <= 0) return p;
+  const moved = mine.map((n) => {
+    const tick = (((n.tick + ticks) % p.length) + p.length) % p.length;
+    return { ...n, tick, gate: Math.max(1, Math.min(n.gate, p.length - tick)) };
+  });
+  return withNotes(p, [...p.notes.filter((n) => n.pad !== pad), ...moved]);
+}
+
+/** Remove the notes that start in bar `bar` (0-based). */
+export function clearBar(p: Pattern, bar: number): Pattern {
+  const bt = barTicks(p), from = bar * bt, to = from + bt;
+  return p.notes.some((n) => n.tick >= from && n.tick < to) ? withNotes(p, p.notes.filter((n) => n.tick < from || n.tick >= to)) : p;
+}
+
+/** Twice as long, the new half a copy of the old. Refused past MAX_BARS. */
+export function doublePattern(p: Pattern): Pattern {
+  const bars = Math.ceil(p.length / barTicks(p));
+  if (bars * 2 > MAX_BARS || p.length !== bars * barTicks(p)) return p;
+  let q = setBars(p, bars * 2);
+  for (let b = 0; b < bars; b++) q = copyBar(q, b, b + bars);
+  return q;
+}
+
+// ------------------------------------------------------------------ several notes at once
+
+/**
+ * Move notes together by `dt` ticks, and to other pads through `mapPad` (the editor passes a shift
+ * by rows). All or nothing: refused when one would leave the pattern, have no pad, or land on a
+ * note that does not move.
+ */
+export function moveNotes(p: Pattern, seqs: number[], dt: number, mapPad: (pad: number) => number | null = (x) => x): Pattern {
+  const set = new Set(seqs), moving = p.notes.filter((n) => set.has(n.seq));
+  dt = Math.round(dt);
+  if (!moving.length) return p;
+  const moved: PatternNote[] = [];
+  for (const n of moving) {
+    const tick = n.tick + dt, pad = mapPad(n.pad);
+    if (tick < 0 || tick >= p.length || pad === null) return p;
+    moved.push({ ...n, tick, pad, gate: Math.min(n.gate, p.length - tick) });
+  }
+  const rest = p.notes.filter((n) => !set.has(n.seq));
+  if (moved.some((m) => rest.some((o) => o.pad === m.pad && touches(m, o)))) return p;
+  if (moved.every((m, i) => m.tick === moving[i].tick && m.pad === moving[i].pad)) return p;
+  return withNotes(p, [...rest, ...moved]);
+}
+
+export function removeNotes(p: Pattern, seqs: number[]): Pattern {
+  const set = new Set(seqs);
+  return p.notes.some((n) => set.has(n.seq)) ? withNotes(p, p.notes.filter((n) => !set.has(n.seq))) : p;
+}
+
+/** Set the velocity of several notes, or change it with a function of the old one. */
+export function setVelocities(p: Pattern, seqs: number[], v: number | ((old: number) => number)): Pattern {
+  const set = new Set(seqs);
+  let changed = false;
+  const notes = p.notes.map((n) => {
+    if (!set.has(n.seq)) return n;
+    const nv = clampInt(typeof v === "number" ? v : v(n.velocity), 1, 127);
+    if (nv === n.velocity) return n;
+    changed = true;
+    return { ...n, velocity: nv };
+  });
+  return changed ? withNotes(p, notes) : p;
+}
+
+/** Notes copied: times from the first one, everything else as it was. */
+export type Clip = { dt: number; pad: number; gate: number; velocity: number; offVelocity: number; pitch: number }[];
+
+export function copyNotes(p: Pattern, seqs: number[]): Clip {
+  const set = new Set(seqs), mine = p.notes.filter((n) => set.has(n.seq)).sort((a, b) => a.tick - b.tick || a.pad - b.pad);
+  const t0 = mine[0]?.tick ?? 0;
+  return mine.map((n) => ({ dt: n.tick - t0, pad: n.pad, gate: n.gate, velocity: n.velocity, offVelocity: n.offVelocity, pitch: n.pitch }));
+}
+
+/** Paste a clip with its first note at `at`. Notes that would leave the pattern or land on a note are skipped. */
+export function pasteNotes(p: Pattern, clip: Clip, at: number): { pattern: Pattern; seqs: number[]; skipped: number } {
+  let q = p;
+  const seqs: number[] = [];
+  for (const c of clip) {
+    const r = addNote(q, c.pad, at + c.dt, c.gate, c.velocity);
+    if (!r.note) continue;
+    // addNote makes a TR-REC-like note: give it back the copied pitch and release velocity.
+    q = replace(r.pattern, r.note.seq, { ...r.note, pitch: c.pitch, offVelocity: c.offVelocity });
+    seqs.push(r.note.seq);
+  }
+  return { pattern: q, seqs, skipped: clip.length - seqs.length };
+}
+
+/** How far "duplicate" puts a copy of the notes: past their span, rounded up to whole beats. */
+export function duplicateOffset(p: Pattern, seqs: number[]): number {
+  const set = new Set(seqs), mine = p.notes.filter((n) => set.has(n.seq));
+  if (!mine.length) return 0;
+  const lo = Math.min(...mine.map((n) => n.tick)), hi = Math.max(...mine.map((n) => n.tick));
+  return Math.ceil((hi - lo + 1) / PPQ) * PPQ;
+}

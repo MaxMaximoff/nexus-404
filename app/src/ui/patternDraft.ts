@@ -15,6 +15,8 @@ export interface Draft {
   redo: Pattern[];
   /** The picked note (its seq). */
   sel: number | null;
+  /** Notes picked together (seq), for moving, copying, deleting several at once; empty for none. */
+  group: number[];
   /** The pad whose velocities show under the grid. */
   active: number | null;
   /** Pads added by hand: their rows show even without notes. */
@@ -39,7 +41,7 @@ function put(d: Draft): void {
 }
 
 export function startDraft(slot: number, base: Pattern, baseSum?: string): void {
-  if (!drafts.value.has(slot)) put({ slot, base, p: base, undo: [], redo: [], sel: null, active: null, rows: [], baseSum });
+  if (!drafts.value.has(slot)) put({ slot, base, p: base, undo: [], redo: [], sel: null, group: [], active: null, rows: [], baseSum });
 }
 
 /** FNV-1a of a file, with its length: tells whether the SP's file is still the one a draft started from. */
@@ -78,7 +80,7 @@ export function restoreDrafts(p1: number, baseOf: (slot: number) => { p: Pattern
   for (const [k, v] of Object.entries(kept)) {
     const slot = Number(k), b = baseOf(slot);
     if (!b || !v?.p?.notes || b.sum !== v.base) { stale.push(slot); continue; }
-    map.set(slot, { slot, base: b.p, p: v.p, undo: [b.p], redo: [], sel: null, active: null, rows: Array.isArray(v.rows) ? v.rows : [], baseSum: v.base });
+    map.set(slot, { slot, base: b.p, p: v.p, undo: [b.p], redo: [], sel: null, group: [], active: null, rows: Array.isArray(v.rows) ? v.rows : [], baseSum: v.base });
   }
   return { map, stale };
 }
@@ -90,7 +92,7 @@ export function dropDraft(slot: number): void {
   drafts.value = m;
 }
 
-type Ui = Partial<Pick<Draft, "sel" | "active" | "rows">>;
+type Ui = Partial<Pick<Draft, "sel" | "group" | "active" | "rows">>;
 
 /** Change what is picked or shown, not the pattern. */
 export function pick(slot: number, ui: Ui): void {
@@ -99,19 +101,21 @@ export function pick(slot: number, ui: Ui): void {
 }
 
 const alive = (p: Pattern, sel: number | null): number | null => (sel !== null && p.notes.some((n) => n.seq === sel) ? sel : null);
+/** The picked notes that still exist in `p`. */
+const aliveAll = (p: Pattern, seqs: number[]): number[] => (seqs.length ? seqs.filter((s) => p.notes.some((n) => n.seq === s)) : seqs);
 
 /** Make an edit as one step of the history. */
 export function edit(slot: number, next: Pattern, ui: Ui = {}): void {
   const d = draftOf(slot);
   if (!d || next === d.p) { if (d) pick(slot, ui); return; }
   const merged = { ...d, ...ui };
-  put({ ...merged, p: next, undo: [...d.undo, d.p].slice(-HISTORY), redo: [], sel: alive(next, merged.sel) });
+  put({ ...merged, p: next, undo: [...d.undo, d.p].slice(-HISTORY), redo: [], sel: alive(next, merged.sel), group: aliveAll(next, merged.group) });
 }
 
 /** Show an edit without recording it: for the frames of a drag. End the gesture with `settle`. */
 export function preview(slot: number, next: Pattern, ui: Ui = {}): void {
   const d = draftOf(slot);
-  if (d) put({ ...d, ...ui, p: next, sel: alive(next, ui.sel === undefined ? d.sel : ui.sel) });
+  if (d) put({ ...d, ...ui, p: next, sel: alive(next, ui.sel === undefined ? d.sel : ui.sel), group: aliveAll(next, ui.group ?? d.group) });
 }
 
 /** End of a gesture that began from `before`: record it as one step if it changed anything. */
@@ -125,14 +129,14 @@ export function undo(slot: number): void {
   const d = draftOf(slot);
   if (!d?.undo.length) return;
   const p = d.undo[d.undo.length - 1];
-  put({ ...d, p, undo: d.undo.slice(0, -1), redo: [...d.redo, d.p], sel: alive(p, d.sel) });
+  put({ ...d, p, undo: d.undo.slice(0, -1), redo: [...d.redo, d.p], sel: alive(p, d.sel), group: aliveAll(p, d.group) });
 }
 
 export function redo(slot: number): void {
   const d = draftOf(slot);
   if (!d?.redo.length) return;
   const p = d.redo[d.redo.length - 1];
-  put({ ...d, p, redo: d.redo.slice(0, -1), undo: [...d.undo, d.p], sel: alive(p, d.sel) });
+  put({ ...d, p, redo: d.redo.slice(0, -1), undo: [...d.undo, d.p], sel: alive(p, d.sel), group: aliveAll(p, d.group) });
 }
 
 /** Back to the pattern as the SP has it (can still be undone). */
