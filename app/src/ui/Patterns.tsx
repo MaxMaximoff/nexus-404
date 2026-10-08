@@ -3,8 +3,11 @@
 // a step. "Править" opens the editor (PatternEditor.tsx) on a draft; nothing is written to the SP.
 
 import { computed, signal } from "@preact/signals";
-import { BANKS, PPQ, decodeAudio, formatBpm, noteSemitones, padName, type Pattern, type PatternNote } from "../sp404";
-import { bouncePattern, bouncing, conn, downloadPatternMidi, log, notice, patterns, patternsLoading, patternsOf, pads, project1, refreshPatterns, selectPad, selectedPad, tempoFor, writeBlockReason } from "./store";
+import { BANKS, PPQ, decodeAudio, formatBpm, noteSemitones, padName, patternFileName, type Pattern, type PatternNote } from "../sp404";
+import {
+  PATTERN_TEST_PROJECT, bouncePattern, bouncing, conn, demo, downloadPatternMidi, log, notice, patternFiles, patternWriting, patterns, patternsLoading, patternsOf, pads, project1,
+  refreshPatterns, reloadVia, selectPad, selectedPad, tempoFor, writeBlockReason, writePatternToOpen, writePatternToTest,
+} from "./store";
 import { IconDownload, IconPencil, IconRefresh, IconWave } from "./icons";
 import { PatternEditor } from "./PatternEditor";
 import { Pager, pagingOf } from "./PatternPager";
@@ -120,14 +123,53 @@ function PatternView() {
         </button>
         <button class="icon-btn insp-dl" onClick={() => downloadPatternMidi(slot)}
           title={`Скачать как MIDI-файл, как экспорт SP: канал = банк, A13 = нота 36${dirty ? "; с вашими правками" : ""}${t ? `; темп ${formatBpm(t.tempoX100)} — тот, что играет сейчас` : ""}`}><IconDownload /> MIDI</button>
+        {patternFiles.value.has(slot) && (
+          <button class="icon-btn insp-dl ptn-bin" title="Скачать файл паттерна, как он лежит на SP (.BIN, без правок)"
+            onClick={() => saveFile(`Proj${project1.value}_${patternFileName(slot)}`, Uint8Array.from(patternFiles.value.get(slot)!.bytes), "application/octet-stream")}><IconDownload /> BIN</button>
+        )}
       </div>
       {editing ? <PatternEditor slot={slot} /> : <StepGrid slot={slot} p={p} rows={rows} />}
+      {!demo.value && conn.value === "ready" && patternFiles.value.has(slot) && <WriteTest slot={slot} dirty={dirty} />}
       {dirty ? (
         <p class="muted small">Bounce играет паттерн таким, как он на SP, поэтому правки в нём не слышны.{!editing && <> <button class="btn btn-ghost ptn-revert" onClick={() => revert(slot)}>сбросить правки</button></>}</p>
       ) : (
         <Bounce slot={slot} p={base} />
       )}
       {!editing && <p class="hint">Строки — pad'ы, которые играет паттерн; клик по названию выбирает pad: в матрице выше видно, в каких ещё паттернах он играет. Столбцы — шаги 1/16, высота заливки ноты — сила удара{pitched ? ", цветные с «+1», «−2» — ноты, транспонированные в TR-REC" : ""}. «Править» открывает редактор.</p>}
+    </div>
+  );
+}
+
+/**
+ * Writing patterns to the SP, as an experiment into the scratch project only: step 1 copies the
+ * SP's own file byte for byte, step 2 writes the edited pattern. Never into the open project.
+ */
+function WriteTest({ slot, dirty }: { slot: number; dirty: boolean }) {
+  const f = patternFiles.value.get(slot)!, busy = patternWriting.value, blocked = writeBlockReason.value, p11 = PATTERN_TEST_PROJECT;
+  const here = project1.value === p11, via = reloadVia();
+  if (here) {
+    // The test project is open: step 3 — write it and let the SP read the project again.
+    const why3 = blocked ?? busy ?? (!f.exact ? "Наша запись не повторяет этот файл SP: правки не пишем" : !dirty ? "Сначала измените паттерн в редакторе" : null);
+    return (
+      <div class="ptn-write">
+        <span class="ptn-vel-label">запись на SP · опыт</span>
+        <button class="btn ptn-mini" disabled={!!why3} onClick={() => void writePatternToOpen(slot)}
+          title={why3 ?? `Шаг 3: записать паттерн ${padName(slot)} с правками в этот проект, затем SP на секунду уйдёт в проект ${via} и вернётся, чтобы перечитать его`}>
+          3 · записать правки на SP
+        </button>
+        <span class="muted small">{busy ? `${busy}…` : `Слот ${padName(slot)} будет заменён. SP ненадолго переключится на проект ${via} и вернётся в ${p11}, чтобы перечитать паттерны.`}</span>
+      </div>
+    );
+  }
+  const why = blocked ?? busy;
+  return (
+    <div class="ptn-write">
+      <span class="ptn-vel-label">запись на SP · опыт</span>
+      <button class="btn ptn-mini" disabled={!!why} onClick={() => void writePatternToTest(slot, false)}
+        title={why ?? `Шаг 1: файл ${padName(slot)}, как его записал SP, байт в байт в слот ${padName(slot)} проекта ${p11} (он будет заменён)`}>1 · копия в проект {p11}</button>
+      <button class="btn ptn-mini" disabled={!!why || !dirty || !f.exact} onClick={() => void writePatternToTest(slot, true)}
+        title={why ?? (!f.exact ? "Наша запись не повторяет этот файл SP: правки не пишем" : !dirty ? "Сначала измените паттерн в редакторе" : `Шаг 2: паттерн с вашими правками в слот ${padName(slot)} проекта ${p11} (он будет заменён)`)}>2 · правки в проект {p11}</button>
+      <span class="muted small">{busy ? `Пишу: ${busy}…` : `Слот ${padName(slot)} проекта ${p11} будет заменён. Потом переключите SP на проект ${p11} и сыграйте паттерн.`}</span>
     </div>
   );
 }

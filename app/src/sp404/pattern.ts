@@ -58,6 +58,8 @@ export interface Pattern {
   beatsPerBar: number;
   /** Records of a kind not known yet (left out of notes and controls). */
   unknown: number;
+  /** Records in the file before the end record: every note's `seq` is below it, so new notes number from here. */
+  records?: number;
 }
 
 export class PatternError extends Error {}
@@ -79,7 +81,7 @@ export function parsePattern(bytes: Uint8Array): Pattern {
   if (end < 0 || end + 2 * REC > bytes.length) throw new PatternError("в файле паттерна нет конца");
   const trailer = bytes.subarray(end + REC, end + 2 * REC);
   const beatsPerBar = BEATS[trailer[4]] ?? 4;
-  return { notes, controls, length: tick, bars: trailer[0] || Math.round(tick / (beatsPerBar * PPQ)), beatsPerBar, unknown };
+  return { notes, controls, length: tick, bars: trailer[0] || Math.round(tick / (beatsPerBar * PPQ)), beatsPerBar, unknown, records: end / REC };
 }
 
 /** Transposition of a note in semitones, or null when it carries no pitch (played live). */
@@ -153,3 +155,123 @@ function varLen(out: number[], v: number): void {
   for (v >>>= 7; v > 0; v >>>= 7) bytes.unshift(0x80 | (v & 0x7f));
   out.push(...bytes);
 }
+
+// ------------------------------------------------------------------ writing a pattern file
+
+const isNoteRecord = (r: Uint8Array): boolean => r[1] >= NOTE_FIRST && r[1] < NOTE_FIRST + NOTES_PER_GROUP && (r[2] & 0x0f) < 2;
+/** A time-only record: the SP pads gaps longer than 255 ticks with `FF 80 00 00 00 00 00 00`. */
+const filler = (delta: number): Uint8Array => Uint8Array.of(delta, 0x80, 0, 0, 0, 0, 0, 0);
+const MAX_DELTA = 0xff;
+
+interface FileParts { recs: { tick: number; seq: number; r: Uint8Array }[]; endTick: number; end: Uint8Array; trailer: Uint8Array; tail: Uint8Array; length: number }
+
+/** The records of a file with the tick each one sits on, its end record, trailer and anything after it. */
+function splitPattern(bytes: Uint8Array): FileParts {
+  const recs: FileParts["recs"] = [];
+  let tick = 0;
+  for (let at = 0; at + REC <= bytes.length; at += REC) {
+    const r = bytes.slice(at, at + REC);
+    if (r[1] === END && at + 2 * REC <= bytes.length)
+      return { recs, endTick: tick, end: r, trailer: bytes.slice(at + REC, at + 2 * REC), tail: bytes.slice(at + 2 * REC), length: tick + r[0] };
+    recs.push({ tick, seq: at / REC, r });
+    tick += r[0];
+  }
+  throw new PatternError("в файле паттерна нет конца");
+}
+
+/** A note's record (byte 0, the delta, is set later). Over `base` it keeps that record's flag bits in byte 2. */
+function noteRecord(n: PatternNote, base?: Uint8Array): Uint8Array {
+  const r = base ? base.slice() : new Uint8Array(REC);
+  const gate = Math.max(0, Math.min(0xffff, Math.round(n.gate)));
+  r[1] = NOTE_FIRST + (n.pad % NOTES_PER_GROUP);
+  r[2] = (base ? base[2] & 0xf0 : 0) | (n.pad >= NOTES_PER_GROUP ? 1 : 0);
+  r[3] = n.pitch & 0xff;
+  r[4] = n.velocity & 0x7f;
+  r[5] = n.offVelocity & 0x7f;
+  r[6] = gate & 0xff;
+  r[7] = gate >> 8;
+  return r;
+}
+
+/**
+ * The file for pattern `p`. Given the file it was read from (`original`), every record that is not a
+ * note stays on its tick — fillers, control changes, the records the SP leaves behind, unknown
+ * ones — and so do the notes that did not move (with their flag bits); moved and new notes go
+ * after the records already on their tick. So an unedited pattern comes out byte for byte, and an
+ * edit changes only what was edited. Gaps over 255 ticks get `FF 80` fillers. The trailer stays,
+ * with the length in bars (bytes 0 and 6) changed only when the bars changed.
+ * Without an original (a diagnostic of how we lay a file out), notes and control changes are
+ * written in tick order with `trailer` (or the one SP files have) and no extra records.
+ */
+export function writePattern(p: Pattern, original?: Uint8Array | null, trailer?: Uint8Array): Uint8Array {
+  const parts = original ? splitPattern(original) : null;
+  const bySeq = new Map(p.notes.map((n) => [n.seq, n]));
+  const out: { tick: number; r: Uint8Array }[] = [];
+  const placed = new Set<number>(), bases = new Map<number, Uint8Array>();
+  if (parts) {
+    for (const { tick, seq, r } of parts.recs) {
+      if (isNoteRecord(r)) {
+        bases.set(seq, r);
+        const n = bySeq.get(seq);
+        if (n && n.tick === tick) { out.push({ tick, r: noteRecord(n, r) }); placed.add(seq); }
+      } else if (tick < p.length) out.push({ tick, r: r.slice() });
+    }
+  } else {
+    for (const c of p.controls) if (c.tick < p.length) out.push({ tick: c.tick, r: Uint8Array.of(0, CONTROL, c.channel & 0x0f, 0, 0, c.controller & 0x7f, c.value & 0x7f, 0) });
+    out.sort((a, b) => a.tick - b.tick);
+  }
+  for (const n of p.notes.filter((x) => !placed.has(x.seq)).sort((a, b) => a.tick - b.tick || a.seq - b.seq)) {
+    if (n.tick < 0 || n.tick >= p.length) throw new PatternError(`нота ${n.pad} на тике ${n.tick} вне паттерна (${p.length})`);
+    let i = out.length;
+    while (i > 0 && out[i - 1].tick > n.tick) i--;
+    out.splice(i, 0, { tick: n.tick, r: noteRecord(n, bases.get(n.seq)) });
+  }
+
+  // The end record: where it was when the length did not change, else as far before the new end as it was before the old one.
+  const lastTick = out.length ? out[out.length - 1].tick : 0;
+  const endDelta = parts ? parts.end[0] : 0;
+  const end = parts ? parts.end.slice() : Uint8Array.of(0, END, 0, 0, 0, 0, 0, 0);
+  const endTick = Math.max(lastTick, parts && parts.length === p.length ? parts.endTick : p.length - Math.min(endDelta, p.length));
+  end[0] = p.length - endTick;
+
+  const recs: Uint8Array[] = [];
+  const all = [...out, { tick: endTick, r: end }];
+  for (let lead = all[0].tick; lead > 0; lead -= Math.min(MAX_DELTA, lead)) recs.push(filler(Math.min(MAX_DELTA, lead)));
+  for (let i = 0; i < all.length - 1; i++) {
+    const gap = all[i + 1].tick - all[i].tick, k = gap > MAX_DELTA ? Math.ceil(gap / MAX_DELTA) - 1 : 0;
+    all[i].r[0] = gap - MAX_DELTA * k;
+    recs.push(all[i].r);
+    for (let j = 0; j < k; j++) recs.push(filler(MAX_DELTA));
+  }
+  recs.push(end);
+
+  const t = parts ? parts.trailer.slice() : trailer ? trailer.slice() : Uint8Array.of(p.bars, 0, 0, 0, Math.max(0, BEATS.indexOf(p.beatsPerBar)), 0x80, p.bars, 1);
+  if (parts) {
+    const was = parts.trailer[0] || Math.round(parts.length / ((BEATS[parts.trailer[4]] ?? 4) * PPQ));
+    if (p.bars !== was) {
+      if (parts.trailer[6] === parts.trailer[0]) t[6] = p.bars;
+      t[0] = p.bars;
+    }
+  }
+  const file = new Uint8Array((recs.length + 1) * REC + (parts?.tail.length ?? 0));
+  recs.forEach((r, i) => file.set(r, i * REC));
+  file.set(t, recs.length * REC);
+  if (parts) file.set(parts.tail, (recs.length + 1) * REC);
+  return file;
+}
+
+/**
+ * How our writer lays out a pattern from scratch next to the SP's own file: the first record that
+ * differs, if any. It tells whether files we make for new patterns look like the SP's.
+ */
+export function rebuildDiff(bytes: Uint8Array): { same: boolean; record: number; sp: string; ours: string } {
+  const p = parsePattern(bytes), ours = writePattern(p, null, splitPattern(bytes).trailer);
+  const n = Math.max(bytes.length, ours.length) / REC;
+  for (let i = 0; i < n; i++) {
+    const a = bytes.subarray(i * REC, i * REC + REC), b = ours.subarray(i * REC, i * REC + REC);
+    if (a.length !== b.length || a.some((x, j) => x !== b[j])) return { same: false, record: i, sp: hexRec(a), ours: hexRec(b) };
+  }
+  return { same: true, record: -1, sp: "", ours: "" };
+}
+
+const hexRec = (r: Uint8Array): string => (r.length ? [...r].map((b) => b.toString(16).padStart(2, "0")).join(" ") : "—");

@@ -1025,4 +1025,5 @@ button, input, select { font: inherit; color: inherit; }
 .ptn-strip-del { margin-left: auto; }
 .ptn-slot { position: relative; }
 .ptn-slot.edited::after { content: ""; position: absolute; top: 2px; right: 2px; width: 4px; height: 4px; border-radius: 50%; background: var(--warn); }
+.ptn-write { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 7px 10px; border-radius: var(--r-ctl); border: 1px dashed var(--warn); }
 

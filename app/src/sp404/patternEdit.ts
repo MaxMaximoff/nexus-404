@@ -22,7 +22,8 @@ export const gateFor = (grid: number): number => Math.max(1, Math.round(grid) - 
 
 export const barTicks = (p: Pattern): number => p.beatsPerBar * PPQ;
 
-const nextSeq = (p: Pattern): number => 1 + Math.max(-1, ...p.notes.map((n) => n.seq), ...p.controls.map((c) => c.seq));
+// Past every record of the file the pattern was read from, so a new note never takes the number of one of them.
+const nextSeq = (p: Pattern): number => 1 + Math.max(-1, (p.records ?? 0) - 1, ...p.notes.map((n) => n.seq), ...p.controls.map((c) => c.seq));
 
 /** Two notes on one pad collide when their spans (the end tick included) touch. */
 const touches = (a: { tick: number; gate: number }, b: { tick: number; gate: number }): boolean =>

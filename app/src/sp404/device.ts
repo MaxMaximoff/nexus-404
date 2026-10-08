@@ -14,6 +14,7 @@ import {
   type DeviceStatus, type PadBlock, type ProjectSettings,
 } from "./control";
 import { SMP_HEADER_LEN, parseSmpHeader } from "./smp";
+import { parsePattern, patternDir, patternPath } from "./pattern";
 import { makeGuard, type Guard, type WritePolicy } from "./guard";
 import type { SP404Transport } from "./transport";
 
@@ -600,6 +601,82 @@ export class SP404Device {
     } finally {
       this.policy.cardRename = null;
     }
+  }
+
+  /**
+   * Write a pattern file into a project that is not open on the SP: the SP reads a project's files
+   * when it is selected. The project must already have its PTN folder.
+   * Framed by FB 00 00 / FC 00 00 like the official app's file writes; the file is read back and
+   * compared byte for byte.
+   */
+  async writePatternFile(project1: number, slot: number, bytes: Uint8Array): Promise<void> {
+    const st = await this.status();
+    if (st.project + 1 === project1) throw new DeviceError(`проект ${project1} сейчас открыт на SP: для него — writePatternAndReload`);
+    await this.putPatternFile(st, project1, slot, bytes);
+  }
+
+  /**
+   * Write a pattern file into the project open on the SP, then make the SP read the project again:
+   * select project `via` and come back (`9A` twice — nothing is written by it). The file is read
+   * once more after the return: `kept` false means the SP put its own copy back over ours.
+   * `onStep` names each stage for the UI.
+   */
+  async writePatternAndReload(project1: number, slot: number, bytes: Uint8Array, via: number, onStep: (what: string) => void = () => {}): Promise<{ kept: boolean }> {
+    if (via === project1) throw new DeviceError("для перезагрузки нужен другой проект");
+    const st = await this.requireCurrent(project1);
+    onStep("пишу файл");
+    await this.putPatternFile(st, project1, slot, bytes);
+    onStep(`переключаю SP на проект ${via}`);
+    await this.selectProject(via);
+    await this.waitProject(via);
+    onStep(`возвращаю SP на проект ${project1}`);
+    await this.selectProject(project1);
+    await this.waitProject(project1);
+    const after = await this.readFile(patternPath(project1, slot));
+    return { kept: !!after && after.length === bytes.length && after.every((b, i) => b === bytes[i]) };
+  }
+
+  /** Until the SP reports project `project1` open, then the moment it needs to load it (report §0). */
+  private async waitProject(project1: number): Promise<void> {
+    const deadline = Date.now() + 15000;
+    while ((await this.status()).project + 1 !== project1) {
+      if (Date.now() > deadline) throw new DeviceError(`SP не перешёл на проект ${project1}`);
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    await new Promise((r) => setTimeout(r, 2500));
+  }
+
+  private async putPatternFile(st: DeviceStatus, project1: number, slot: number, bytes: Uint8Array): Promise<void> {
+    if (!(Number.isInteger(project1) && project1 >= 1 && project1 <= PROJECT_COUNT)) throw new DeviceError(`нет проекта ${project1}`);
+    if (!(Number.isInteger(slot) && slot >= 0 && slot < PAD_COUNT)) throw new DeviceError(`нет слота паттерна ${slot}`);
+    parsePattern(bytes); // refuses anything that is not a whole pattern file
+    if (bytes.length > 0x10000) throw new DeviceError(`файл паттерна слишком велик: ${bytes.length} байт`);
+    if (st.workingMode !== 0) throw new DeviceError("SP показывает меню — закройте его на устройстве");
+    const dir = patternDir(project1), path = patternPath(project1, slot), wire = remotePath(path);
+    const parent = dir.slice(0, dir.lastIndexOf("/"));
+    if (!(await this.listDir(parent)).some((e) => e.dir && e.name.toUpperCase() === "PTN"))
+      throw new DeviceError(`в проекте ${project1} нет папки PTN: запишите в нём на SP любой паттерн, и папка появится`);
+    this.policy.patternWrite = wire;
+    try {
+      await this.fire([0xfb, 0x00, 0x00]); // begin (no reply)
+      try {
+        const h = await this.statusCall(FileReq.open(path, O_CREAT_TRUNC_RDWR), `open ${wire}`);
+        this.policy.writableHandles.add(h);
+        try {
+          await this.writeData(h, bytes);
+        } finally {
+          await this.statusCall(FileReq.close(h), "close", CLOSE_AFTER_WRITE);
+          this.policy.writableHandles.delete(h);
+        }
+      } finally {
+        await this.fire([0xfc, 0x00, 0x00]); // end (no reply)
+      }
+    } finally {
+      this.policy.patternWrite = null;
+    }
+    const back = await this.readFile(path);
+    if (!back || back.length !== bytes.length || back.some((b, i) => b !== bytes[i]))
+      throw new DeviceError(`проверка: в ${wire} записалось не то (${back?.length ?? "нет файла"} байт из ${bytes.length})`);
   }
 
   /** Whole file, or its first `limit` bytes. `null` when it does not exist. */

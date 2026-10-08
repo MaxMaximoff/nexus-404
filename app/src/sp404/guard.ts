@@ -10,12 +10,17 @@
 // a folder and renaming / moving likewise only inside IMPORT/, one path at a time.
 // Rendering a pattern (Bounce): only for the slot being rendered, and only its begin / bounce / end
 // and our answers to the WAV the SP writes back to us; the SP's own storage is not touched.
+// Writing a pattern: only the one PTN/PTNnnnnn.BIN file being written (create/truncate, write, close),
+// framed by FB 00 00 / FC 00 00 as the official app frames its file writes.
 // Init (92), overwrite (95 mode 0 onto a sample), renames, mkdir/rmdir/rename on the card can never
 // leave the page.
 
 import { CH_CONTROL, CH_FILE, hex } from "./frame";
 import { GLOBAL_PARAM_RANGE, PAD_PARAM_RANGE, PAD_WRITE_LEN, PAD_COUNT, PROJECT_COUNT } from "./control";
 import { HOST_ACK, describeFileRequest, isCardImportFile, O_CREAT_TRUNC_RDWR, O_RDONLY, Op, remotePath, samplePath } from "./fileApi";
+
+/** A pattern file of a project, as a wire path: nothing else may be written through `patternWrite`. */
+export const isPatternFile = (wire: string): boolean => /\/ROLAND\/SP-404MKII\/PROJECT_\d{2}\/PTN\/PTN\d{5}\.BIN$/.test(wire) && !wire.split("/").some((s) => s === "." || s === "..");
 
 export interface WritePolicy {
   /** 1-based project the current import writes into; set by the device for the length of one import. */
@@ -39,6 +44,8 @@ export interface WritePolicy {
    * for begin / end / bounce, and our answers to its writes. The SP writes nothing of its own.
    */
   renderPattern?: number | null;
+  /** Wire path of the one pattern file (`…/PROJECT_nn/PTN/PTNnnnnn.BIN`) being written now. */
+  patternWrite?: string | null;
 }
 
 export type Guard = (channel: number, payload: Uint8Array) => void;
@@ -82,6 +89,7 @@ export function makeGuard(policy: WritePolicy): Guard {
         ((p[1] === 0x00 && p[5] < 10) || (p[1] === 0x01 && p[5] < 16))) return;
       const rendering = policy.renderPattern !== null && policy.renderPattern !== undefined;
       if (rendering && c === 0xfb && p.length === 3 && p[1] === 0x00 && p[2] === 0x00) return; // render begin
+      if (policy.patternWrite && c === 0xfb && p.length === 3 && p[1] === 0x00 && p[2] === 0x00) return; // pattern write begin
       if (rendering && c === 0xb8 && p.length === 7 && pad === policy.renderPattern && p[5] === 0 && p[6] === 0 && RENDER_OPS.has(p[3] | (p[4] << 8))) return;
       const importing = policy.importPad !== null && pad === policy.importPad;
       if (c === 0xfb && p[1] === 0xa0 && p[2] === 0x00 && policy.importPad !== null) return; // import begin
@@ -105,6 +113,11 @@ export function makeGuard(policy: WritePolicy): Guard {
       if (mv && r.op === Op.Rename && isCardImportFile(mv.from) && isCardImportFile(mv.to) && r.path === mv.from && r.to === mv.to) return;
       if (policy.cardWrite && isCardImportFile(policy.cardWrite)) {
         if (r.op === Op.Open && r.first.i32 === O_CREAT_TRUNC_RDWR && r.path === policy.cardWrite) return;
+        if ((r.op === Op.Write || r.op === Op.Seek) && policy.writableHandles.has(r.first.i32)) return;
+      }
+      const ptn = policy.patternWrite;
+      if (ptn && isPatternFile(ptn)) {
+        if (r.op === Op.Open && r.first.i32 === O_CREAT_TRUNC_RDWR && r.path === ptn) return;
         if ((r.op === Op.Write || r.op === Op.Seek) && policy.writableHandles.has(r.first.i32)) return;
       }
       if (policy.importPad !== null && policy.importProject !== null) {

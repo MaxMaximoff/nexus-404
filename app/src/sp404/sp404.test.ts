@@ -104,6 +104,38 @@ describe("guard while rendering a pattern", () => {
   });
 });
 
+describe("guard while writing a pattern", () => {
+  const PTN = "ROLAND/SP-404MKII/PROJECT_11/PTN/PTN00001.BIN";
+  const policy: Parameters<typeof makeGuard>[0] = { importProject: null, importPad: null, writableHandles: new Set(), patternWrite: null };
+  const g = makeGuard(policy);
+  it("blocks everything when no pattern is being written", () => {
+    expect(() => g(CH_CONTROL, Uint8Array.from([0xfb, 0, 0]))).toThrow();
+    expect(() => g(CH_FILE, FileReq.open(PTN, O_CREAT_TRUNC_RDWR))).toThrow();
+  });
+  it("lets through only the one pattern file: create, write to its handle, framing", () => {
+    policy.patternWrite = remotePath(PTN);
+    policy.writableHandles.add(7);
+    expect(() => g(CH_CONTROL, Uint8Array.from([0xfb, 0, 0]))).not.toThrow();
+    expect(() => g(CH_CONTROL, Uint8Array.from([0xfc, 0, 0]))).not.toThrow();
+    expect(() => g(CH_FILE, FileReq.open(PTN, O_CREAT_TRUNC_RDWR))).not.toThrow();
+    expect(() => g(CH_FILE, FileReq.write(7, new Uint8Array(8), true))).not.toThrow();
+    expect(() => g(CH_FILE, FileReq.open("ROLAND/SP-404MKII/PROJECT_11/PTN/PTN00002.BIN", O_CREAT_TRUNC_RDWR))).toThrow(); // another slot
+    expect(() => g(CH_FILE, FileReq.open("ROLAND/SP-404MKII/PROJECT_11/PADCONF.BIN", O_CREAT_TRUNC_RDWR))).toThrow();
+    expect(() => g(CH_FILE, FileReq.open("ROLAND/SP-404MKII/PROJECT_11/PTN/PATTERNCHAIN_00.CHN", O_CREAT_TRUNC_RDWR))).toThrow();
+    expect(() => g(CH_FILE, FileReq.unlink(PTN))).toThrow(); // no deleting
+    expect(() => g(CH_FILE, FileReq.write(8, new Uint8Array(8), true))).toThrow(); // a handle we did not open
+    expect(() => g(CH_CONTROL, Uint8Array.from([0xb1, 10, 0]))).toThrow(); // project reload: not decoded, never
+    expect(() => g(CH_CONTROL, Uint8Array.from([0x92, 0, 0, 3, 0, 0, 0]))).toThrow(); // Init, never
+    policy.writableHandles.delete(7);
+    policy.patternWrite = null;
+  });
+  it("refuses a policy path that is not a pattern file", () => {
+    policy.patternWrite = remotePath("ROLAND/SP-404MKII/PROJECT_11/PADCONF.BIN");
+    expect(() => g(CH_FILE, FileReq.open("ROLAND/SP-404MKII/PROJECT_11/PADCONF.BIN", O_CREAT_TRUNC_RDWR))).toThrow();
+    policy.patternWrite = null;
+  });
+});
+
 describe("guard", () => {
   const policy = { importProject: 4, importPad: 33, writableHandles: new Set([100]) };
   const g = makeGuard(policy);
