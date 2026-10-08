@@ -79,6 +79,31 @@ describe("pad block", () => {
   });
 });
 
+describe("guard while rendering a pattern", () => {
+  const policy: Parameters<typeof makeGuard>[0] = { importProject: null, importPad: null, writableHandles: new Set(), renderPattern: null };
+  const g = makeGuard(policy);
+  const b8 = (slot: number, op: number) => Uint8Array.from([0xb8, slot & 0xff, slot >> 8, op & 0xff, op >> 8, 0, 0]);
+  const ack = Uint8Array.from([0xf0, 0x41, 0x7a, 0x7c, 0x00, 0xf7]);
+  const st = Uint8Array.from([0xf0, 0x41, 0x7a, 0x7a, ...septEnc(20480), ...septEnc(-1), 0xf7]);
+  it("blocks render traffic when nothing is rendered", () => {
+    policy.renderPattern = null;
+    for (const p of [b8(0, 1003), Uint8Array.from([0xfb, 0, 0])]) expect(() => g(CH_CONTROL, p)).toThrow();
+    for (const p of [ack, st]) expect(() => g(CH_FILE, p)).toThrow();
+  });
+  it("lets through only the rendered slot's begin, bounce and end, and our answers", () => {
+    policy.renderPattern = 97;
+    for (const op of [1000, 1003, 1001]) expect(() => g(CH_CONTROL, b8(97, op))).not.toThrow();
+    expect(() => g(CH_CONTROL, Uint8Array.from([0xfb, 0, 0]))).not.toThrow();
+    for (const p of [ack, st]) expect(() => g(CH_FILE, p)).not.toThrow();
+    expect(() => g(CH_CONTROL, b8(96, 1003))).toThrow(); // another slot
+    expect(() => g(CH_CONTROL, b8(97, 5))).toThrow(); // MULTIPAD pad: not yet
+    expect(() => g(CH_CONTROL, Uint8Array.from([0xb8, 97, 0, 0xeb, 0x03, 1, 0]))).toThrow(); // another handle
+    expect(() => g(CH_CONTROL, Uint8Array.from([0x92, 0, 0, 4, 0, 0, 0]))).toThrow(); // Init, never
+    expect(() => g(CH_FILE, FileReq.open("ROLAND/SP-404MKII/PROJECT_04/PTN/PTN00098.BIN", O_CREAT_TRUNC_RDWR))).toThrow(); // no writes on the SP
+    policy.renderPattern = null;
+  });
+});
+
 describe("guard", () => {
   const policy = { importProject: 4, importPad: 33, writableHandles: new Set([100]) };
   const g = makeGuard(policy);
@@ -219,6 +244,10 @@ describe("device against a scripted SP", () => {
     let listing: string[] = [];
     let closedirs = 0;
     let writes = 0;
+    // Render (Bounce): the WAV the SP will write back, its pending requests, our answers to them.
+    let renderWav: Uint8Array | null = null, renderOp = 0, renderSlot = [0, 0];
+    let renderQueue: ({ write: Uint8Array } | { seek: number })[] = [];
+    let hostAnswers = 0;
     const t: SP404Transport = {
       async open() {}, async close() {}, onBytes: () => {}, onLost: () => {},
       async write(bytes) {
@@ -261,6 +290,20 @@ describe("device against a scripted SP", () => {
           reply(ch, [0x1a, 3]);
         }
         else if (p[0] === 0x9d) reply(ch, [0x1d, 0]);
+        else if (p[0] === 0xb8) {
+          renderOp = p[3] | (p[4] << 8);
+          renderSlot = [p[1], p[2]];
+          reply(ch, [0x38, p[1], p[2], p[3], p[4]]);
+          if (renderOp === 1003 && renderWav) {
+            // Header first, then the samples, then back for fmt/data sizes: as the unit did.
+            const w = renderWav, q: typeof renderQueue = [{ write: w.subarray(0, 12) }, { seek: 44 }];
+            for (let o = 44; o < w.length; o += 20480) q.push({ write: w.subarray(o, Math.min(o + 20480, w.length)) });
+            q.push({ seek: 12 }, { write: w.subarray(12, 44) });
+            renderQueue = q;
+            for (const v of [30, 70, 104]) reply(ch, [0x01, 0x86, 0, 0xff, 0xff, v, 0, 0, 0]);
+            nextRender();
+          }
+        }
         else if (p[0] === 0x1e) { blocks.set(p[1], Uint8Array.from([...p, ...new Uint8Array(128)])); reply(ch, [0x1e, 0]); }
         else if (p[0] === 0x9f) reply(ch, [0x1f, p[1], p[2], 0]);
         else if (p[0] === 0x01) {
@@ -278,6 +321,8 @@ describe("device against a scripted SP", () => {
         }
         return;
       }
+      if (p[3] === 0x7c) return; // our ack to a render write
+      if (p[3] === 0x7a) { hostAnswers++; return nextRender(); } // our status to it: the next request
       const op = p[4], first = septDec(p, 5).i32, second = septDec(p, 10);
       const path = new TextDecoder().decode(p.subarray(15, p.length - 2));
       if (op === 0x0c) { listing = [".", "..", ...(dirs.get(path) ?? [])]; status(77); return; }
@@ -342,12 +387,21 @@ describe("device against a scripted SP", () => {
         reply(CH_FILE, [0xf0, 0x41, 0x7a, 0x02, ...septEnc(first), ...septEnc(d.length, 0x40), ...d, 0xf7]);
       }
     }
+    function nextRender() {
+      const r = renderQueue.shift();
+      if (!r) return void (renderWav && reply(CH_CONTROL, [0x39, ...renderSlot, renderOp & 0xff, renderOp >> 8, 0, 0, 0, 0]));
+      if ("write" in r) reply(CH_FILE, [0xf0, 0x41, 0x7a, 0x03, 0x06, ...septEnc(0), ...septEnc(r.write.length, 0x40), ...r.write, 0xf7]);
+      else reply(CH_FILE, [0xf0, 0x41, 0x7a, 0x03, 0x07, ...septEnc(0), ...septEnc(r.seek), 0, 0xf7]);
+    }
     const setField = (pad: number, field: number, v: number) => {
       const b = block(pad);
       new DataView(b.buffer).setUint32(3 + field * 4, v, true);
       blocks.set(pad, b);
     };
-    return { t, files, sent, params, setField, globals, protectedBanks, dirs, closedirs: () => closedirs, writes: () => writes };
+    return {
+      t, files, sent, params, setField, globals, protectedBanks, dirs, closedirs: () => closedirs, writes: () => writes,
+      setRenderWav: (w: Uint8Array) => { renderWav = w; }, hostAnswers: () => hostAnswers,
+    };
   }
 
   it("imports into an empty pad and the device ends up with the exact SMP and block", async () => {
@@ -370,6 +424,27 @@ describe("device against a scripted SP", () => {
     const before = sp.sent.length;
     await expect(dev.exclusive((d) => d.importSmp(4, 33, buildSmp(new Int16Array(4), 2), "b"))).rejects.toThrow(/занят/);
     expect(sp.sent.slice(before).map((s) => s.slice(0, 4))).toEqual(["5:fe", "5:9e"]);
+  });
+  it("bounces a pattern: serves the SP's writes and seeks, gets its WAV byte for byte", async () => {
+    const sp = fakeSp();
+    const pcm = new Int16Array(48000 * 2).map((_, i) => (i * 31) % 20000 - 10000); // 1 s stereo: 10 chunks
+    const wav = new Uint8Array(encodeWav(pcm, 2));
+    sp.setRenderWav(wav);
+    const dev = new SP404Device(sp.t);
+    const progress: number[] = [];
+    const out = await dev.exclusive((d) => d.bouncePattern(4, 97, (f) => progress.push(f)));
+    expect(hex(out)).toBe(hex(wav));
+    expect(progress).toEqual([0.3, 0.7, 1, 1]);
+    const ctl = sp.sent.filter((s) => s.startsWith("5:") && !s.startsWith("5:fe"));
+    expect(ctl).toEqual(["5:fb0000", "5:b86100e803", "5:b86100eb03", "5:b86100e903", "5:fc0000"]); // begin, 1000, 1003, 1001, end
+    expect(sp.hostAnswers()).toBe(2 + Math.ceil((wav.length - 44) / 20480) + 2);
+    expect(dev.policy.renderPattern).toBeNull();
+  });
+  it("refuses a bounce on a project that is not current, sending nothing but the status poll", async () => {
+    const sp = fakeSp();
+    const dev = new SP404Device(sp.t);
+    await expect(dev.exclusive((d) => d.bouncePattern(2, 0))).rejects.toThrow(/проект 4/);
+    expect(sp.sent).toEqual(["5:fe6600"]);
   });
   it("refuses a project that is not current", async () => {
     const dev = new SP404Device(fakeSp().t);

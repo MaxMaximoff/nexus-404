@@ -3,7 +3,7 @@
 
 import { CH_CONTROL, CH_FILE, FrameDecoder, encodeLong, encodeShort, hex, type Message } from "./frame";
 import {
-  BULK_READ, CARD, CHUNK, FileReq, isCardImportFile, remotePath, O_CREAT_TRUNC_RDWR, O_RDONLY, ROOT, WRITE_BATCH, parseFileReply, samplePath,
+  BULK_READ, CARD, CHUNK, FileReq, HOST_ACK, hostStatus, parseDeviceFileRequest, isCardImportFile, remotePath, O_CREAT_TRUNC_RDWR, O_RDONLY, ROOT, WRITE_BATCH, parseFileReply, samplePath,
 } from "./fileApi";
 import {
   BANKS, BPM_MAX_X100, BPM_MIN_X100, FLAG_ONE_SHOT, GLOBAL, PARAM_BANK_TEMPO, PARAM_PROJECT_TEMPO, PARAM_TEMPO_SELECT, LEVEL_MAX, PAD_COUNT, PROJECT_COUNT, PARAM_BPM, PARAM_CLEARED_BY_ONE_SHOT, PARAM_END,
@@ -28,6 +28,13 @@ const MAX_CARD_DEPTH = 16;
 const S_IFMT = 0xf000, S_IFDIR = 0x4000; // stat mode: 0x41FF directory, 0x81FF file
 
 const TIMEOUT = 5000;
+/** Status polls while the SP renders: without them it pauses after ~3.5 s (SparkyMK2). */
+const RENDER_POLL = 500;
+/** Longest the SP may stay silent while rendering (it reports progress meanwhile). */
+const RENDER_IDLE = 30000;
+const RENDER_BEGIN = 1000, RENDER_END = 1001, RENDER_BOUNCE = 1003;
+/** Global parameter the SP echoes with the progress of a long operation, 0..~104. */
+const PARAM_PROGRESS = 0x86;
 const CLOSE_AFTER_WRITE = 20000;
 
 export class DeviceError extends Error {}
@@ -620,6 +627,83 @@ export class SP404Device {
     return concat(parts).subarray(0, total);
   }
 
+  /**
+   * Bounce: the SP plays pattern `slot` of the current project in real time and writes the result
+   * to us as a WAV (SparkyMK2 spec 04-patterns.md; their client checked it on the unit). Nothing is
+   * written on the SP. `onProgress` gets 0..1 from the SP's progress reports.
+   */
+  async bouncePattern(project1: number, slot: number, onProgress: (f: number) => void = () => {}): Promise<Uint8Array> {
+    if (!(Number.isInteger(slot) && slot >= 0 && slot < PAD_COUNT)) throw new DeviceError(`нет слота паттерна ${slot}`);
+    await this.requireCurrent(project1);
+    const id = [slot & 0xff, slot >> 8];
+    const control = (op: number) => this.ctl([0xb8, ...id, op & 0xff, op >> 8, 0, 0],
+      (q) => q[0] === 0x38 && q[1] === id[0] && q[2] === id[1] && (q[3] | (q[4] << 8)) === op, `рендер ${op}`);
+    const file = new HostFile();
+    this.policy.renderPattern = slot;
+    try {
+      await this.fire([0xfb, 0x00, 0x00]); // begin (no reply)
+      try {
+        await control(RENDER_BEGIN);
+        try {
+          await this.serveRender(id, RENDER_BOUNCE, file, onProgress);
+        } finally {
+          await control(RENDER_END).catch((e) => this.log("warn", `конец рендера: ${(e as Error).message}`));
+        }
+      } finally {
+        await this.fire([0xfc, 0x00, 0x00]); // end (no reply)
+      }
+    } finally {
+      this.policy.renderPattern = null;
+    }
+    return file.bytes();
+  }
+
+  /** Start render `op` and answer the SP's writes into `file` until it reports the result. */
+  private async serveRender(id: number[], op: number, file: HostFile, onProgress: (f: number) => void): Promise<void> {
+    const isStatus = (m: Message) => m.channel === CH_CONTROL && m.payload[0] === 0x7e;
+    this.inbox.length = 0;
+    await this.send(CH_CONTROL, Uint8Array.from([0xb8, ...id, op & 0xff, op >> 8, 0, 0]), true);
+    let polled = Date.now(), heard = Date.now();
+    const prevQuiet = this.quiet;
+    this.quiet = true; // a bounce is ~100 frames each way
+    try {
+      for (;;) {
+        if (Date.now() - polled >= RENDER_POLL) {
+          this.inbox = this.inbox.filter((m) => !isStatus(m));
+          await this.fire([0xfe, 0x66, 0x00]);
+          polled = Date.now();
+        }
+        let m: Message;
+        try {
+          m = await this.waitFor((x) => !isStatus(x), RENDER_POLL, "рендер");
+        } catch {
+          if (Date.now() - heard > RENDER_IDLE) throw new DeviceError(`SP молчит ${RENDER_IDLE / 1000} s во время рендера`);
+          continue;
+        }
+        heard = Date.now();
+        const p = m.payload;
+        if (m.channel === CH_FILE && !m.short) {
+          const r = parseDeviceFileRequest(p);
+          if (!r) { this.log("warn", `рендер: непонятный запрос файла ${hex(p, 16)}`); continue; }
+          const result = r.op === "write" ? file.write(r.data) : file.seek(r.offset);
+          await this.send(CH_FILE, Uint8Array.from(HOST_ACK), true);
+          await this.send(CH_FILE, hostStatus(result), false);
+          continue;
+        }
+        if (m.channel === CH_CONTROL && p[0] === 0x39 && p.length >= 9 && p[1] === id[0] && p[2] === id[1] && (p[3] | (p[4] << 8)) === op) {
+          const code = p[7] | (p[8] << 8);
+          if (code !== 0) throw new DeviceError(`SP не смог отрендерить паттерн (код ${code})`);
+          onProgress(1);
+          return;
+        }
+        if (m.channel === CH_CONTROL && p[0] === 0x01 && p[1] === PARAM_PROGRESS && p.length >= 9)
+          onProgress(Math.min(1, new DataView(p.buffer, p.byteOffset).getInt32(5, true) / 100));
+      }
+    } finally {
+      this.quiet = prevQuiet;
+    }
+  }
+
   /** Write at the current position: 15 × 20 KB per batch, the device acks each batch's byte count. */
   private async writeData(handle: number, data: Uint8Array, onProgress: Progress = () => {}): Promise<void> {
     let done = 0;
@@ -744,6 +828,35 @@ export class SP404Device {
 
 /** Parameters with no side effects on others, set through setPadParam. */
 const PLAIN_PARAMS = new Set([PARAM_MUTE_GROUP, PARAM_PLAY_MODE, PARAM_BALANCE, PARAM_PAD_LINK, PARAM_BUS_FX, PARAM_ROLL, PARAM_ATTACK, PARAM_HOLD, PARAM_RELEASE]);
+
+/** A file of ours the SP writes into while rendering: grows on write, seek may go anywhere. */
+class HostFile {
+  private buf = new Uint8Array(1 << 20);
+  private size = 0;
+  private pos = 0;
+
+  write(data: Uint8Array): number {
+    const end = this.pos + data.length;
+    if (end > this.buf.length) {
+      const n = new Uint8Array(Math.max(end, this.buf.length * 2));
+      n.set(this.buf.subarray(0, this.size));
+      this.buf = n;
+    }
+    this.buf.set(data, this.pos);
+    this.pos = end;
+    this.size = Math.max(this.size, end);
+    return data.length;
+  }
+
+  seek(offset: number): number {
+    this.pos = offset;
+    return offset;
+  }
+
+  bytes(): Uint8Array {
+    return this.buf.slice(0, this.size);
+  }
+}
 
 function checkBpm(x100: number): void {
   if (!(Number.isInteger(x100) && x100 >= BPM_MIN_X100 && x100 <= BPM_MAX_X100)) throw new DeviceError("BPM должен быть от 40 до 200");

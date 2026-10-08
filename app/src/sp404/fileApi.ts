@@ -121,6 +121,25 @@ export function parseFileReply(p: Uint8Array): FileReply {
 
 const RENAME_SLOT = 200;
 
+/**
+ * The other direction, while the SP renders a pattern (Bounce, MULTIPAD): it writes the WAV into a
+ * handle of ours with `03 06 h len data` and `03 07 h offset`; each gets two answers from us,
+ * HOST_ACK and hostStatus (bytes written / new offset). SparkyMK2 spec 04-patterns.md.
+ */
+export type DeviceFileRequest = { op: "write"; handle: number; data: Uint8Array } | { op: "seek"; handle: number; offset: number };
+
+export function parseDeviceFileRequest(p: Uint8Array): DeviceFileRequest | null {
+  if (p.length < 15 || p[0] !== 0xf0 || p[1] !== 0x41 || p[2] !== 0x7a || p[3] !== 0x03 || p[p.length - 1] !== 0xf7) return null;
+  const handle = septDec(p, 5).i32, arg = septDec(p, 10).u32;
+  if (p[4] === Op.Write) return arg <= p.length - 16 ? { op: "write", handle, data: p.slice(15, 15 + arg) } : null;
+  if (p[4] === Op.Seek) return { op: "seek", handle, offset: arg };
+  return null;
+}
+
+export const HOST_ACK: readonly number[] = [0xf0, 0x41, 0x7a, 0x7c, 0x00, 0xf7];
+export const hostStatus = (result: number): Uint8Array => Uint8Array.from([0xf0, 0x41, 0x7a, 0x7a, ...septEnc(result), ...septEnc(-1), 0xf7]);
+
+
 /** The parts of a host → device file request a guard needs (`to`: the second path of a rename). */
 export function describeFileRequest(p: Uint8Array): { op: number; first: Septets; path: string | null; to: string | null } {
   const op = p[4];

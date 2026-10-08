@@ -3,9 +3,12 @@
 // Notes off the grid (played live) are drawn where they are, not snapped to a step.
 
 import { computed, signal } from "@preact/signals";
-import { BANKS, PPQ, formatBpm, noteSemitones, padName, type Pattern, type PatternNote } from "../sp404";
-import { conn, downloadPatternMidi, patterns, patternsLoading, patternsOf, pads, refreshPatterns, selectPad, selectedPad, tempoFor } from "./store";
-import { IconDownload, IconRefresh } from "./icons";
+import { BANKS, PPQ, decodeAudio, formatBpm, noteSemitones, padName, type Pattern, type PatternNote } from "../sp404";
+import { bouncePattern, bouncing, conn, downloadPatternMidi, log, notice, patterns, patternsLoading, patternsOf, pads, project1, refreshPatterns, selectPad, selectedPad, tempoFor, writeBlockReason } from "./store";
+import { IconDownload, IconRefresh, IconWave } from "./icons";
+import { TakeCard } from "./Recorder";
+import { recTake, setTake } from "./rec";
+import { saveFile } from "./download";
 
 const VIEW_KEY = "nexus404.main.view";
 type View = "pads" | "patterns";
@@ -104,7 +107,54 @@ function PatternView() {
           title={`Скачать как MIDI-файл, как экспорт SP: канал = банк, A13 = нота 36${t ? `; темп ${formatBpm(t.tempoX100)} — тот, что играет сейчас` : ""}`}><IconDownload /> MIDI</button>
       </div>
       <StepGrid p={p} rows={rows} />
+      <Bounce slot={slot} p={p} />
       <p class="hint">Строки — pad'ы, которые играет паттерн; клик по названию открывает pad справа. Столбцы — шаги 1/16, яркость ноты — сила удара{pitched ? ", зелёные с «+1», «−2» — ноты, транспонированные в TR-REC" : ""}. Паттерн пока только для просмотра.</p>
+    </div>
+  );
+}
+
+/** The last bounce: its WAV as the SP wrote it, for saving to the computer. */
+const lastBounce = signal<{ slot: number; project1: number; wav: Uint8Array<ArrayBuffer> } | null>(null);
+
+/**
+ * Bounce: the SP plays the pattern in real time and sends the WAV back. It becomes the take
+ * (listen, put on an empty pad with the tempo it played at) and can be saved as a file.
+ */
+function Bounce({ slot, p }: { slot: number; p: Pattern }) {
+  const b = bouncing.value, t = tempoFor(slot >> 4), blocked = writeBlockReason.value;
+  const secs = t ? (p.length / PPQ) * (6000 / t.tempoX100) : null;
+  const last = lastBounce.value, mine = last?.slot === slot && last.project1 === project1.value;
+  const take = recTake.value;
+  const run = async () => {
+    const wav = await bouncePattern(slot);
+    if (!wav) return;
+    const bytes = Uint8Array.from(wav);
+    lastBounce.value = { slot, project1: project1.value, wav: bytes };
+    try {
+      const a = await decodeAudio(new Blob([bytes]));
+      setTake(a.samples, a.channels, `ptn_${padName(slot)}_bounce`, { bpmX100: t?.tempoX100 ?? null });
+      if (secs) log("info", `Bounce ${padName(slot)}: ${(a.frames / 48000).toFixed(2)} s при ожидаемых ${secs.toFixed(2)} s (${a.note})`);
+    } catch (e) {
+      notice.value = { kind: "error", text: `Bounce ${padName(slot)}: WAV не разобрался — ${(e as Error).message}. Его можно скачать и посмотреть` };
+    }
+  };
+  return (
+    <div class="ptn-bounce">
+      <div class="ptn-bounce-row">
+        <button class="btn" disabled={!!blocked || !!b} onClick={() => void run()}
+          title={blocked ?? `SP сыграет паттерн в реальном времени${secs ? ` (~${Math.ceil(secs)} s)` : ""} и пришлёт WAV. На SP ничего не записывается`}>
+          <IconWave /> Bounce в WAV
+        </button>
+        {b?.slot === slot ? (
+          <span class="ptn-bounce-prog"><span class="bar"><span style={{ width: `${Math.round(b.progress * 100)}%` }} /></span>SP играет паттерн… {Math.round(b.progress * 100)} %</span>
+        ) : mine ? (
+          <button class="icon-btn insp-dl" onClick={() => saveFile(`Proj${last.project1}_${padName(slot)}_BOUNCE.WAV`, last.wav, "audio/wav")}
+            title="Сохранить WAV, как его прислал SP"><IconDownload /> WAV</button>
+        ) : (
+          <span class="muted small">SP сам сыграет паттерн и пришлёт звук{secs ? ` — около ${Math.ceil(secs)} s` : ""}</span>
+        )}
+      </div>
+      {mine && take?.name === `ptn_${padName(slot)}_bounce` && <TakeCard />}
     </div>
   );
 }

@@ -316,6 +316,32 @@ export function downloadPatternMidi(slot: number): void {
   log("info", `Паттерн ${padName(slot)} → ${name} (${formatBpm(t.tempoX100)} BPM ${t.of})`);
 }
 
+/** A bounce in progress: the slot and the SP's progress 0..1. */
+export const bouncing = signal<{ slot: number; progress: number } | null>(null);
+
+/**
+ * Bounce a pattern: the SP plays it in real time and sends the WAV back (nothing is written on
+ * the SP). Returns the WAV, or null when it failed (reported).
+ */
+export async function bouncePattern(slot: number): Promise<Uint8Array | null> {
+  const d = device;
+  const blocked = writeBlockReason.value ?? (importing.value ? "Идёт импорт — дождитесь конца" : bouncing.value ? "Уже идёт Bounce" : null);
+  if (!d) return null;
+  if (blocked) return void (notice.value = { kind: "error", text: blocked }), null;
+  bouncing.value = { slot, progress: 0 };
+  const t0 = performance.now();
+  try {
+    const wav = await d.exclusive((x) => x.bouncePattern(project1.value, slot, (f) => (bouncing.value = { slot, progress: f })));
+    log("info", `Bounce ${padName(slot)}: ${(wav.length / 1048576).toFixed(2)} MB за ${((performance.now() - t0) / 1000).toFixed(1)} s`);
+    return wav;
+  } catch (e) {
+    fail(e, `Bounce ${padName(slot)}`);
+    return null;
+  } finally {
+    bouncing.value = null;
+  }
+}
+
 /**
  * After a move or swap: read the patterns again and say what became of those that played the
  * moved pads (whether the SP rewrites them is not known yet; this shows it).

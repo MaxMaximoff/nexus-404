@@ -8,12 +8,14 @@
 // On the SD card: reading anywhere; writing only the one new file going into IMPORT/, and deleting
 // only the one file or folder inside IMPORT/ the user confirmed (never IMPORT itself); creating
 // a folder and renaming / moving likewise only inside IMPORT/, one path at a time.
+// Rendering a pattern (Bounce): only for the slot being rendered, and only its begin / bounce / end
+// and our answers to the WAV the SP writes back to us; the SP's own storage is not touched.
 // Init (92), overwrite (95 mode 0 onto a sample), renames, mkdir/rmdir/rename on the card can never
 // leave the page.
 
 import { CH_CONTROL, CH_FILE, hex } from "./frame";
 import { GLOBAL_PARAM_RANGE, PAD_PARAM_RANGE, PAD_WRITE_LEN, PAD_COUNT, PROJECT_COUNT } from "./control";
-import { describeFileRequest, isCardImportFile, O_CREAT_TRUNC_RDWR, O_RDONLY, Op, remotePath, samplePath } from "./fileApi";
+import { HOST_ACK, describeFileRequest, isCardImportFile, O_CREAT_TRUNC_RDWR, O_RDONLY, Op, remotePath, samplePath } from "./fileApi";
 
 export interface WritePolicy {
   /** 1-based project the current import writes into; set by the device for the length of one import. */
@@ -32,11 +34,18 @@ export interface WritePolicy {
   cardMkdir?: string | null;
   /** The one rename / move being done inside the card's IMPORT/ (wire paths). */
   cardRename?: { from: string; to: string } | null;
+  /**
+   * Pattern slot the SP is rendering into a file of ours (Bounce): `FB 00 00`, `B8 slot op 0`
+   * for begin / end / bounce, and our answers to its writes. The SP writes nothing of its own.
+   */
+  renderPattern?: number | null;
 }
 
 export type Guard = (channel: number, payload: Uint8Array) => void;
 
 const READ_CONTROL = new Set([0xfe, 0xfd, 0x9e, 0x3a]);
+/** `B8` render ops allowed: begin, end, bounce (MULTIPAD pads 0–159 not yet). */
+const RENDER_OPS = new Set([1000, 1001, 1003]);
 const READ_FILE_OPS = new Set<number>([Op.Close, Op.Read, Op.OpenDir, Op.CloseDir, Op.ReadDir, Op.Stat, Op.FStat, Op.FreeKb]);
 
 export class GuardError extends Error {}
@@ -71,6 +80,9 @@ export function makeGuard(policy: WritePolicy): Guard {
       // Select bank / pad on the unit (global 00 / 01): UI state only, the official app sends it on every click.
       if (c === 0x01 && p.length === 9 && p[2] === 0 && p[3] === 0xff && p[4] === 0xff && p[6] === 0 && p[7] === 0 && p[8] === 0 &&
         ((p[1] === 0x00 && p[5] < 10) || (p[1] === 0x01 && p[5] < 16))) return;
+      const rendering = policy.renderPattern !== null && policy.renderPattern !== undefined;
+      if (rendering && c === 0xfb && p.length === 3 && p[1] === 0x00 && p[2] === 0x00) return; // render begin
+      if (rendering && c === 0xb8 && p.length === 7 && pad === policy.renderPattern && p[5] === 0 && p[6] === 0 && RENDER_OPS.has(p[3] | (p[4] << 8))) return;
       const importing = policy.importPad !== null && pad === policy.importPad;
       if (c === 0xfb && p[1] === 0xa0 && p[2] === 0x00 && policy.importPad !== null) return; // import begin
       if (c === 0xfc && p[1] === 0x00 && p[2] === 0x00) return; // edit end
@@ -78,6 +90,11 @@ export function makeGuard(policy: WritePolicy): Guard {
       if (importing && c === 0x91 && p.length === 5 && p[3] === 0x01 && p[4] === 0x00) return; // release slot, not delete
       if (importing && c === 0x1e && p.length === PAD_WRITE_LEN) return; // pad block write
       if (importing && c === 0x9f && p.length === 3) return; // commit
+    }
+    if (channel === CH_FILE && policy.renderPattern !== null && policy.renderPattern !== undefined) {
+      // Answers to the SP's writes into our file while it renders.
+      if (p.length === HOST_ACK.length && HOST_ACK.every((b, i) => p[i] === b)) return;
+      if (p.length === 15 && p[0] === 0xf0 && p[1] === 0x41 && p[2] === 0x7a && p[3] === 0x7a && p[14] === 0xf7) return;
     }
     if (channel === CH_FILE && p[3] === 0x03) {
       const r = describeFileRequest(p);

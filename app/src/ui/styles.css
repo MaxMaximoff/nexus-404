@@ -585,4 +585,9 @@ button, input { font: inherit; color: inherit; }
   font-size: 10px; line-height: 18px; color: #fff; padding-left: 1px; overflow: hidden;
 }
 .ptn-note.off { background: linear-gradient(180deg, #8fc6ff, #5aa9ff); }
+.ptn-bounce { display: flex; flex-direction: column; gap: 10px; }
+.ptn-bounce-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.ptn-bounce-prog { display: flex; align-items: center; gap: 10px; font-size: 13px; flex: 1; }
+.ptn-bounce-prog .bar { flex: 1; max-width: 260px; }
+.ptn-bounce-row .insp-dl { margin-left: 0; }
 .ptn-note.pitched { background: linear-gradient(180deg, #2fc48a, #18a46c); border-left-color: #0d6b46; }
