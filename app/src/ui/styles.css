@@ -307,19 +307,21 @@ button, input, select { font: inherit; color: inherit; }
 .workspace { display: flex; flex-direction: column; gap: 14px; min-width: 0; align-self: stretch; }
 .workspace > :last-child { flex: 1; }
 
-/* ---------- banks: shared hybrid material, live occupancy indicators ---------- */
-.bank-rail { padding: 12px 24px 14px; display: flex; flex-direction: column; gap: 9px; }
-.bank-rail.glass {
+/* Shared hybrid shells: reuse one material without changing layout or hit areas. */
+.bank-rail.glass, .pad-area.glass {
   isolation: isolate; background: none; border: 1px solid transparent;
   border-image: var(--panel-skin) 96 fill / 20px / 4px stretch;
   box-shadow: 0 3px 8px -4px #365e7e70;
 }
-.bank-rail.glass::before {
+.bank-rail.glass::before, .pad-area.glass::before {
   inset: 5px; border: 0; border-radius: 0;
   border-image: var(--panel-corners) 48 / 18px / 0 stretch;
   background: none; box-shadow: none;
 }
-.bank-rail.glass::after { content: none; }
+.bank-rail.glass::after, .pad-area.glass::after { content: none; }
+
+/* ---------- banks: shared hybrid material, live occupancy indicators ---------- */
+.bank-rail { padding: 12px 24px 14px; display: flex; flex-direction: column; gap: 9px; }
 .bank-list { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
 .bank-tile {
   display: grid; grid-template-columns: 26px minmax(0, 1fr); align-items: center; gap: 10px; padding: 6px 10px 6px 7px; cursor: pointer;

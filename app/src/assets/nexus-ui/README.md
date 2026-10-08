@@ -11,6 +11,7 @@ The original three-component proof of concept is preserved in checkpoint `b07b22
 | All occupied pads | `pads/pad-light.webp` | `lighting/pad-emitter.svg` | Existing button, sample name, BPM, duration and badges |
 | All empty pads | `pads/pad-graphite.webp` | Existing selection outline | Existing button, pad number and plus sign |
 | Bank panel | `panels/panel-light.webp` | `details/panel-corners.svg` | Existing heading and ten bank buttons |
+| Pad-grid panel | `panels/panel-light.webp` | `details/panel-corners.svg` | Existing heading, tempo, group controls, pad grid, connection overlay and hint |
 | Bank tiles | `pads/pad-light.webp` | `lighting/pad-emitter.svg` | Existing 16-cell occupancy, bank letter, tempo, lock and transfer target |
 | Inspector (existing opt-in study) | `panels/panel-light.webp` | `details/panel-corners.svg` | Existing tabs, inputs, waveform, scroll area and transport |
 
@@ -57,4 +58,12 @@ The bank shell uses the existing panel material with 96 px source slices, 20 px 
 
 Verification: production build and TypeScript check passed; all 166 existing tests passed. Bank switching and keyboard focus were exercised in demo mode. All ten banks retain 16 occupancy indicators. At 1440 × 900, the bank shell remains 722.328 × 139 px and the tiles remain 128.063 × 40 px (fractional rounding applies to the final column); A5 remains 159.078 × 112 px. Screenshots also cover 1920 × 1080 and 390 × 844, without horizontal overflow. A temporary visual fixture checked normal, active, hover, eligible target, current target and full-bank styles; the fixture is not shipped. Physical transfers and a continuously held pointer were not tested.
 
-The pad-grid panel, remaining inspector integration, header and bottom service panels are pending the next sequential steps.
+## Stage 2, second step: pad-grid panel
+
+Checkpoint `aa954f2` preserves the bank-panel step. The outer `.pad-area.glass` shell now shares the bank shell's existing rules, panel material, nine-slice sizing and corner overlay. This removes its CSS screws and heavy panel bevel without adding duplicate rules, assets or DOM. Pad surfaces and all interaction rules are unchanged. The shared decoration inherits `pointer-events: none`.
+
+Before/after browser comparisons use the same demo project, A5 and Sample inspector at 1440 × 900 and 1920 × 1080. All recorded rectangles at 1440 match exactly, including the panel, grid, heading, hint, all 16 pads, bank panel and inspector. The box shadows of all pads also match. At 1920, the panel remains 751.141 × 827 px and A5 remains 166.281 × 112 px. The 390 × 844 check retains four columns and no horizontal page overflow. Empty-pad selection, group selection and the disconnected overlay were checked; their controls and text remain visible. No seams or deformed corners were apparent at these sizes.
+
+Production build and TypeScript check passed; all 166 existing tests passed. No device communication, audio processing, component code or handler changed. All graphic assets retain their original bytes, and no additional resource is loaded by this step.
+
+The remaining inspector integration, header and bottom service panels are pending the next sequential steps.
