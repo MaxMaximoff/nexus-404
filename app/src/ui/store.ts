@@ -411,41 +411,6 @@ export function currentPatternFile(slot: number): Uint8Array | null {
   return d && isDirty(d) ? writePattern(d.p, f.bytes) : f.bytes;
 }
 
-/** Whether pattern `slot` exists in project `p1` (another project than the open one: its files are not read here). */
-export async function patternExistsIn(p1: number, slot: number): Promise<boolean | null> {
-  const d = device;
-  if (!d || conn.value !== "ready") return null;
-  try {
-    return !!(await d.exclusive((x) => x.stat(patternPath(p1, slot))));
-  } catch (e) {
-    fail(e, "Проверка слота");
-    return null;
-  }
-}
-
-/**
- * Copy pattern `src` of the open project, as it is now (with its edits), into slot `dst` of another
- * project: written there at once (that project is not open, so the SP reads the file when it is
- * selected). Notes keep their pads: A1 plays that project's A1.
- */
-export async function copyPatternToProject(src: number, p1: number, dst: number): Promise<boolean> {
-  const d = device, bytes = currentPatternFile(src);
-  if (!d || conn.value !== "ready" || !bytes || patternWriting.value || p1 === project1.value) return false;
-  const what = `${padName(src)} → проект ${p1}, ${padName(dst)}`;
-  patternWriting.value = what;
-  try {
-    await d.exclusive((x) => x.writePatternFile(p1, dst, bytes));
-    log("info", `Паттерн скопирован: ${what} (${bytes.length} байт, прочитан обратно и сверен)`);
-    notice.value = { kind: "info", text: `Скопировано: ${what}. Он появится, когда на SP откроют проект ${p1}` };
-    return true;
-  } catch (e) {
-    fail(e, `Копирование паттерна ${what}`);
-    return false;
-  } finally {
-    patternWriting.value = null;
-  }
-}
-
 /**
  * Silence pads that play on after their note-off: Gate off (and Loop) pads ignore note-off, and
  * neither MIDI All Sound Off / All Notes Off nor `9D` stops them (checked on the SP). What works

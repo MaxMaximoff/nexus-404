@@ -604,18 +604,6 @@ export class SP404Device {
   }
 
   /**
-   * Write a pattern file into a project that is not open on the SP: the SP reads a project's files
-   * when it is selected. The project must already have its PTN folder.
-   * Framed by FB 00 00 / FC 00 00 like the official app's file writes; the file is read back and
-   * compared byte for byte.
-   */
-  async writePatternFile(project1: number, slot: number, bytes: Uint8Array): Promise<void> {
-    const st = await this.status();
-    if (st.project + 1 === project1) throw new DeviceError(`проект ${project1} сейчас открыт на SP: для него — writePatternAndReload`);
-    await this.putPatternFile(st, project1, slot, bytes);
-  }
-
-  /**
    * Write a pattern file into the project open on the SP, then make the SP read the project again:
    * select project `via` and come back (`9A` twice — nothing is written by it). The file is read
    * once more after the return: `kept` false means the SP put its own copy back over ours.
