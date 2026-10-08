@@ -12,12 +12,14 @@ import {
 import { IconDownload, IconPencil, IconPlay, IconRefresh, IconStop, IconWave } from "./icons";
 import { midiState } from "./midi";
 import { playingSlot, stopPattern, togglePattern } from "./ptnPlayer";
+import { RowSound, silentClass } from "./PatternRowSound";
 import { PatternEditor, SaveControl } from "./PatternEditor";
 import { Pager, pagingOf } from "./PatternPager";
 import { draftOf, dropDraft, drafts, editingSlot, fileSum, isDirty, revert, startDraft } from "./patternDraft";
 import { TakeCard } from "./Recorder";
 import { recTake, setTake } from "./rec";
 import { saveFile } from "./download";
+import { showSide } from "./card";
 
 const VIEW_KEY = "nexus404.main.view";
 type View = "pads" | "patterns";
@@ -41,6 +43,13 @@ export const shownSlot = computed(() => {
   if (!m?.size) return null;
   return s !== null && m.has(s) ? s : [...m.keys()][0];
 });
+/** Back from a pattern to one of its pads: the pads screen, that pad in the inspector. */
+export function openPad(pad: number): void {
+  selectPad(pad);
+  showSide("pad");
+  showView("pads");
+}
+
 export function openPattern(slot: number): void {
   pickedSlot.value = slot;
   showView("patterns");
@@ -161,7 +170,7 @@ function PatternView() {
       ) : (
         <Bounce slot={slot} p={base} />
       )}
-      {!editing && <p class="hint">Строки — pad'ы, которые играет паттерн; клик по названию выбирает pad: в матрице выше видно, в каких ещё паттернах он играет. Столбцы — шаги 1/16, высота заливки ноты — сила удара{pitched ? ", цветные с «+1», «−2» — ноты, транспонированные в TR-REC" : ""}. «Править» открывает редактор.</p>}
+      {!editing && <p class="hint">Строки — pad'ы, которые играет паттерн; клик по номеру pad'а (A1) открывает его сэмпл, по названию — выбирает pad: в матрице выше видно, в каких ещё паттернах он играет. Столбцы — шаги 1/16, высота заливки ноты — сила удара{pitched ? ", цветные с «+1», «−2» — ноты, транспонированные в TR-REC" : ""}. «Править» открывает редактор.</p>}
     </div>
   );
 }
@@ -248,11 +257,15 @@ function StepGrid({ slot, p, rows }: { slot: number; p: Pattern; rows: number[] 
           {rows.map((pad) => {
             const b = pads.value[pad];
             return [
-              <button key={`h${pad}`} class={`ptn-row-head ${pad === sel ? "cur" : ""} ${b?.size ? "" : "missing"}`} onClick={() => selectPad(pad)}
-                title={b?.size ? `${padName(pad)} «${b.name}» — выбрать: в матрице отметятся паттерны, где он играет` : `${padName(pad)} пуст: паттерн играет тишину`}>
-                <b>{padName(pad)}</b><span>{b?.size ? b.name || "без имени" : "пусто"}</span>
-              </button>,
-              <div key={`l${pad}`} class={`ptn-lane ${pad === sel ? "cur" : ""} ${used < 100 ? "short" : ""}`} style={{ "--used": `${used}%` }}>
+              <div key={`h${pad}`} class="ptn-row-cell">
+                <button class="ptn-row-pad" onClick={() => openPad(pad)} title={`Открыть ${padName(pad)} на экране pad'ов — править сэмпл`}>{padName(pad)}</button>
+                <button class={`ptn-row-head ${pad === sel ? "cur" : ""} ${b?.size ? "" : "missing"}`} onClick={() => selectPad(pad)}
+                  title={b?.size ? `${padName(pad)} «${b.name}» — выбрать: в матрице отметятся паттерны, где он играет` : `${padName(pad)} пуст: паттерн играет тишину`}>
+                  <span>{b?.size ? b.name || "без имени" : "пусто"}</span>
+                </button>
+                <RowSound pad={pad} />
+              </div>,
+              <div key={`l${pad}`} class={`ptn-lane ${pad === sel ? "cur" : ""} ${used < 100 ? "short" : ""} ${silentClass(pad)}`} style={{ "--used": `${used}%` }}>
                 {byPad.get(pad)!.map(({ n, idx }) => <Note key={idx} slot={slot} idx={idx} n={n} p={p} from={from} pageTicks={pageTicks} />)}
               </div>,
             ];

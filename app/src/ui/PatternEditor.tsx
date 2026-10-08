@@ -2,7 +2,7 @@
 // One gesture does the right thing by where it lands: an empty cell adds a note (drag to paint a run),
 // a note's body picks it (a second click on the picked note removes it; drag moves it, also to another
 // row), its right edge changes the length; the right button removes notes, dragged over them it
-// removes each one it passes. Shift+drag on empty cells picks notes with a frame,
+// removes each one it passes; Alt+drag up or down on a note sets its velocity. Shift+drag on empty cells picks notes with a frame,
 // Shift+click adds or takes one away; picked notes move, copy, paste and delete together. A row's
 // menu fills, shifts or clears it; a bar's number repeats or clears that bar. Velocity is edited on
 // its own lane under the grid, pitch, length and rolls for the picked note in a strip below. A step
@@ -19,12 +19,17 @@ import {
 import { IconMinus, IconPlus, IconRedo, IconTrash, IconUndo, IconUpload } from "./icons";
 import { auditionPad, connectMidi, midiState } from "./midi";
 import { Pager, pagingOf } from "./PatternPager";
+import { openPad } from "./Patterns";
+import { RowSound, silentClass } from "./PatternRowSound";
 import { draftOf, edit, editingSlot, isDirty, pick, preview, redo, revert, settle, undo, type Draft } from "./patternDraft";
 import { confirmSave, pads, patternWriting, project1, reloadVia, requestSave, saveBlockReason, saveConfirm, selectPad, selectedPad } from "./store";
 
 /** The grid's step: 1/8, 1/16 or 1/32 of a note. */
 const gridTicks = signal(STEP);
 const snapOn = signal(true);
+/** Velocity of new notes (clicks, painting, fills): TR-REC's 90 to begin with. */
+const newVelocity = signal(DEFAULT_VELOCITY);
+const VELOCITY_PRESETS: [number, string][] = [[50, "тихо"], [DEFAULT_VELOCITY, "обычно"], [127, "акцент"]];
 const GRIDS: [number, string][] = [[PPQ / 2, "1/8"], [STEP, "1/16"], [PPQ / 8, "1/32"]];
 /** An open menu: a row's (by pad) or a bar's (0-based), and where on screen it opens (under its button). */
 type Menu = ({ kind: "row"; pad: number } | { kind: "bar"; bar: number }) & { x: number; y: number };
@@ -46,8 +51,16 @@ type Gesture =
   | { kind: "move" | "resize"; seq: number; x0: number; y0: number; t0: number; g0: number; pad0: number; wasPicked: boolean; moved: boolean; before: Pattern; rect: DOMRect }
   | { kind: "group"; seq: number; seqs: number[]; rows: number[]; row0: number; x0: number; y0: number; t0: number; moved: boolean; before: Pattern; rect: DOMRect }
   | { kind: "band"; x0: number; y0: number; grid: HTMLElement }
-  | { kind: "erase"; x: number; y: number; before: Pattern };
+  | { kind: "erase"; x: number; y: number; before: Pattern }
+  | { kind: "vel"; seqs: number[]; y0: number; before: Pattern };
 let gesture: Gesture | null = null;
+/**
+ * The pattern as it was when a slider or the velocity lane was taken hold of: the whole drag becomes
+ * one step of the history. Kept here, not in the component: every frame of the drag re-renders it.
+ */
+let held: Pattern | null = null;
+/** The velocity bar taken hold of, and where: it stays the one being set until the pointer goes sideways. */
+let velLock: { seq: number; x0: number } | null = null;
 /** Copied notes: they can be pasted into this pattern or another one. */
 let clip: Clip | null = null;
 /** Where Ctrl+V pastes: the last cell clicked. */
@@ -145,6 +158,13 @@ export function PatternEditor({ slot }: { slot: number }) {
         pick(slot, { group: [...now], sel: null, active: pad });
         return;
       }
+      if (e.altKey) {
+        // Alt+drag up/down: velocity, of the whole group when the note is in it.
+        const seqs = cur.group.length > 1 && cur.group.includes(seq) ? cur.group : [seq];
+        gesture = { kind: "vel", seqs, y0: e.clientY, before: cur.p };
+        if (seqs.length === 1) pick(slot, { sel: seq, group: [], active: pad });
+        return;
+      }
       if (cur.group.length > 1 && cur.group.includes(seq)) {
         gesture = { kind: "group", seq, seqs: cur.group, rows, row0: rows.indexOf(n.pad), x0: e.clientX, y0: e.clientY, t0: n.tick, moved: false, before: cur.p, rect };
         return;
@@ -157,7 +177,7 @@ export function PatternEditor({ slot }: { slot: number }) {
       gesture = { kind: "band", x0: e.clientX, y0: e.clientY, grid: lane.closest<HTMLElement>(".ptn-grid")! };
       drawBand(gesture, e.clientX, e.clientY);
     } else {
-      const t = snapDown(tickAt(e.clientX, rect)), r = addNote(cur.p, pad, t, gateFor(g), DEFAULT_VELOCITY);
+      const t = snapDown(tickAt(e.clientX, rect)), r = addNote(cur.p, pad, t, gateFor(g), newVelocity.value);
       gesture = { kind: "paint", pad, last: t, before: cur.p, rect };
       pick(slot, { active: pad, sel: r.note?.seq ?? cur.sel, group: [] });
       if (r.note) preview(slot, r.pattern, { sel: r.note.seq }); // silent: placing notes should not fire the pad every time
@@ -170,6 +190,7 @@ export function PatternEditor({ slot }: { slot: number }) {
     const cur = draftOf(slot)!;
     if (gs.kind === "band") { drawBand(gs, e.clientX, e.clientY); return; }
     if (gs.kind === "erase") { eraseAlong(slot, gs.x, gs.y, e.clientX, e.clientY); gs.x = e.clientX; gs.y = e.clientY; return; }
+    if (gs.kind === "vel") { const dv = Math.round((gs.y0 - e.clientY) * 0.8); preview(slot, setVelocities(gs.before, gs.seqs, (v) => v + dv)); return; }
     if (gs.kind === "paint") {
       const t = snapDown(tickAt(e.clientX, gs.rect));
       if (t === gs.last) return;
@@ -177,7 +198,7 @@ export function PatternEditor({ slot }: { slot: number }) {
       const dir = t > gs.last ? 1 : -1;
       let next = cur.p, picked: number | null = null;
       for (let x = gs.last + dir * g; dir > 0 ? x <= t : x >= t; x += dir * g) {
-        const r = addNote(next, gs.pad, x, gateFor(g), DEFAULT_VELOCITY);
+        const r = addNote(next, gs.pad, x, gateFor(g), newVelocity.value);
         if (r.note) { next = r.pattern; picked = r.note.seq; }
       }
       gs.last = t;
@@ -207,7 +228,7 @@ export function PatternEditor({ slot }: { slot: number }) {
     gesture = null;
     if (!gs) return;
     if (gs.kind === "band") { pickInBand(slot, gs, e.clientX, e.clientY); return; }
-    if (gs.kind === "erase") { settle(slot, gs.before); return; }
+    if (gs.kind === "erase" || gs.kind === "vel") { settle(slot, gs.before); return; }
     // A plain click on the picked note removes it: the step sequencer's toggle.
     if (gs.kind === "move" && !gs.moved && gs.wasPicked) edit(slot, removeNote(gs.before, gs.seq), { sel: null });
     // A plain click on one of several picked notes picks it alone.
@@ -215,14 +236,14 @@ export function PatternEditor({ slot }: { slot: number }) {
     else settle(slot, gs.before);
   };
 
-  const addPad = (pad: number) => { pick(slot, { rows: [...new Set([...d.rows, pad])], active: pad }); auditionPad(pad); };
+  const addPads = (list: number[]) => { if (list.length) pick(slot, { rows: [...new Set([...d.rows, ...list])], active: list[0] }); };
   const dropRow = (pad: number) => pick(slot, { rows: d.rows.filter((r) => r !== pad), active: d.active === pad ? null : d.active });
   const active = d.active !== null && rows.includes(d.active) ? d.active : rows[0] ?? null;
   const m = menu.value;
 
   return (
     <div class="ptn-edit">
-      <EditBar slot={slot} d={d} rows={rows} onAddPad={addPad} />
+      <EditBar slot={slot} d={d} rows={rows} onAddPads={addPads} />
       {pg.pages > 1 && <Pager page={pg.page} pages={pg.pages} barsPerPage={pg.barsPerPage} totalBars={pg.totalBars} onPage={pg.setPage} />}
       <div class="ptn-scroll">
         <div class="ptn-grid ptn-grid-edit" style={{ "--steps": pg.steps, "--bar": pg.barSteps }} data-slot={slot} data-from={pg.from} data-span={pg.pageTicks}>
@@ -245,17 +266,19 @@ export function PatternEditor({ slot }: { slot: number }) {
             const b = pads.value[pad], mine = p.notes.filter((n) => n.pad === pad), empty = mine.length === 0, open = m?.kind === "row" && m.pad === pad;
             return [
               <div key={`h${pad}`} class="ptn-row-cell">
+                <button class="ptn-row-pad" onClick={() => openPad(pad)} title={`Открыть ${padName(pad)} на экране pad'ов — править сэмпл (черновик паттерна сохранится)`}>{padName(pad)}</button>
                 <button class={`ptn-row-head ${pad === active ? "act" : ""} ${b?.size ? "" : "missing"}`}
                   onClick={() => { selectPad(pad); pick(slot, { active: pad }); auditionPad(pad); }}
                   title={b?.size ? `${padName(pad)} «${b.name}» — послушать и выбрать` : `${padName(pad)} пуст: ноты играют тишину`}>
-                  <b>{padName(pad)}</b><span>{b?.size ? b.name || "без имени" : "пусто"}</span>
+                  <span>{b?.size ? b.name || "без имени" : "пусто"}</span>
                 </button>
+                <RowSound pad={pad} />
                 <button class={`icon-btn ptn-menu-btn ptn-row-more ${open ? "on" : ""}`} onClick={(e) => (open ? (menu.value = null) : openMenu(e, { kind: "row", pad }))}
                   title="Заполнить, сдвинуть, очистить строку" aria-label={`Строка ${padName(pad)}: действия`} aria-expanded={open}>⋯</button>
                 {empty && <button class="icon-btn ptn-row-x" onClick={() => dropRow(pad)} title="Убрать пустую строку" aria-label={`Убрать строку ${padName(pad)}`}><IconMinus /></button>}
                 {open && <RowMenu slot={slot} p={p} pad={pad} grid={g} at={m!} />}
               </div>,
-              <div key={`l${pad}`} class={`ptn-lane ptn-lane-edit ${pad === selectedPad.value ? "cur" : ""} ${pg.used < 100 ? "short" : ""}`} data-pad={pad} style={{ "--used": `${pg.used}%` }}
+              <div key={`l${pad}`} class={`ptn-lane ptn-lane-edit ${pad === selectedPad.value ? "cur" : ""} ${pg.used < 100 ? "short" : ""} ${silentClass(pad)}`} data-pad={pad} style={{ "--used": `${pg.used}%` }}
                 onPointerDown={(e) => onDown(e, pad)} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} onContextMenu={(e) => e.preventDefault()}>
                 {mine.map((n) => <EditNote key={n.seq} n={n} picked={d.sel === n.seq || group.has(n.seq)} from={pg.from} pageTicks={pg.pageTicks} length={p.length} />)}
               </div>,
@@ -310,7 +333,7 @@ function pickInBand(slot: number, gs: { x0: number; y0: number; grid: HTMLElemen
 /** A row's menu: fill it at a note value (replacing its notes), shift it round, clear it. */
 function RowMenu({ slot, p, pad, grid, at }: { slot: number; p: Pattern; pad: number; grid: number; at: Menu }) {
   const bt = barTicks(p), steps = [1, 2, 4, 8].map((k) => k * grid).filter((t) => t <= bt);
-  const fill = (every: number, offset: number) => { edit(slot, fillPad(p, pad, every, offset, gateFor(Math.min(grid, every)))); menu.value = null; };
+  const fill = (every: number, offset: number) => { edit(slot, fillPad(p, pad, every, offset, gateFor(Math.min(grid, every)), newVelocity.value)); menu.value = null; };
   const has = p.notes.some((n) => n.pad === pad);
   return (
     <div class="ptn-menu" role="menu" aria-label={`Строка ${padName(pad)}`} style={{ left: `${at.x}px`, top: `${at.y}px` }}>
@@ -355,7 +378,6 @@ function BarMenu({ slot, p, bar, at }: { slot: number; p: Pattern; bar: number; 
 function GroupStrip({ slot, d }: { slot: number; d: Draft }) {
   const p = d.p, mine = p.notes.filter((n) => d.group.includes(n.seq));
   const avg = Math.round(mine.reduce((s, n) => s + n.velocity, 0) / Math.max(1, mine.length));
-  let before: Pattern | null = null;
   const transpose = (by: number) => {
     let q = p;
     for (const n of mine) q = setSemitones(q, n.seq, (semitonesOf(n) ?? 0) + by);
@@ -371,8 +393,8 @@ function GroupStrip({ slot, d }: { slot: number; d: Draft }) {
       <label class="ptn-vel" title="Сила удара всех выбранных нот">
         <span class="ptn-vel-label">сила</span>
         <input type="range" min={1} max={127} value={avg}
-          onInput={(e) => { before ??= draftOf(slot)!.p; preview(slot, setVelocities(before, d.group, +(e.currentTarget as HTMLInputElement).value)); }}
-          onChange={() => { if (before) settle(slot, before); before = null; }} />
+          onInput={(e) => { held ??= draftOf(slot)!.p; preview(slot, setVelocities(held, d.group, +(e.currentTarget as HTMLInputElement).value)); }}
+          onChange={() => { if (held) settle(slot, held); held = null; }} />
         <b>{avg}</b>
       </label>
       <span class="ptn-strip-group" title="Высота всех выбранных нот, на полутон">
@@ -407,32 +429,45 @@ function EditNote({ n, picked, from, pageTicks, length }: { n: PatternNote; pick
 /** Velocity of the active row's notes as bars under the grid: press and drag over them. */
 function VelocityLane({ slot, d, pad, from, pageTicks }: { slot: number; d: Draft; pad: number; from: number; pageTicks: number }) {
   const mine = d.p.notes.filter((n) => n.pad === pad && n.tick < from + pageTicks && n.tick + n.gate > from);
-  let before: Pattern | null = null;
+  /** The note nearest the pointer on this row, within a step. */
+  const nearest = (p: Pattern, t: number) => p.notes.filter((n) => n.pad === pad)
+    .map((n) => ({ n, dist: t < n.tick ? n.tick - t : t > n.tick + n.gate ? t - n.tick - n.gate : 0 }))
+    .filter((x) => x.dist < STEP).sort((a, b) => a.dist - b.dist)[0]?.n;
   const setAt = (e: PointerEvent) => {
     const lane = e.currentTarget as HTMLElement, r = lane.getBoundingClientRect(), cur = draftOf(slot)!;
-    const t = from + ((e.clientX - r.left) / r.width) * pageTicks;
     const v = 1 + clamp(1 - (e.clientY - r.top) / r.height, 0, 1) * 126;
-    const near = cur.p.notes.filter((n) => n.pad === pad).map((n) => ({ n, dist: t < n.tick ? n.tick - t : t > n.tick + n.gate ? t - n.tick - n.gate : 0 }))
-      .filter((x) => x.dist < STEP).sort((a, b) => a.dist - b.dist)[0];
-    if (!near) return;
-    const next = setVelocity(cur.p, near.n.seq, v);
-    if (next !== cur.p) preview(slot, next, { sel: near.n.seq });
+    // Held on one bar: that bar follows the pointer up and down; moved sideways: paint every bar passed.
+    if (velLock && Math.abs(e.clientX - velLock.x0) > 8) velLock = null;
+    const seq = velLock?.seq ?? nearest(cur.p, from + ((e.clientX - r.left) / r.width) * pageTicks)?.seq;
+    if (seq === undefined) return;
+    const next = setVelocity(cur.p, seq, v);
+    if (next !== cur.p) preview(slot, next, { sel: seq });
   };
+  const start = (e: PointerEvent) => {
+    if (e.button !== 0) return;
+    const lane = e.currentTarget as HTMLElement, r = lane.getBoundingClientRect();
+    lane.setPointerCapture(e.pointerId);
+    held = draftOf(slot)!.p;
+    const n = nearest(held, from + ((e.clientX - r.left) / r.width) * pageTicks);
+    velLock = n ? { seq: n.seq, x0: e.clientX } : null;
+    setAt(e);
+  };
+  const end = () => { if (held) settle(slot, held); held = null; velLock = null; };
   return [
-    <div key="vh" class="ptn-vel-head" title="Сила удара строки: протяните по столбикам">сила <b>{padName(pad)}</b></div>,
+    <div key="vh" class="ptn-vel-head" title="Сила удара строки: тяните столбик вверх-вниз, или ведите вбок — задать силу всем по пути">сила <b>{padName(pad)}</b></div>,
     <div key="vl" class="ptn-vellane" role="group" aria-label={`Сила удара ${padName(pad)}`}
-      onPointerDown={(e) => { if (e.button !== 0) return; (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); before = draftOf(slot)!.p; setAt(e); }}
-      onPointerMove={(e) => { if (before) setAt(e); }}
-      onPointerUp={() => { if (before) settle(slot, before); before = null; }} onPointerCancel={() => { if (before) settle(slot, before); before = null; }}>
+      onPointerDown={start} onPointerMove={(e) => { if (held) setAt(e); }} onPointerUp={end} onPointerCancel={end}>
       {mine.map((n) => (
         <i key={n.seq} class={d.sel === n.seq ? "picked" : ""}
-          style={{ left: `${((Math.max(n.tick, from) - from) / pageTicks) * 100}%`, width: `max(3px, ${(Math.min(n.gate, STEP) / pageTicks) * 60}%)`, height: `${(n.velocity / 127) * 100}%` }} />
+          style={{ left: `${((Math.max(n.tick, from) - from) / pageTicks) * 100}%`, width: `max(3px, ${(Math.min(n.gate, STEP) / pageTicks) * 60}%)`, height: `${(n.velocity / 127) * 100}%` }}>
+          {d.sel === n.seq && <span class={`ptn-vel-num ${n.velocity > 100 ? "in" : ""}`}>{n.velocity}</span>}
+        </i>
       ))}
     </div>,
   ];
 }
 
-function EditBar({ slot, d, rows, onAddPad }: { slot: number; d: Draft; rows: number[]; onAddPad: (pad: number) => void }) {
+function EditBar({ slot, d, rows, onAddPads }: { slot: number; d: Draft; rows: number[]; onAddPads: (pads: number[]) => void }) {
   const p = d.p, g = gridTicks.value, bars = Math.max(1, Math.ceil(p.length / barTicks(p)));
   const options = Array.from({ length: 160 }, (_, i) => i).filter((i) => pads.value[i]?.size && !rows.includes(i));
   const byBank = new Map<number, number[]>();
@@ -453,6 +488,16 @@ function EditBar({ slot, d, rows, onAddPad }: { slot: number; d: Draft; rows: nu
             title="Привязка к сетке. Выключите, чтобы ставить и двигать ноты между шагами">привязка</button>
         </div>
       </div>
+      <div class="ptn-editbar-group" title="Сила удара новых нот: клик, протяжка, заполнение строки">
+        <span class="muted small">сила</span>
+        <div class="segmented" role="group" aria-label="Сила новых нот">
+          {VELOCITY_PRESETS.map(([v, label]) => (
+            <button key={v} class={newVelocity.value === v ? "on" : ""} aria-pressed={newVelocity.value === v} onClick={() => (newVelocity.value = v)} title={`${label}: ${v}`}>{label}</button>
+          ))}
+        </div>
+        <input class="value-field ptn-vel-field" type="number" min={1} max={127} value={newVelocity.value} aria-label="Сила новых нот, 1–127"
+          onChange={(e) => { const v = Math.round(+(e.currentTarget as HTMLInputElement).value); if (v >= 1 && v <= 127) newVelocity.value = v; else (e.currentTarget as HTMLInputElement).value = String(newVelocity.value); }} />
+      </div>
       <div class="ptn-editbar-group">
         <span class="muted small">такты</span>
         <button class="icon-btn" disabled={bars <= 1} onClick={() => edit(slot, setBars(p, bars - 1))} title="Короче на такт: ноты за концом пропадут" aria-label="Короче на такт"><IconMinus /></button>
@@ -460,10 +505,16 @@ function EditBar({ slot, d, rows, onAddPad }: { slot: number; d: Draft; rows: nu
         <button class="icon-btn" disabled={bars >= MAX_BARS} onClick={() => edit(slot, setBars(p, bars + 1))} title="Длиннее на такт" aria-label="Длиннее на такт"><IconPlus /></button>
         <button class="btn ptn-mini" disabled={doublePattern(p) === p} onClick={() => edit(slot, doublePattern(p))} title="Удвоить: паттерн вдвое длиннее, вторая половина — копия первой">×2</button>
       </div>
-      <select class="project-select ptn-addpad" value="" aria-label="Добавить строку" onChange={(e) => { const v = (e.currentTarget as HTMLSelectElement).value; (e.currentTarget as HTMLSelectElement).value = ""; if (v) onAddPad(+v); }} disabled={!options.length}>
+      <select class="project-select ptn-addpad" value="" aria-label="Добавить строку" onChange={(e) => {
+        const v = (e.currentTarget as HTMLSelectElement).value;
+        (e.currentTarget as HTMLSelectElement).value = "";
+        if (v.startsWith("bank")) onAddPads(byBank.get(+v.slice(4)) ?? []);
+        else if (v) onAddPads([+v]);
+      }} disabled={!options.length}>
         <option value="">+ строка…</option>
         {[...byBank].map(([bank, list]) => (
           <optgroup key={bank} label={`Банк ${"ABCDEFGHIJ"[bank]}`}>
+            {list.length > 1 && <option value={`bank${bank}`}>все пады банка {"ABCDEFGHIJ"[bank]} ({list.length})</option>}
             {list.map((i) => <option key={i} value={i}>{padName(i)} {pads.value[i]?.name || "без имени"}</option>)}
           </optgroup>
         ))}
@@ -478,11 +529,10 @@ function EditBar({ slot, d, rows, onAddPad }: { slot: number; d: Draft; rows: nu
 /** Pitch, length and rolls of the picked note; velocity too, as a number. */
 function NoteStrip({ slot, d, grid }: { slot: number; d: Draft; grid: number }) {
   const n = d.sel !== null ? findNote(d.p, d.sel) : undefined;
-  if (!n) return <div class="ptn-readout idle">Пустая клетка — нота, протяните — ряд нот. Клик по ноте выбирает её, второй клик или правая кнопка убирает (с протяжкой правой — несколько; Delete). Тяните ноту — сдвиг, за край — длина. Shift+протяжка — рамка, Shift+клик — добавить к выбору, Ctrl+A — все. Ctrl+C / Ctrl+V / Ctrl+D, стрелки — сдвиг. ⋯ у строки и номер такта — их действия.</div>;
+  if (!n) return <div class="ptn-readout idle">Пустая клетка — нота, протяните — ряд нот. Клик по ноте выбирает её, второй клик или правая кнопка убирает (с протяжкой правой — несколько; Delete). Alt+протяжка по ноте вверх-вниз — сила. Тяните ноту — сдвиг, за край — длина. Shift+протяжка — рамка, Shift+клик — добавить к выбору, Ctrl+A — все. Ctrl+C / Ctrl+V / Ctrl+D, стрелки — сдвиг. ⋯ у строки и номер такта — их действия.</div>;
   const p = d.p, bt = barTicks(p), inBar = n.tick % bt, off = inBar % STEP, st = semitonesOf(n);
   const lenSteps = (n.gate + 1) / STEP;
   const b = pads.value[n.pad];
-  let before: Pattern | null = null;
   const roll = (k: number) => { const r = rollNote(p, n.seq, k, Math.max(grid, STEP)); if (r.seqs.length) edit(slot, r.pattern, { sel: r.seqs[0] }); };
   return (
     <div class="ptn-readout ptn-notestrip" role="group" aria-label="Выбранная нота">
@@ -492,8 +542,8 @@ function NoteStrip({ slot, d, grid }: { slot: number; d: Draft; grid: number }) 
       <label class="ptn-vel" title="Сила удара, 1–127">
         <span class="ptn-vel-label">сила</span>
         <input type="range" min={1} max={127} value={n.velocity}
-          onInput={(e) => { before ??= draftOf(slot)!.p; preview(slot, setVelocity(draftOf(slot)!.p, n.seq, +(e.currentTarget as HTMLInputElement).value)); }}
-          onChange={() => { if (before) settle(slot, before); before = null; }} />
+          onInput={(e) => { held ??= draftOf(slot)!.p; preview(slot, setVelocity(draftOf(slot)!.p, n.seq, +(e.currentTarget as HTMLInputElement).value)); }}
+          onChange={() => { if (held) settle(slot, held); held = null; }} />
         <b>{n.velocity}</b>
       </label>
       <span class="ptn-strip-group" title="Высота в полутонах, как пишет TR-REC">

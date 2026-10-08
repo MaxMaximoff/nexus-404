@@ -914,7 +914,7 @@ button, input, select { font: inherit; color: inherit; }
 .ptn-info .insp-dl { margin-left: auto; }
 .ptn-scroll { overflow-x: auto; padding-bottom: 4px; }
 .ptn-grid {
-  --head: 150px; --step: minmax(9px, 1fr);
+  --head: 190px; --step: minmax(9px, 1fr);
   display: grid; grid-template-columns: var(--head) minmax(calc(var(--steps) * 9px), 1fr); row-gap: 3px;
 }
 .ptn-ruler { display: grid; grid-template-columns: repeat(var(--steps), minmax(0, 1fr)); font-size: 10px; color: var(--muted); height: 16px; align-items: end; }
@@ -1002,7 +1002,8 @@ button, input, select { font: inherit; color: inherit; }
 .ptn-revert { padding: 2px 8px; font-size: 12px; }
 .ptn-edit-toggle { height: 26px; padding: 0 10px; font-size: 12px; }
 .ptn-row-cell { display: flex; align-items: center; min-width: 0; }
-.ptn-row-cell .ptn-row-head { flex: 1; min-width: 0; height: 32px; }
+.ptn-row-cell .ptn-row-head { flex: 1; min-width: 0; }
+.ptn-grid-edit .ptn-row-cell .ptn-row-head { height: 32px; }
 .ptn-row-head.act { background: #e3f2fc; box-shadow: inset 0 0 0 1px rgba(0, 200, 255, 0.4); }
 .ptn-row-x { flex: none; opacity: 0.6; }
 .ptn-row-x:hover { opacity: 1; }
@@ -1012,7 +1013,7 @@ button, input, select { font: inherit; color: inherit; }
 .ptn-h { position: absolute; right: 0; top: 0; bottom: 0; width: 7px; cursor: ew-resize; }
 .ptn-vel-head { display: flex; align-items: center; gap: 6px; padding-left: 2px; font-size: 11px; color: var(--muted); }
 .ptn-vellane {
-  position: relative; height: 52px; border-radius: 5px; overflow: hidden; cursor: ns-resize; touch-action: none; user-select: none;
+  position: relative; height: 104px; border-radius: 5px; overflow: hidden; cursor: ns-resize; touch-action: none; user-select: none;
   background: var(--well); border: 1px solid var(--bevel); box-shadow: var(--well-shadow);
 }
 .ptn-vellane i { position: absolute; bottom: 0; border-radius: 2px 2px 0 0; background: var(--blue); opacity: 0.8; pointer-events: none; }
@@ -1055,4 +1056,23 @@ button, input, select { font: inherit; color: inherit; }
 .ptn-menu-title { font-size: 11px; color: var(--muted); }
 .ptn-menu-row { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
 .ptn-band { position: absolute; z-index: 4; pointer-events: none; border: 1px dashed var(--neon-hi); background: color-mix(in srgb, var(--neon) 12%, transparent); border-radius: 3px; }
-
+.ptn-vel-field { width: 52px; height: 28px; padding: 2px 6px; font-size: 12px; }
+.ptn-editbar .segmented button { padding: 3px 9px; font-size: 12px; }
+/* Mute / solo of a row while playing. */
+.ptn-rowsound { display: inline-flex; gap: 2px; flex: none; margin: 0 2px; }
+.ptn-ms { font: inherit; font-size: 9.5px; font-weight: 800; width: 17px; height: 17px; padding: 0; border-radius: 4px; cursor: pointer;
+  color: var(--muted); background: transparent; border: 1px solid var(--line, var(--bevel)); opacity: 0.55; }
+.ptn-row-cell:hover .ptn-ms, .ptn-ms.on { opacity: 1; }
+.ptn-ms.mute { color: #1a1206; background: var(--warn); border-color: var(--warn); }
+.ptn-ms.solo { color: #04110e; background: var(--neon); border-color: var(--neon); }
+.ptn-lane.silent { opacity: 0.4; }
+.ptn-grid-edit { --head: 224px; }
+/* The pad's code in a pattern row: back to that pad's sample. */
+.ptn-row-pad {
+  flex: none; width: 36px; font: inherit; font-size: 12px; font-weight: 800; text-align: left; padding: 3px 4px; border-radius: 5px; cursor: pointer;
+  color: var(--text); background: none; border: 1px solid transparent; text-decoration: underline dotted transparent; text-underline-offset: 3px;
+}
+.ptn-row-pad:hover { color: var(--accent); border-color: var(--line, var(--bevel)); text-decoration-color: currentColor; }
+.ptn-vellane i { overflow: visible; }
+.ptn-vel-num { position: absolute; bottom: calc(100% + 2px); left: 50%; transform: translateX(-50%); font-size: 10px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; pointer-events: none; }
+.ptn-vel-num.in { bottom: auto; top: 3px; color: #04110e; }

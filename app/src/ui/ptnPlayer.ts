@@ -19,6 +19,16 @@ const START_DELAY_MS = 60;
 /** The slot playing, or null. */
 export const playingSlot = signal<number | null>(null);
 
+/** Rows silenced while playing, and rows played alone (pads): listening only, nothing of it is saved. */
+export const mutedPads = signal<ReadonlySet<number>>(new Set());
+export const soloPads = signal<ReadonlySet<number>>(new Set());
+export const audible = (pad: number): boolean => (soloPads.value.size ? soloPads.value.has(pad) : !mutedPads.value.has(pad));
+const flip = (s: ReadonlySet<number>, pad: number) => { const n = new Set(s); if (!n.delete(pad)) n.add(pad); return n; };
+export const toggleMute = (pad: number): void => { mutedPads.value = flip(mutedPads.value, pad); };
+export const toggleSolo = (pad: number): void => { soloPads.value = flip(soloPads.value, pad); };
+/** Mute and solo belong to the pattern they were set on: another one starts with every row on. */
+let soundsOf = -1;
+
 interface State {
   slot: number;
   /** performance.now() at tick 0 of the first loop. */
@@ -45,6 +55,7 @@ const msPerTick = (slot: number): number => 60000 / ((tempoFor(slot >> 4)?.tempo
 
 export function playPattern(slot: number): void {
   stopPattern();
+  if (soundsOf !== slot) { mutedPads.value = new Set(); soloPads.value = new Set(); soundsOf = slot; }
   const p = current(slot);
   if (!p || !p.length) return;
   const now = performance.now();
@@ -105,7 +116,7 @@ function pump(): void {
       const loop = Math.floor(a / p.length) * p.length, end = Math.min(upTo, loop + p.length);
       for (const n of p.notes) {
         const at = loop + n.tick;
-        if (at < a || at >= end) continue;
+        if (at < a || at >= end || !audible(n.pad)) continue;
         scheduleNote(n.pad, n.velocity, s.t0 + at * s.tickMs, s.t0 + (at + Math.max(1, n.gate)) * s.tickMs);
         s.pads.add(n.pad);
       }
