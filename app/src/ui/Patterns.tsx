@@ -5,7 +5,7 @@
 import { computed, signal } from "@preact/signals";
 import { BANKS, PPQ, decodeAudio, formatBpm, noteSemitones, padName, type Pattern, type PatternNote } from "../sp404";
 import { bouncePattern, bouncing, conn, downloadPatternMidi, log, notice, patterns, patternsLoading, patternsOf, pads, project1, refreshPatterns, selectPad, selectedPad, tempoFor, writeBlockReason } from "./store";
-import { IconDownload, IconRefresh, IconWave } from "./icons";
+import { IconChevronLeft, IconChevronRight, IconDownload, IconRefresh, IconWave } from "./icons";
 import { TakeCard } from "./Recorder";
 import { recTake, setTake } from "./rec";
 import { saveFile } from "./download";
@@ -106,9 +106,9 @@ function PatternView() {
         <button class="icon-btn insp-dl" onClick={() => downloadPatternMidi(slot)}
           title={`Скачать как MIDI-файл, как экспорт SP: канал = банк, A13 = нота 36${t ? `; темп ${formatBpm(t.tempoX100)} — тот, что играет сейчас` : ""}`}><IconDownload /> MIDI</button>
       </div>
-      <StepGrid p={p} rows={rows} />
+      <StepGrid slot={slot} p={p} rows={rows} />
       <Bounce slot={slot} p={p} />
-      <p class="hint">Строки — pad'ы, которые играет паттерн; клик по названию открывает pad справа. Столбцы — шаги 1/16, яркость ноты — сила удара{pitched ? ", зелёные с «+1», «−2» — ноты, транспонированные в TR-REC" : ""}. Паттерн пока только для просмотра.</p>
+      <p class="hint">Строки — pad'ы, которые играет паттерн; клик по названию открывает pad справа. Столбцы — шаги 1/16, высота заливки ноты — сила удара{pitched ? ", зелёные с «+1», «−2» — ноты, транспонированные в TR-REC" : ""}. Паттерн пока только для просмотра.</p>
     </div>
   );
 }
@@ -159,47 +159,134 @@ function Bounce({ slot, p }: { slot: number; p: Pattern }) {
   );
 }
 
-function StepGrid({ p, rows }: { p: Pattern; rows: number[] }) {
-  const steps = Math.max(1, Math.ceil(p.length / STEP)), barSteps = p.beatsPerBar * 4;
+/** A page shows whole bars, at most this many steps: a longer pattern is paged, not squeezed. */
+const MAX_PAGE_STEPS = 32;
+
+/** The page shown, and the note picked on it. Both belong to a slot and start over when another opens. */
+const pageOf = signal({ slot: -1, page: 0 });
+/** A note under the pointer or focus (`pinned` false), or kept with a click (`pinned` true). */
+const noteFocus = signal<{ slot: number; idx: number; pinned: boolean } | null>(null);
+
+/** What the readout and the note's aria-label say about one note. */
+function noteFacts(n: PatternNote, p: Pattern) {
+  const barTicks = p.beatsPerBar * PPQ, inBar = n.tick % barTicks, off = n.tick % STEP;
+  const st = noteSemitones(n);
+  return {
+    where: `такт ${Math.floor(n.tick / barTicks) + 1}, шаг ${Math.floor(inBar / STEP) + 1}${off ? ` +${off} тиков` : ""}`,
+    len: `${+(n.gate / STEP).toFixed(2)} шага`,
+    pitch: st === null ? (n.pitch ? `байт 3 = 0x${n.pitch.toString(16)}` : "") : st ? `высота ${signed(st)} пт` : "",
+    origin: st === null ? "сыграна вживую" : "из TR-REC",
+  };
+}
+
+function StepGrid({ slot, p, rows }: { slot: number; p: Pattern; rows: number[] }) {
+  const barSteps = p.beatsPerBar * 4, barTicks = p.beatsPerBar * PPQ;
+  const totalBars = Math.max(1, Math.ceil(p.length / barTicks));
+  const barsPerPage = Math.max(1, Math.floor(MAX_PAGE_STEPS / barSteps));
+  const pages = Math.ceil(totalBars / barsPerPage);
+  const page = Math.min(pageOf.value.slot === slot ? pageOf.value.page : 0, pages - 1);
+  // One page keeps the pattern's own length; with several, every page is as wide as a full one.
+  const steps = pages > 1 ? barsPerPage * barSteps : Math.max(1, Math.ceil(p.length / STEP));
+  const pageTicks = steps * STEP, from = page * pageTicks, to = Math.min(from + pageTicks, p.length);
+  const pageBars = Math.max(1, Math.ceil((to - from) / barTicks));
+  const used = ((to - from) / pageTicks) * 100;
   const sel = selectedPad.value;
-  const byPad = new Map<number, PatternNote[]>();
-  for (const n of p.notes) byPad.set(n.pad, [...(byPad.get(n.pad) ?? []), n]);
+  const byPad = new Map<number, { n: PatternNote; idx: number }[]>();
+  p.notes.forEach((n, idx) => byPad.set(n.pad, [...(byPad.get(n.pad) ?? []), { n, idx }]));
+  const f = noteFocus.value?.slot === slot ? noteFocus.value : null;
+  const setPage = (v: number) => { pageOf.value = { slot, page: Math.max(0, Math.min(pages - 1, v)) }; };
   return (
-    <div class="ptn-scroll">
-      <div class="ptn-grid" style={{ "--steps": steps, "--bar": barSteps }}>
-        <div class="ptn-ruler-head" />
-        <div class="ptn-ruler">
-          {Array.from({ length: Math.ceil(steps / barSteps) }, (_, bar) => (
-            <span key={bar} style={{ gridColumn: `span ${Math.min(barSteps, steps - bar * barSteps)}` }}>{bar + 1}</span>
+    <>
+      {pages > 1 && <Pager page={page} pages={pages} barsPerPage={barsPerPage} totalBars={totalBars} onPage={setPage} />}
+      <div class="ptn-scroll" onClick={(e) => { if (f?.pinned && !(e.target as Element).closest(".ptn-note")) noteFocus.value = null; }}>
+        <div class="ptn-grid" style={{ "--steps": steps, "--bar": barSteps }}>
+          <div class="ptn-ruler-head" />
+          <div class="ptn-ruler">
+            {Array.from({ length: pageBars }, (_, bar) => (
+              <span key={bar} style={{ gridColumn: `span ${Math.min(barSteps, steps - bar * barSteps)}` }}>{page * barsPerPage + bar + 1}</span>
+            ))}
+          </div>
+          {rows.map((pad) => {
+            const b = pads.value[pad];
+            return [
+              <button key={`h${pad}`} class={`ptn-row-head ${pad === sel ? "cur" : ""} ${b?.size ? "" : "missing"}`} onClick={() => selectPad(pad)}
+                title={b?.size ? `${padName(pad)} «${b.name}» — открыть справа` : `${padName(pad)} пуст: паттерн играет тишину`}>
+                <b>{padName(pad)}</b><span>{b?.size ? b.name || "без имени" : "пусто"}</span>
+              </button>,
+              <div key={`l${pad}`} class={`ptn-lane ${pad === sel ? "cur" : ""} ${used < 100 ? "short" : ""}`} style={{ "--used": `${used}%` }}>
+                {byPad.get(pad)!.map(({ n, idx }) => <Note key={idx} slot={slot} idx={idx} n={n} p={p} from={from} pageTicks={pageTicks} />)}
+              </div>,
+            ];
+          })}
+        </div>
+      </div>
+      <NoteReadout slot={slot} p={p} />
+    </>
+  );
+}
+
+/** Pages of the step grid: arrows and, while there are few, a button per page. */
+function Pager({ page, pages, barsPerPage, totalBars, onPage }: { page: number; pages: number; barsPerPage: number; totalBars: number; onPage: (p: number) => void }) {
+  const range = (i: number) => {
+    const a = i * barsPerPage + 1, b = Math.min(totalBars, (i + 1) * barsPerPage);
+    return a === b ? `${a}` : `${a}–${b}`;
+  };
+  return (
+    <div class="ptn-pager" role="group" aria-label="Страницы паттерна">
+      <button class="icon-btn" disabled={page === 0} onClick={() => onPage(page - 1)} title="Предыдущие такты" aria-label="Предыдущие такты"><IconChevronLeft /></button>
+      {pages <= 8 ? (
+        <div class="segmented">
+          {Array.from({ length: pages }, (_, i) => (
+            <button key={i} class={i === page ? "on" : ""} aria-pressed={i === page} onClick={() => onPage(i)} title={`Такты ${range(i)}`}>{range(i)}</button>
           ))}
         </div>
-        {rows.map((pad) => {
-          const b = pads.value[pad];
-          return [
-            <button key={`h${pad}`} class={`ptn-row-head ${pad === sel ? "cur" : ""} ${b?.size ? "" : "missing"}`} onClick={() => selectPad(pad)}
-              title={b?.size ? `${padName(pad)} «${b.name}» — открыть справа` : `${padName(pad)} пуст: паттерн играет тишину`}>
-              <b>{padName(pad)}</b><span>{b?.size ? b.name || "без имени" : "пусто"}</span>
-            </button>,
-            <div key={`l${pad}`} class={`ptn-lane ${pad === sel ? "cur" : ""}`}>
-              {byPad.get(pad)!.map((n, i) => <Note key={i} n={n} p={p} />)}
-            </div>,
-          ];
-        })}
-      </div>
+      ) : (
+        <span class="ptn-pager-label">такты {range(page)} <span class="muted">из {totalBars}</span></span>
+      )}
+      <button class="icon-btn" disabled={page === pages - 1} onClick={() => onPage(page + 1)} title="Следующие такты" aria-label="Следующие такты"><IconChevronRight /></button>
+      {pages <= 8 && <span class="muted small">такты, всего {totalBars}</span>}
     </div>
   );
 }
 
-function Note({ n, p }: { n: PatternNote; p: Pattern }) {
-  const pos = (t: number) => `${(t / p.length) * 100}%`;
-  const barTicks = p.beatsPerBar * PPQ, inBar = n.tick % barTicks, off = n.tick % STEP;
-  const where = `такт ${Math.floor(n.tick / barTicks) + 1}, шаг ${Math.floor(inBar / STEP) + 1}${off ? ` +${off} тиков` : ""}`;
-  const st = noteSemitones(n);
-  const pitch = st === null ? (n.pitch ? ` · байт 3 = 0x${n.pitch.toString(16)}` : "") : st ? ` · высота ${signed(st)} пт` : "";
-  const title = `${padName(n.pad)} · ${where} · сила ${n.velocity} · длина ${+(n.gate / STEP).toFixed(2)} шага${pitch}${st === null ? " · сыграна вживую" : " · из TR-REC"}`;
+/** One line under the grid for the note under the pointer: velocity as a number and a meter, and the rest. A click keeps it. */
+function NoteReadout({ slot, p }: { slot: number; p: Pattern }) {
+  const f = noteFocus.value, n = f?.slot === slot ? p.notes[f.idx] : undefined;
+  if (!f || !n) return <div class="ptn-readout idle">Наведите на ноту: покажу силу удара, длину и позицию. Клик закрепляет.</div>;
+  const k = noteFacts(n, p), b = pads.value[n.pad];
   return (
-    <span class={`ptn-note ${off ? "off" : ""} ${st ? "pitched" : ""}`} title={title}
-      style={{ left: pos(n.tick), width: `max(4px, ${pos(Math.min(n.gate, p.length - n.tick))})`, opacity: 0.35 + (0.65 * n.velocity) / 127 }}>
+    <div class={`ptn-readout ${f.pinned ? "pinned" : ""}`} aria-live="polite">
+      <b class="ptn-readout-pad">{padName(n.pad)}</b>
+      <span class="ptn-readout-name">{b?.size ? b.name || "без имени" : "пусто"}</span>
+      <span class="ptn-vel" title="Сила удара, 1–127">
+        <span class="ptn-vel-label">сила</span>
+        <span class="ptn-vel-meter"><span style={{ width: `${(n.velocity / 127) * 100}%` }} /></span>
+        <b>{n.velocity}</b>
+      </span>
+      <span>{k.where}</span>
+      <span>длина {k.len}</span>
+      {k.pitch && <span>{k.pitch}</span>}
+      <span class="muted">{k.origin}</span>
+    </div>
+  );
+}
+
+function Note({ slot, idx, n, p, from, pageTicks }: { slot: number; idx: number; n: PatternNote; p: Pattern; from: number; pageTicks: number }) {
+  const end = Math.min(n.tick + Math.max(n.gate, 1), p.length), to = from + pageTicks;
+  if (n.tick >= to || end <= from) return null;
+  const start = Math.max(n.tick, from), stop = Math.min(end, to);
+  const pct = (t: number) => `${((t - from) / pageTicks) * 100}%`;
+  const off = n.tick % STEP, st = noteSemitones(n), k = noteFacts(n, p), f = noteFocus.value;
+  const here = f?.slot === slot && f.idx === idx;
+  const aria = `${padName(n.pad)} · ${k.where} · сила ${n.velocity} · длина ${k.len}${k.pitch ? ` · ${k.pitch}` : ""} · ${k.origin}`;
+  const hover = (on: boolean) => { if (!noteFocus.value?.pinned || noteFocus.value.slot !== slot) noteFocus.value = on ? { slot, idx, pinned: false } : null; };
+  const pin = () => { noteFocus.value = here && f!.pinned ? null : { slot, idx, pinned: true }; };
+  return (
+    <span class={`ptn-note ${off ? "off" : ""} ${st ? "pitched" : ""} ${n.tick < from ? "cont-in" : ""} ${end > to ? "cont-out" : ""} ${here ? "focus" : ""}`}
+      role="button" tabIndex={0} aria-label={aria} aria-pressed={here && f!.pinned}
+      onPointerEnter={() => hover(true)} onPointerLeave={() => hover(false)} onFocus={() => hover(true)} onBlur={() => hover(false)}
+      onClick={pin} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pin(); } }}
+      style={{ left: pct(start), width: `max(4px, ${((stop - start) / pageTicks) * 100}%)`, "--vel": `${(n.velocity / 127) * 100}%` }}>
       {st ? signed(st) : ""}
     </span>
   );
