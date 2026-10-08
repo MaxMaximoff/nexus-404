@@ -33,6 +33,8 @@
   --pad-skin-light: url("../assets/nexus-ui/pads/pad-light.webp");
   --pad-skin-empty: url("../assets/nexus-ui/pads/pad-graphite.webp");
   --pad-emitter: url("../assets/nexus-ui/lighting/pad-emitter.svg");
+  --panel-skin: url("../assets/nexus-ui/panels/panel-light.webp");
+  --panel-corners: url("../assets/nexus-ui/details/panel-corners.svg");
 
   /* Radii */
   --r-panel: 18px;
@@ -305,21 +307,39 @@ button, input, select { font: inherit; color: inherit; }
 .workspace { display: flex; flex-direction: column; gap: 14px; min-width: 0; align-self: stretch; }
 .workspace > :last-child { flex: 1; }
 
-/* ---------- banks: compact metal keys, a content indicator each ---------- */
+/* ---------- banks: shared hybrid material, live occupancy indicators ---------- */
 .bank-rail { padding: 12px 24px 14px; display: flex; flex-direction: column; gap: 9px; }
+.bank-rail.glass {
+  isolation: isolate; background: none; border: 1px solid transparent;
+  border-image: var(--panel-skin) 96 fill / 20px / 4px stretch;
+  box-shadow: 0 3px 8px -4px #365e7e70;
+}
+.bank-rail.glass::before {
+  inset: 5px; border: 0; border-radius: 0;
+  border-image: var(--panel-corners) 48 / 18px / 0 stretch;
+  background: none; box-shadow: none;
+}
+.bank-rail.glass::after { content: none; }
 .bank-list { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
 .bank-tile {
   display: grid; grid-template-columns: 26px minmax(0, 1fr); align-items: center; gap: 10px; padding: 6px 10px 6px 7px; cursor: pointer;
-  border-radius: 10px; border: 1px solid var(--key-border); border-bottom-color: var(--key-border-low); background: var(--key); box-shadow: var(--key-shadow);
-  transition: box-shadow var(--transition), border-color var(--transition);
+  position: relative; isolation: isolate; border-radius: 10px; border: 1px solid transparent;
+  background: none; border-image: var(--pad-skin-light) 100 fill / 8px / 1px stretch; box-shadow: none;
+  transition: box-shadow var(--transition);
 }
-.bank-tile:hover { background: var(--key-hover); border-color: #93b7cf; }
-.bank-tile:active { box-shadow: var(--key-pressed); }
-/* Lit bank: the key's own face, an LED rim with hot spots, a cyan cast on the metal around it. */
+.bank-tile::before {
+  content: ""; position: absolute; inset: 0; border: 0; border-radius: inherit;
+  border-image: var(--pad-emitter) 44 / 8px / 0 stretch;
+  pointer-events: none; opacity: .2; transition: opacity var(--transition);
+}
+.bank-tile:not(.active):hover::before { opacity: .7; }
 .bank-tile.active {
-  border-color: var(--led-border);
-  background: var(--led-glints), linear-gradient(180deg, #fbfeff 0%, #eef7fc 45%, #dcebf5 100%);
-  box-shadow: var(--led), 0 1px 0 #8aafc5, 0 3px 3px -1px rgba(35, 70, 100, 0.24);
+  box-shadow: 0 0 3px #00c8ff, 0 0 8px #00a5ff45;
+}
+.bank-tile.active::before { opacity: 1; }
+.bank-tile:active { box-shadow: 0 0 3px #00c8ff70; }
+@media (prefers-reduced-motion: reduce) {
+  .bank-tile, .bank-tile::before { transition: none; }
 }
 .mini-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; padding: 2px; border-radius: 4px; background: rgba(38, 50, 63, 0.1); box-shadow: inset 0 1px 1px rgba(44, 75, 100, 0.22), 0 1px 0 rgba(255, 255, 255, 0.8); }
 .mini-grid i { aspect-ratio: 1; border-radius: 1.5px; background: var(--graphite-face); }
@@ -329,7 +349,8 @@ button, input, select { font: inherit; color: inherit; }
 .bank-letter { font-weight: 800; font-size: 15px; color: var(--text); display: inline-flex; align-items: center; gap: 4px; }
 .bank-tile.active .bank-meta { color: var(--accent); }
 .lock { margin-left: auto; color: var(--warn); display: inline-flex; }
-.bank-tile.drop-target { border-style: dashed; border-color: #6fb7e0; }
+.bank-tile.drop-target:not(:focus-visible) { outline: 1px dashed #6fb7e0; outline-offset: 2px; }
+.bank-tile.drop-target.drop:not(:focus-visible) { outline-style: solid; outline-color: var(--led-border); }
 .bank-tile.drop { border-color: var(--led-border); box-shadow: var(--led); }
 .bank-tile.drop-full { opacity: 0.45; }
 .mini-grid i.target { background: linear-gradient(var(--neon-hi), var(--blue)); box-shadow: 0 0 3px rgba(0, 200, 255, 0.85); }
