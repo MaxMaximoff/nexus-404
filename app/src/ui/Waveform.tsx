@@ -71,6 +71,8 @@ export function Waveform({ wave, range, onCommit }: { wave: Wave; range?: Range;
     const canvas = ref.current;
     if (!canvas) return;
     const draw = () => {
+      // The accent hue comes from the theme (--ah in theme-matte.css), so the trace follows it.
+      const ah = getComputedStyle(canvas).getPropertyValue("--ah").trim() || "172";
       const dpr = window.devicePixelRatio || 1;
       const w = canvas.clientWidth, h = canvas.clientHeight;
       widthRef.current = w;
@@ -98,14 +100,14 @@ export function Waveform({ wave, range, onCommit }: { wave: Wave; range?: Range;
         const amp = laneH * 0.44;
         const n = peaks.length / 2;
         const grad = g.createLinearGradient(0, mid - amp, 0, mid + amp);
-        // A thin orange trace: a dim fill, a crisp outline with a little glow.
-        grad.addColorStop(0, "rgba(255, 150, 90, 0.30)");
-        grad.addColorStop(0.5, "rgba(255, 106, 31, 0.50)");
-        grad.addColorStop(1, "rgba(255, 150, 90, 0.30)");
+        // A thin trace in the accent hue: a dim fill, a crisp outline with a little glow.
+        grad.addColorStop(0, `hsl(${ah} 90% 65% / 0.30)`);
+        grad.addColorStop(0.5, `hsl(${ah} 90% 52% / 0.50)`);
+        grad.addColorStop(1, `hsl(${ah} 90% 65% / 0.30)`);
         g.fillStyle = grad;
-        g.strokeStyle = "#ff7a2f";
+        g.strokeStyle = `hsl(${ah} 85% 56%)`;
         g.lineWidth = 1;
-        g.shadowColor = "rgba(255, 106, 31, 0.55)";
+        g.shadowColor = `hsl(${ah} 90% 52% / 0.55)`;
         g.shadowBlur = 3;
         g.beginPath();
         for (let i = 0; i < n; i++) g.lineTo((i / n) * w, mid - Math.max(peaks[i * 2 + 1], 0.004) * amp);
@@ -125,11 +127,11 @@ export function Waveform({ wave, range, onCommit }: { wave: Wave; range?: Range;
       if (x0 > 0) g.fillRect(0, 0, Math.min(x0, w), h);
       if (x1 < w) g.fillRect(Math.max(x1, 0), 0, w - Math.max(x1, 0), h);
       // The played range: a faint warm wash between crisp markers.
-      g.fillStyle = "rgba(255, 106, 31, 0.05)";
+      g.fillStyle = `hsl(${ah} 90% 52% / 0.05)`;
       g.fillRect(Math.max(x0, 0), 0, Math.min(x1, w) - Math.max(x0, 0), h);
-      g.strokeStyle = g.fillStyle = "#ff7a2f";
+      g.strokeStyle = g.fillStyle = `hsl(${ah} 85% 56%)`;
       g.lineWidth = 1.5;
-      g.shadowColor = "rgba(255, 106, 31, 0.8)";
+      g.shadowColor = `hsl(${ah} 90% 52% / 0.8)`;
       g.shadowBlur = 4;
       for (const [x, side] of [[Math.max(1, x0), 1], [Math.min(w - 1, x1), -1]] as const) {
         if (x < 0 || x > w) continue;
@@ -147,7 +149,7 @@ export function Waveform({ wave, range, onCommit }: { wave: Wave; range?: Range;
         const lx = Math.min(Math.max(X(f) - tw / 2, 2), w - tw - 2);
         g.fillStyle = "rgba(20, 22, 26, 0.95)";
         g.fillRect(lx, h - 22, tw, 18);
-        g.fillStyle = "#ff9a5c";
+        g.fillStyle = `hsl(${ah} 85% 68%)`;
         g.fillText(label, lx + 5, h - 9);
       }
     };
