@@ -1,7 +1,7 @@
 import { useState } from "preact/hooks";
 import { PROJECT_COUNT } from "../sp404";
 import {
-  conn, connect, disconnect, freeKb, hasGrant, importing, loadProgress, project, reconnect, selectProject, selectedBank, setBankTempo, setProjectTempo,
+  conn, connect, demo, disconnect, startDemo, freeKb, hasGrant, importing, loadProgress, project, reconnect, selectProject, selectedBank, setBankTempo, setProjectTempo,
   setTempoSelect, status, writeBlockReason,
 } from "./store";
 import { TempoField } from "./TempoField";
@@ -85,7 +85,7 @@ export function TopBar() {
 
       <div class={`conn conn-${c}`}>
         <span class="dot" />
-        <span>{LABEL[c]}{c === "loading" ? ` ${Math.round(loadProgress.value * 100)} %` : ""}</span>
+        <span>{demo.value && c === "ready" ? "Демо, без SP" : LABEL[c]}{c === "loading" ? ` ${Math.round(loadProgress.value * 100)} %` : ""}</span>
       </div>
 
       {connected && ps && st && (
@@ -103,10 +103,11 @@ export function TopBar() {
         {!connected && c !== "unsupported" && (
           <>
             {hasGrant.value && <button class="btn" onClick={() => reconnect()} disabled={c === "connecting"}>Переподключить</button>}
+            <button class="btn" onClick={startDemo} disabled={c === "connecting"} title="Выдуманный проект без SP — чтобы посмотреть интерфейс">Демо</button>
             <button class="btn btn-primary" onClick={connect} disabled={c === "connecting"}><IconPlug /> Connect SP-404MKII</button>
           </>
         )}
-        {connected && <button class="btn" onClick={disconnect}><IconUnplug /> Отключить</button>}
+        {connected && <button class="btn" onClick={disconnect}><IconUnplug /> {demo.value ? "Выйти из демо" : "Отключить"}</button>}
       </div>
     </header>
   );

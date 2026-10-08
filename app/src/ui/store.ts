@@ -147,11 +147,43 @@ export async function disconnect(): Promise<void> {
   batch(() => {
     conn.value = "idle";
     status.value = null;
+    if (demo.value) {
+      demo.value = false;
+      project.value = null;
+      pads.value = Array(PAD_COUNT).fill(null);
+      patterns.value = null;
+      waveforms.value = new Map();
+      padChannels.value = new Map();
+      picked.value = new Set();
+    }
   });
   log("info", "Отключено");
 }
 
-if (WebSerialTransport.supported()) {
+/** Demo mode (`?demo`): made-up data in the store, no device behind it (ui/demo.ts). */
+export const demo = signal(new URLSearchParams(location.search).has("demo"));
+
+export async function startDemo(): Promise<void> {
+  const { demoData } = await import("./demo");
+  const d = demoData();
+  batch(() => {
+    demo.value = true;
+    status.value = d.status;
+    project.value = d.project;
+    pads.value = d.pads;
+    patterns.value = d.patterns;
+    freeKb.value = d.freeKb;
+    selectedBank.value = 0;
+    selectedPad.value = 0;
+    for (const [pad, w] of d.waves) setWaveform(pad, d.pads[pad], w.samples, w.channels);
+    conn.value = "ready";
+  });
+  log("info", "Демо-режим: данные выдуманы, SP не подключён");
+}
+
+if (demo.value) startDemo();
+
+if (WebSerialTransport.supported() && !demo.value) {
   navigator.serial.addEventListener("connect", (e) => {
     refreshGrant();
     const port = e.target as SerialPort;

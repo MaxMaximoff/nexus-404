@@ -50,19 +50,22 @@ export function App() {
       }}
       onDrop={(e) => e.preventDefault()}
     >
-      <TopBar />
-      {n && (
-        <div class={`notice notice-${n.kind} glass`} role={n.kind === "error" ? "alert" : "status"}>
-          <span>{n.text}</span>
-          <button class="icon-btn" onClick={() => (notice.value = null)} aria-label="Закрыть"><IconX /></button>
-        </div>
-      )}
-      <main class={`layout ${mainView.value === "patterns" ? "layout-ptn" : ""}`}>
-        <div class="workspace">
-          {mainView.value === "patterns" ? <PatternsPane /> : <><BankRail /><PadGrid /></>}
-        </div>
-        {sideTab.value === "card" ? <CardBrowser /> : sideTab.value === "rec" ? <Recorder /> : <Inspector />}
-      </main>
+      {/* The first screen: top bar and the work area fill the window; import and log are below it. */}
+      <div class="screen">
+        <TopBar />
+        {n && (
+          <div class={`notice notice-${n.kind} glass`} role={n.kind === "error" ? "alert" : "status"}>
+            <span>{n.text}</span>
+            <button class="icon-btn" onClick={() => (notice.value = null)} aria-label="Закрыть"><IconX /></button>
+          </div>
+        )}
+        <main class={`layout ${mainView.value === "patterns" ? "layout-ptn" : ""}`}>
+          <div class="workspace">
+            {mainView.value === "patterns" ? <PatternsPane /> : <><BankRail /><PadGrid /></>}
+          </div>
+          {sideTab.value === "card" ? <CardBrowser /> : sideTab.value === "rec" ? <Recorder /> : <Inspector />}
+        </main>
+      </div>
       <div class="bottom">
         <ImportPanel />
         <LogPanel />

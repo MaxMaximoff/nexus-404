@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { BANKS, formatBpm, padName } from "../sp404";
 import {
-  PAD_DRAG, copyPad, copying, dragCopy, dragGroup, dropGroup, groupDrop, groupTargets, clearPicked, confirmGroupDelete, deletePicked, groupProgress, pickPad, picked, pickedList, conn, dragOverBank, draggedPad, endPadDrag, patternsOf, moveSpeedChange, connect, hasGrant, importFiles, jobs, movePad, pads, project, reconnect, reload, selectPad, selectedBank, selectedPad, setBankTempo, status,
+  PAD_DRAG, copyPad, copying, dragCopy, dragGroup, dropGroup, groupDrop, groupTargets, clearPicked, confirmGroupDelete, deletePicked, groupProgress, pickPad, picked, pickedList, conn, dragOverBank, draggedPad, endPadDrag, patternsOf, moveSpeedChange, connect, hasGrant, importFiles, startDemo, jobs, movePad, pads, project, reconnect, reload, selectPad, selectedBank, selectedPad, setBankTempo, status,
   waveforms, writeBlockReason,
 } from "./store";
 import { IconLock, IconRefresh, IconTrash } from "./icons";
@@ -40,7 +40,7 @@ export function PadGrid() {
       </div>
 
       <GroupBar />
-      <div class="pad-grid">
+      <div class={`pad-grid ${c !== "ready" && c !== "loading" ? "offline" : ""}`}>
         {Array.from({ length: 16 }, (_, i) => <PadCard key={i} index={b * 16 + i} />)}
         {c !== "ready" && c !== "loading" && <ConnectOverlay />}
       </div>
@@ -115,6 +115,7 @@ function ConnectOverlay() {
       {c !== "lost" && (
         <div class="row">
           {hasGrant.value && <button class="btn" onClick={() => reconnect()}>Переподключить</button>}
+          <button class="btn" onClick={startDemo} disabled={c === "connecting"} title="Выдуманный проект без SP — чтобы посмотреть интерфейс">Демо</button>
           <button class="btn btn-primary" onClick={connect} disabled={c === "connecting"}>Connect SP-404MKII</button>
         </div>
       )}
@@ -139,6 +140,7 @@ function PadCard({ index }: { index: number }) {
   return (
     <button
       class={cls}
+      data-pad={padName(index)}
       draggable={canMove}
       title={canMove ? "Перетащите на другой pad: на пустой — перенос, на занятый — обмен местами; с Ctrl — копия на пустой" : undefined}
       onClick={(e) => {
