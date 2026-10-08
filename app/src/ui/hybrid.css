@@ -1,8 +1,0 @@
-/* Existing opt-in study of inspector inner sections (?graphics=hybrid).
-   Shared pad and outer panel materials live in styles.css in every mode. */
-.hybrid-poc .inspector .acc {
-  background: #f5faff60;
-  border-color: #a6c4d6;
-  box-shadow: inset 0 1px 0 #ffffffd9, 0 1px 0 #ffffffa6;
-}
-.hybrid-poc .inspector .card-title { color: #006bbd; }

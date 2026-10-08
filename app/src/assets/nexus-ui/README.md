@@ -1,6 +1,6 @@
 # NEXUS-404: shared hybrid materials
 
-Open `http://localhost:5173/?demo`, then select A5. All occupied and empty pads in every bank share the approved raster materials. The bank panel, its ten tiles, the pad-grid panel and inspector shell now use the same material family. `?demo&graphics=hybrid` retains only the existing experiment for inspector inner sections.
+Open `http://localhost:5173/?demo`, then select A5. All occupied and empty pads in every bank share the approved raster materials. The bank panel, its ten tiles, the pad-grid panel and inspector shell use the same material family. Inspector inner sections use the approved translucent surfaces in the standard stylesheet. The old `?demo&graphics=hybrid` link displays the same interface; no experimental stylesheet or root class is required.
 
 The original three-component proof of concept is preserved in checkpoint `b07b226` on branch `codex/hybrid-pad-grid`. Its 166 tests passed before integration. Before/after screenshots use the same demo project, A5, the Sample tab, viewport and browser scale at 1440 × 900 and 1920 × 1080.
 
@@ -14,6 +14,7 @@ The original three-component proof of concept is preserved in checkpoint `b07b22
 | Pad-grid panel | `panels/panel-light.webp` | `details/panel-corners.svg` | Existing heading, tempo, group controls, pad grid, connection overlay and hint |
 | Bank tiles | `pads/pad-light.webp` | `lighting/pad-emitter.svg` | Existing 16-cell occupancy, bank letter, tempo, lock and transfer target |
 | Inspector shell (including SD browser and recorder) | `panels/panel-light.webp` | `details/panel-corners.svg` | Existing tabs, inputs, waveform, scroll area and transport |
+| Inspector inner sections | Shared shell visible through translucent CSS fill | Thin CSS border and highlight | Existing sample, tempo/pitch, pad, envelope, mix and resample controls |
 
 The standard `.pad`, `.full`, `.empty`, `.selected`, `.picked` and `.drop*` rules in `src/ui/styles.css` provide the shared system. Pad-specific A5/A11 overrides were removed from `hybrid.css`. There is no parallel pad theme or duplicate asset per pad. No component contract, device, store, waveform, bank, pattern, import, keyboard, selection or drag handler changed during this integration.
 
@@ -29,7 +30,7 @@ The final WebP files are 1024 × 1024 with alpha, encoded at quality 90 / alpha 
 
 CSS supplies selection, hover, pressed, focus and group-selection states; text and values remain real HTML. Occupied pads use SVG opacity .32 normally, .85 on hover, and 1 when selected. Selected pads retain the exact A5 halo from the checkpoint. Reduced-motion preferences disable transitions. Existing drag-operation outlines retain their priority; swap targets suppress the cyan emitter even on hover, keeping their orange cue distinct. Copy/swap operation labels remain visible and their corner badges are hidden as before. Loading progress remains live HTML. Offline pads retain the connection overlay, hidden labels and small status indicator, now on the shared graphite material.
 
-Pad skins are included in the normal stylesheet and add 128,986 bytes (about 126 KiB) of shared WebP resources. Shared panel shells also use the existing 88,414-byte panel material in the normal stylesheet. Only the inspector inner-section study CSS is dynamically imported with `graphics=hybrid`. All raster resources are shared URLs rather than separate copies for each control.
+Pad skins are included in the normal stylesheet and add 128,986 bytes (about 126 KiB) of shared WebP resources. Shared panel shells also use the existing 88,414-byte panel material in the normal stylesheet. All integrated materials and section rules now live in `styles.css`. All raster resources are shared URLs rather than separate copies for each control.
 
 ## Verification
 
@@ -76,4 +77,14 @@ Before/after screenshots cover A5 with the Sample tab at 1440 × 900 and 1920 ×
 
 Production build and TypeScript check passed; all 166 existing tests passed. No assets were added or modified, and the shared shell adds no resource download.
 
-Inspector inner sections, header and bottom service panels are pending the next sequential steps.
+## Stage 2, fourth step: inspector inner sections
+
+Checkpoint `769ae37` preserves the inspector-shell step. The approved `.acc` surface and blue `.card-title` color are now part of the existing base rules. Section geometry, padding, content and controls are unchanged. The translucent fill reveals the shared graphic shell rather than adding another bitmap per section. All sample, tempo/pitch, pad, envelope, mix and resample cards, including group editing, use these same rules.
+
+After checking references, the now-redundant `hybrid.css` and its conditional import/root-class bootstrap were removed. `main.tsx` mounts the same App directly with the standard stylesheet. Old links containing `graphics=hybrid` still work and no longer select a separate theme. No component contract, store, audio, device or interaction handler changed.
+
+Before/after screenshots cover A5 and the Sample inspector at 1440 × 900 and 1920 × 1080. At 1440, recorded section/shell/pad dimensions, backgrounds, borders, radii, shadows, colors, padding and gaps in the normal mode exactly match the approved hybrid study. Pad and Mix sections, keyboard focus, group Sample/Mix sections and the old query link were checked in the browser. At 390 × 844 the inspector is 355 px wide and its visible cards are 317 px wide; no horizontal page overflow or clipped section controls were apparent.
+
+Production build and TypeScript check passed; all 166 existing tests passed. No new assets, dependencies or downloads were added. Device recording and writes were not exercised.
+
+Header and bottom service panels are pending the next sequential steps.
