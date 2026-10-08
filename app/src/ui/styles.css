@@ -20,10 +20,10 @@
   --blue: #078fff;
   --blue-deep: #005dd9;
   --glint: #e9fdff;
-  /* Current bank/pad: a warm accent distinct from the cyan navigation and drop cues. */
-  --selection-edge: #ff7458;
-  --selection-ink: #aa3b24;
-  --selection-glow: 0 0 0 1.5px var(--selection-edge), 0 0 5px #ff7458b3, 0 0 14px #ff745866;
+  /* Current bank/pad: cool periwinkle, distinct from cyan navigation and drop cues. */
+  --selection-edge: #7785ff;
+  --selection-ink: #394baf;
+  --selection-glow: 0 0 0 1.5px var(--selection-edge), 0 0 5px #7785ffb3, 0 0 14px #7785ff66;
   /* Type */
   --text: #14283e;
   --text-2: #516980;
@@ -329,16 +329,16 @@ button, input, select { font: inherit; color: inherit; }
 .bank-tile.active {
   box-shadow: var(--selection-glow);
 }
-.bank-tile.active::before { opacity: 1; filter: hue-rotate(180deg) saturate(1.25); }
+.bank-tile.active::before { opacity: 1; filter: hue-rotate(45deg) saturate(1.25); }
 .bank-tile:active { box-shadow: 0 0 3px #00c8ff70; }
-.bank-tile.active:active { box-shadow: 0 0 0 1.5px var(--selection-edge), 0 0 7px #ff745880; }
+.bank-tile.active:active { box-shadow: 0 0 0 1.5px var(--selection-edge), 0 0 7px #7785ff80; }
 @media (prefers-reduced-motion: reduce) {
   .bank-tile, .bank-tile::before { transition: none; }
 }
 .mini-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; padding: 2px; border-radius: 4px; background: rgba(38, 50, 63, 0.1); box-shadow: inset 0 1px 1px rgba(44, 75, 100, 0.22), 0 1px 0 rgba(255, 255, 255, 0.8); }
 .mini-grid i { aspect-ratio: 1; border-radius: 1.5px; background: var(--graphite-face); }
 .mini-grid i.on { background: linear-gradient(#ffffff, #cfe2ee); box-shadow: inset 0 0 0 0.5px rgba(80, 140, 180, 0.55); }
-.bank-tile.active .mini-grid i.on { background: linear-gradient(#fff3e9, #ffb29b); box-shadow: 0 0 2px #ff745880; }
+.bank-tile.active .mini-grid i.on { background: linear-gradient(#f1f3ff, #bdc6ff); box-shadow: 0 0 2px #7785ff80; }
 .bank-meta { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .bank-letter { font-weight: 800; font-size: 15px; color: var(--text); display: inline-flex; align-items: center; gap: 4px; }
 .bank-tile.active .bank-meta, .bank-tile.active .bank-letter { color: var(--selection-ink); }
@@ -392,18 +392,18 @@ button, input, select { font: inherit; color: inherit; }
 .pad.empty .pad-empty { color: #7d94a8; }
 .pad.empty:hover { box-shadow: 0 0 0 1px #93bdd066; }
 .pad.empty:hover .pad-empty { color: #7f95aa; }
-/* Selected: warm emitter and external halo; preserve the approved raster and geometry. */
+/* Selected: cool emitter and external halo; preserve the approved raster and geometry. */
 .pad.full.selected {
   box-shadow: var(--selection-glow);
 }
-.pad.full.selected::before { opacity: 1; filter: hue-rotate(180deg) saturate(1.25); }
+.pad.full.selected::before { opacity: 1; filter: hue-rotate(45deg) saturate(1.25); }
 .pad.full.selected .pad-label { color: var(--selection-ink); }
 .pad.full:active { box-shadow: 0 0 5px #00c8ff70; }
-.pad.full.selected:active { box-shadow: 0 0 0 1.5px var(--selection-edge), 0 0 7px #ff745880; }
+.pad.full.selected:active { box-shadow: 0 0 0 1.5px var(--selection-edge), 0 0 7px #7785ff80; }
 .pad.empty.selected {
   box-shadow: var(--selection-glow);
 }
-.pad.empty.selected .pad-label { color: #ffb29b; }
+.pad.empty.selected .pad-label { color: #bdc6ff; }
 /* No SP: retain the connection overlay and hidden pad content on the shared graphite skin. */
 .pad-grid.offline .pad.empty > * { visibility: hidden; }
 .pad-grid.offline .pad.empty::before {
