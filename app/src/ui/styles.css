@@ -20,6 +20,10 @@
   --blue: #078fff;
   --blue-deep: #005dd9;
   --glint: #e9fdff;
+  /* Current bank/pad: a warm accent distinct from the cyan navigation and drop cues. */
+  --selection-edge: #ff7458;
+  --selection-ink: #aa3b24;
+  --selection-glow: 0 0 0 1.5px var(--selection-edge), 0 0 5px #ff7458b3, 0 0 14px #ff745866;
   /* Type */
   --text: #14283e;
   --text-2: #516980;
@@ -323,24 +327,26 @@ button, input, select { font: inherit; color: inherit; }
 }
 .bank-tile:not(.active):hover::before { opacity: .7; }
 .bank-tile.active {
-  box-shadow: 0 0 3px #00c8ff, 0 0 8px #00a5ff45;
+  box-shadow: var(--selection-glow);
 }
-.bank-tile.active::before { opacity: 1; }
+.bank-tile.active::before { opacity: 1; filter: hue-rotate(180deg) saturate(1.25); }
 .bank-tile:active { box-shadow: 0 0 3px #00c8ff70; }
+.bank-tile.active:active { box-shadow: 0 0 0 1.5px var(--selection-edge), 0 0 7px #ff745880; }
 @media (prefers-reduced-motion: reduce) {
   .bank-tile, .bank-tile::before { transition: none; }
 }
 .mini-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; padding: 2px; border-radius: 4px; background: rgba(38, 50, 63, 0.1); box-shadow: inset 0 1px 1px rgba(44, 75, 100, 0.22), 0 1px 0 rgba(255, 255, 255, 0.8); }
 .mini-grid i { aspect-ratio: 1; border-radius: 1.5px; background: var(--graphite-face); }
 .mini-grid i.on { background: linear-gradient(#ffffff, #cfe2ee); box-shadow: inset 0 0 0 0.5px rgba(80, 140, 180, 0.55); }
-.bank-tile.active .mini-grid i.on { background: linear-gradient(var(--glint), #8ee6ff); box-shadow: 0 0 2px rgba(0, 200, 255, 0.7); }
+.bank-tile.active .mini-grid i.on { background: linear-gradient(#fff3e9, #ffb29b); box-shadow: 0 0 2px #ff745880; }
 .bank-meta { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .bank-letter { font-weight: 800; font-size: 15px; color: var(--text); display: inline-flex; align-items: center; gap: 4px; }
-.bank-tile.active .bank-meta { color: var(--accent); }
+.bank-tile.active .bank-meta, .bank-tile.active .bank-letter { color: var(--selection-ink); }
 .lock { margin-left: auto; color: var(--warn); display: inline-flex; }
 .bank-tile.drop-target:not(:focus-visible) { outline: 1px dashed #6fb7e0; outline-offset: 2px; }
 .bank-tile.drop-target.drop:not(:focus-visible) { outline-style: solid; outline-color: var(--led-border); }
-.bank-tile.drop { border-color: var(--led-border); box-shadow: var(--led); }
+.bank-tile.drop, .bank-tile.drop:active { border-color: var(--led-border); box-shadow: var(--led); }
+.bank-tile.drop::before { filter: none; }
 .bank-tile.drop-full { opacity: 0.45; }
 .mini-grid i.target { background: linear-gradient(var(--neon-hi), var(--blue)); box-shadow: 0 0 3px rgba(0, 200, 255, 0.85); }
 .bank-tile .free em { font-style: normal; color: var(--warn); }
@@ -386,23 +392,30 @@ button, input, select { font: inherit; color: inherit; }
 .pad.empty .pad-empty { color: #7d94a8; }
 .pad.empty:hover { box-shadow: 0 0 0 1px #93bdd066; }
 .pad.empty:hover .pad-empty { color: #7f95aa; }
-/* Selected: preserve the approved A5 light, with no change to its raster or geometry. */
+/* Selected: warm emitter and external halo; preserve the approved raster and geometry. */
 .pad.full.selected {
-  box-shadow: 0 0 3px #00c8ff, 0 0 10px #00a5ff4d, 0 4px 8px -4px #00a5ff70;
+  box-shadow: var(--selection-glow);
 }
-.pad.full.selected::before { opacity: 1; }
+.pad.full.selected::before { opacity: 1; filter: hue-rotate(180deg) saturate(1.25); }
+.pad.full.selected .pad-label { color: var(--selection-ink); }
 .pad.full:active { box-shadow: 0 0 5px #00c8ff70; }
+.pad.full.selected:active { box-shadow: 0 0 0 1.5px var(--selection-edge), 0 0 7px #ff745880; }
 .pad.empty.selected {
-  box-shadow: 0 0 0 1px #00c8ff, 0 0 7px #00a5ff45;
+  box-shadow: var(--selection-glow);
 }
-.pad.empty.selected .pad-label { color: #7fd8ff; }
+.pad.empty.selected .pad-label { color: #ffb29b; }
 /* No SP: retain the connection overlay and hidden pad content on the shared graphite skin. */
 .pad-grid.offline .pad.empty > * { visibility: hidden; }
 .pad-grid.offline .pad.empty::before {
   content: ""; position: absolute; left: 11px; top: 11px; width: 7px; height: 7px; border-radius: 50%;
   background: radial-gradient(circle at 40% 35%, #8a9cad, #56687a); box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.35), 0 1px 0 #fff;
 }
-.pad:is(.full, .empty).picked { box-shadow: 0 0 0 2px #e5484d, 0 0 8px #e5484d55; }
+.pad:is(.full, .empty).picked {
+  box-shadow: 0 0 0 2px #e5484d, 0 0 8px #e5484d55;
+}
+.pad:is(.full, .empty).picked:not(.drop):not(.drop-swap):not(:focus-visible) {
+  outline: 2px dashed var(--danger); outline-offset: 2px;
+}
 @media (prefers-reduced-motion: reduce) {
   .pad, .pad.full::before { transition: none; }
 }
@@ -417,7 +430,7 @@ button, input, select { font: inherit; color: inherit; }
 .group-bar.confirm-delete { flex-wrap: wrap; }
 .group-bar.confirm-delete .group-names { flex: 1 1 100%; max-height: 72px; overflow: auto; white-space: normal; font-family: var(--mono); font-size: 12px; }
 .pad.drop { border-color: var(--led-border) !important; box-shadow: var(--led) !important; }
-.pad-grid .pad.full.drop::before { opacity: 1; }
+.pad-grid .pad.full.drop::before { opacity: 1; filter: none; }
 /* Dropping a pad onto an occupied one swaps them: say so on the target. */
 .pad.drop-swap { border-color: #f0a630 !important; box-shadow: inset 0 0 0 1px rgba(255, 244, 225, 0.9), 0 0 3px rgba(240, 160, 40, 0.85), 0 0 12px rgba(240, 160, 40, 0.3) !important; }
 .pad-grid .pad.full.drop-swap::before { opacity: 0; }
