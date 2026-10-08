@@ -27,3 +27,7 @@ export const IconGrid = () => svg("M3 5h18M3 12h18M3 19h18M8 3v18M14 3v18", 14);
 export const IconCheck = () => svg("M5 12l5 5 9-10", 14);
 export const IconChevronLeft = () => svg("M15 5l-7 7 7 7", 14);
 export const IconChevronRight = () => svg("M9 5l7 7-7 7", 14);
+export const IconUndo = () => svg("M9 14 4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3", 14);
+export const IconRedo = () => svg("M15 14l5-5-5-5M20 9H10a6 6 0 0 0 0 12h3", 14);
+export const IconPlus = () => svg("M12 5v14M5 12h14", 14);
+export const IconMinus = () => svg("M5 12h14", 14);

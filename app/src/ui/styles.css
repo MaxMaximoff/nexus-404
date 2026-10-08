@@ -329,10 +329,16 @@ button, input, select { font: inherit; color: inherit; }
    split's share, the other shrinks to nothing (and is inert), the inspector narrows or widens beside them. */
 .layout { flex: 1; display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 0fr) minmax(454px, 1fr); align-items: start; }
 .layout-ptn { grid-template-columns: minmax(0, 0fr) minmax(0, 1.5fr) minmax(414px, 0.9fr); }
-.layout > :last-child { margin-left: 14px; }
+/* Patterns alone: the pad inspector collapses to nothing, as the pads do when the patterns are open. */
+.layout-ptn.layout-solo { grid-template-columns: minmax(0, 0fr) minmax(0, 1fr) minmax(0, 0fr); }
+.layout > :last-child { margin-left: 14px; transition: margin-left 0.45s cubic-bezier(0.4, 0, 0.2, 1); }
+.layout-solo > :last-child { margin-left: 0; }
 .layout { transition: grid-template-columns 0.45s cubic-bezier(0.4, 0, 0.2, 1); }
 .slot { min-width: 0; transition: opacity 0.26s ease 0.12s; }
 .slot > * { min-width: 520px; }
+/* The inspector wrapper: it stretches to the row, the inspector fills it and keeps its own width. */
+.side { display: flex; flex-direction: column; align-self: stretch; }
+.side > .inspector { flex: 1; min-width: 454px; }
 .slot[inert] { opacity: 0; overflow: hidden; contain: size; pointer-events: none; }
 .layout.switching .slot { overflow: hidden; }
 @media (prefers-reduced-motion: reduce) {
@@ -986,3 +992,37 @@ button, input, select { font: inherit; color: inherit; }
 /* Long lists (Off, A–J): narrow keys of equal width, so the row stays one control. */
 .segmented.dense button { padding: 4px 0; min-width: 22px; text-align: center; }
 .segmented.dense button:first-child { padding: 4px 7px; }
+
+/* ---------- pattern editor ---------- */
+.ptn-edit { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.ptn-editbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; }
+.ptn-editbar-group { display: flex; align-items: center; gap: 6px; }
+.ptn-bars { min-width: 2ch; text-align: center; font-variant-numeric: tabular-nums; }
+.ptn-addpad { height: 28px; font-size: 12px; max-width: 150px; }
+.ptn-revert { padding: 2px 8px; font-size: 12px; }
+.ptn-edit-toggle { height: 26px; padding: 0 10px; font-size: 12px; }
+.ptn-row-cell { display: flex; align-items: center; min-width: 0; }
+.ptn-row-cell .ptn-row-head { flex: 1; min-width: 0; height: 32px; }
+.ptn-row-head.act { background: #e3f2fc; box-shadow: inset 0 0 0 1px rgba(0, 200, 255, 0.4); }
+.ptn-row-x { flex: none; opacity: 0.6; }
+.ptn-row-x:hover { opacity: 1; }
+.ptn-lane-edit { height: 32px; cursor: crosshair; touch-action: none; user-select: none; }
+.ptn-lane-edit .ptn-note { cursor: grab; touch-action: none; }
+.ptn-lane-edit .ptn-note:active { cursor: grabbing; }
+.ptn-h { position: absolute; right: 0; top: 0; bottom: 0; width: 7px; cursor: ew-resize; }
+.ptn-vel-head { display: flex; align-items: center; gap: 6px; padding-left: 2px; font-size: 11px; color: var(--muted); }
+.ptn-vellane {
+  position: relative; height: 52px; border-radius: 5px; overflow: hidden; cursor: ns-resize; touch-action: none; user-select: none;
+  background: var(--well); border: 1px solid var(--bevel); box-shadow: var(--well-shadow);
+}
+.ptn-vellane i { position: absolute; bottom: 0; border-radius: 2px 2px 0 0; background: var(--blue); opacity: 0.8; pointer-events: none; }
+.ptn-vellane i.picked { opacity: 1; background: var(--neon-hi); }
+.ptn-notestrip { gap: 6px 16px; }
+.ptn-notestrip input[type="range"] { width: 110px; accent-color: var(--blue); }
+.ptn-strip-group { display: inline-flex; align-items: center; gap: 5px; }
+.ptn-mini { padding: 1px 8px; min-width: 26px; height: 24px; font-size: 12px; }
+.ptn-mini.on { border-color: var(--led-border); box-shadow: var(--led); }
+.ptn-strip-del { margin-left: auto; }
+.ptn-slot { position: relative; }
+.ptn-slot.edited::after { content: ""; position: absolute; top: 2px; right: 2px; width: 4px; height: 4px; border-radius: 50%; background: var(--warn); }
+

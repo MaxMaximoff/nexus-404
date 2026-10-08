@@ -6,6 +6,7 @@ import { Recorder } from "./Recorder";
 import { canUploadHere, cardBusy, cardConfirm, cardEdit, cardSel, sideTab } from "./card";
 import { PadGrid } from "./PadGrid";
 import { PatternsPane, mainView } from "./Patterns";
+import { editingSlot } from "./patternDraft";
 import { TopBar } from "./TopBar";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { dragCopy, draggedPad, groupDrop, clearPicked, confirmDelete, confirmGroupDelete, groupProgress, notice, pads, pickBank, pickedList, selectedBank, selectedPad, writeBlockReason } from "./store";
@@ -13,6 +14,8 @@ import { IconX } from "./icons";
 
 export function App() {
   const n = notice.value, ptn = mainView.value === "patterns";
+  // The patterns take the whole width: the pad inspector steps aside (the SD card and the recorder stay when picked).
+  const solo = ptn && sideTab.value === "pad";
   // While the pads and the patterns trade width, the slots clip their content (not otherwise: pad glows reach out).
   const [switching, setSwitching] = useState(false), lastPtn = useRef(ptn);
   useLayoutEffect(() => {
@@ -27,6 +30,8 @@ export function App() {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       if (t?.closest("input, textarea, select, [contenteditable]")) return;
+      // On the patterns screen the pad inspector is hidden, so its Delete confirmation would be invisible; while a pattern is edited the keys are the editor's.
+      if (mainView.value === "patterns" && (editingSlot.value !== null || sideTab.value !== "card")) return;
       if (sideTab.value === "card" && (e.key === "Delete" || e.key === "Escape" || e.key === "F2")) {
         // The card browser is shown: Delete / Esc act on the files picked there, not on pads.
         if (e.key === "Delete" && cardSel.value.size && canUploadHere.value && !cardBusy.value) cardConfirm.value = true;
@@ -68,7 +73,7 @@ export function App() {
             <button class="icon-btn" onClick={() => (notice.value = null)} aria-label="Закрыть"><IconX /></button>
           </div>
         )}
-        <main class={`layout ${ptn ? "layout-ptn" : ""} ${switching ? "switching" : ""}`}>
+        <main class={`layout ${ptn ? "layout-ptn" : ""} ${solo ? "layout-solo" : ""} ${switching ? "switching" : ""}`}>
           {/* Both blocks stay mounted: switching view only moves their widths. The hidden one is inert and collapses. */}
           <div class="workspace slot" inert={ptn} aria-hidden={ptn}>
             <BankRail /><PadGrid />
@@ -76,7 +81,9 @@ export function App() {
           <div class="ptn-col slot" inert={!ptn} aria-hidden={!ptn}>
             <PatternsPane />
           </div>
-          {sideTab.value === "card" ? <CardBrowser /> : sideTab.value === "rec" ? <Recorder /> : <Inspector />}
+          {sideTab.value === "card" ? <CardBrowser /> : sideTab.value === "rec" ? <Recorder /> : (
+            <div class="side slot" inert={solo} aria-hidden={solo}><Inspector /></div>
+          )}
         </main>
       </div>
       <div class="bottom">

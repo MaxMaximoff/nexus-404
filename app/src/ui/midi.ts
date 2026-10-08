@@ -53,3 +53,11 @@ export function releasePads(pads: number[]): void {
   const t = performance.now();
   for (const pad of pads) { const { ch, note } = padNote(pad); out.send([0x80 | ch, note, 0], t); }
 }
+
+/** Play a pad once for a moment, as a tap: the editor's way to hear a step. Silent when the SP is not connected. */
+export function auditionPad(pad: number, velocity = 100): void {
+  if (!out) return;
+  const { ch, note } = padNote(pad), t = performance.now();
+  out.send([0x90 | ch, note, Math.max(1, Math.min(127, velocity))], t);
+  out.send([0x80 | ch, note, 0], t + 120);
+}

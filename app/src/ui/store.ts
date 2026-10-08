@@ -1,5 +1,6 @@
 // App state (signals) and the controller that drives the device.
 
+import { draftOf } from "./patternDraft";
 import { batch, computed, effect, signal } from "@preact/signals";
 import { safeFileName, saveFile } from "./download";
 import {
@@ -341,7 +342,7 @@ export const patternsOf = (pad: number): number[] => patternUse.value.get(pad) ?
 
 /** Save a pattern as a MIDI file, as the SP's own export, but with the tempo that plays now (project or bank). */
 export function downloadPatternMidi(slot: number): void {
-  const p = patterns.value?.get(slot), t = tempoFor(slot >> 4);
+  const p = draftOf(slot)?.p ?? patterns.value?.get(slot), t = tempoFor(slot >> 4);
   if (!p || typeof p === "string" || !t) return;
   const name = patternMidiName(project1.value, slot);
   saveFile(name, patternToMidi(p, t.tempoX100), "audio/midi");

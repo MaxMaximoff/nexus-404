@@ -1,11 +1,14 @@
-// Patterns of the current project, read-only for now: the 160 slots, and a pattern as a step grid
-// (pads as rows, 1/16 steps as columns), the shape the future TR-REC-style editor will take.
-// Notes off the grid (played live) are drawn where they are, not snapped to a step.
+// Patterns of the current project: the 160 slots, and a pattern as a step grid (pads as rows,
+// 1/16 steps as columns). Notes off the grid (played live) are drawn where they are, not snapped to
+// a step. "Править" opens the editor (PatternEditor.tsx) on a draft; nothing is written to the SP.
 
 import { computed, signal } from "@preact/signals";
 import { BANKS, PPQ, decodeAudio, formatBpm, noteSemitones, padName, type Pattern, type PatternNote } from "../sp404";
 import { bouncePattern, bouncing, conn, downloadPatternMidi, log, notice, patterns, patternsLoading, patternsOf, pads, project1, refreshPatterns, selectPad, selectedPad, tempoFor, writeBlockReason } from "./store";
-import { IconChevronLeft, IconChevronRight, IconDownload, IconRefresh, IconWave } from "./icons";
+import { IconDownload, IconPencil, IconRefresh, IconWave } from "./icons";
+import { PatternEditor } from "./PatternEditor";
+import { Pager, pagingOf } from "./PatternPager";
+import { draftOf, dropDraft, drafts, editingSlot, isDirty, revert, startDraft } from "./patternDraft";
 import { TakeCard } from "./Recorder";
 import { recTake, setTake } from "./rec";
 import { saveFile } from "./download";
@@ -75,10 +78,11 @@ function SlotMatrix() {
           <span class="ptn-mbank">{letter}</span>
           {Array.from({ length: 16 }, (_, i) => {
             const slot = b * 16 + i, p = m.get(slot);
-            const cls = ["ptn-slot", p !== undefined && (typeof p === "string" ? "bad" : "on"), slot === shown && "cur", ofSel.has(slot) && "uses"].filter(Boolean).join(" ");
+            const edited = drafts.value.get(slot);
+            const cls = ["ptn-slot", p !== undefined && (typeof p === "string" ? "bad" : "on"), slot === shown && "cur", ofSel.has(slot) && "uses", edited && isDirty(edited) && "edited"].filter(Boolean).join(" ");
             const title = p === undefined ? `${padName(slot)}: пусто`
               : typeof p === "string" ? `${padName(slot)}: не прочитан — ${p}`
-              : `${padName(slot)}: ${p.bars} ${bars(p.bars)}, ${p.notes.length} нот${ofSel.has(slot) ? ` · играет ${padName(sel)}` : ""}`;
+              : `${padName(slot)}: ${p.bars} ${bars(p.bars)}, ${p.notes.length} нот${ofSel.has(slot) ? ` · играет ${padName(sel)}` : ""}${edited && isDirty(edited) ? " · есть правки" : ""}`;
             return <button key={slot} role="gridcell" class={cls} disabled={p === undefined} title={title} aria-label={title} onClick={() => (pickedSlot.value = slot)}>{i + 1}</button>;
           })}
         </div>
@@ -90,25 +94,40 @@ function SlotMatrix() {
 const bars = (n: number) => (n % 10 === 1 && n % 100 !== 11 ? "такт" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? "такта" : "тактов");
 
 function PatternView() {
-  const slot = shownSlot.value!, p = patterns.value!.get(slot)!;
-  if (typeof p === "string") return <p class="err ptn-empty">{padName(slot)}: файл паттерна не прочитан — {p}</p>;
+  const slot = shownSlot.value!, base = patterns.value!.get(slot)!;
+  if (typeof base === "string") return <p class="err ptn-empty">{padName(slot)}: файл паттерна не прочитан — {base}</p>;
+  const d = draftOf(slot), p = d?.p ?? base, dirty = !!d && isDirty(d), editing = editingSlot.value === slot;
   const t = tempoFor(slot >> 4);
   const rows = [...new Set(p.notes.map((n) => n.pad))].sort((a, b) => a - b);
   // TR-REC sub-steps sit between steps on purpose: only notes played live count as off the grid.
   const offGrid = p.notes.filter((n) => n.tick % STEP && noteSemitones(n) === null).length;
   const pitched = p.notes.some((n) => noteSemitones(n));
+  const toggleEdit = () => {
+    if (editing) { editingSlot.value = null; if (d && !dirty) dropDraft(slot); return; }
+    startDraft(slot, base);
+    editingSlot.value = slot;
+  };
   return (
     <div class="ptn-view">
       <div class="ptn-info">
         <span class="chip chip-accent">{padName(slot)}</span>
         <span>{p.bars} {bars(p.bars)} · {p.beatsPerBar}/4 · {p.notes.length} нот · {rows.length} pad'ов{t ? ` · ${formatBpm(t.tempoX100)} BPM ${t.of}` : ""}</span>
-        {offGrid > 0 && <span class="chip" title="Ноты, сыгранные вживую мимо шагов 1/16. Показаны там, где они есть. Sub-step из TR-REC сюда не входят">вне сетки 1/16: {offGrid}</span>}
+        {offGrid > 0 && !editing && <span class="chip" title="Ноты, сыгранные вживую мимо шагов 1/16. Показаны там, где они есть. Sub-step из TR-REC сюда не входят">вне сетки 1/16: {offGrid}</span>}
+        {dirty && <span class="chip chip-warn" title="Правки лежат в браузере и на SP пока не пишутся: сохраните их как MIDI">изменён</span>}
+        <button class={`btn ptn-edit-toggle ${editing ? "card-toggle on" : ""}`} onClick={toggleEdit} aria-pressed={editing}
+          title={editing ? "Закрыть редактор: правки остаются в браузере" : "Править паттерн: правки остаются в браузере, на SP они не пишутся"}>
+          <IconPencil /> {editing ? "Готово" : "Править"}
+        </button>
         <button class="icon-btn insp-dl" onClick={() => downloadPatternMidi(slot)}
-          title={`Скачать как MIDI-файл, как экспорт SP: канал = банк, A13 = нота 36${t ? `; темп ${formatBpm(t.tempoX100)} — тот, что играет сейчас` : ""}`}><IconDownload /> MIDI</button>
+          title={`Скачать как MIDI-файл, как экспорт SP: канал = банк, A13 = нота 36${dirty ? "; с вашими правками" : ""}${t ? `; темп ${formatBpm(t.tempoX100)} — тот, что играет сейчас` : ""}`}><IconDownload /> MIDI</button>
       </div>
-      <StepGrid slot={slot} p={p} rows={rows} />
-      <Bounce slot={slot} p={p} />
-      <p class="hint">Строки — pad'ы, которые играет паттерн; клик по названию открывает pad справа. Столбцы — шаги 1/16, высота заливки ноты — сила удара{pitched ? ", зелёные с «+1», «−2» — ноты, транспонированные в TR-REC" : ""}. Паттерн пока только для просмотра.</p>
+      {editing ? <PatternEditor slot={slot} /> : <StepGrid slot={slot} p={p} rows={rows} />}
+      {dirty ? (
+        <p class="muted small">Bounce играет паттерн таким, как он на SP, поэтому правки в нём не слышны.{!editing && <> <button class="btn btn-ghost ptn-revert" onClick={() => revert(slot)}>сбросить правки</button></>}</p>
+      ) : (
+        <Bounce slot={slot} p={base} />
+      )}
+      {!editing && <p class="hint">Строки — pad'ы, которые играет паттерн; клик по названию выбирает pad: в матрице выше видно, в каких ещё паттернах он играет. Столбцы — шаги 1/16, высота заливки ноты — сила удара{pitched ? ", цветные с «+1», «−2» — ноты, транспонированные в TR-REC" : ""}. «Править» открывает редактор.</p>}
     </div>
   );
 }
@@ -159,11 +178,6 @@ function Bounce({ slot, p }: { slot: number; p: Pattern }) {
   );
 }
 
-/** A page shows whole bars, at most this many steps: a longer pattern is paged, not squeezed. */
-const MAX_PAGE_STEPS = 32;
-
-/** The page shown, and the note picked on it. Both belong to a slot and start over when another opens. */
-const pageOf = signal({ slot: -1, page: 0 });
 /** A note under the pointer or focus (`pinned` false), or kept with a click (`pinned` true). */
 const noteFocus = signal<{ slot: number; idx: number; pinned: boolean } | null>(null);
 
@@ -180,37 +194,27 @@ function noteFacts(n: PatternNote, p: Pattern) {
 }
 
 function StepGrid({ slot, p, rows }: { slot: number; p: Pattern; rows: number[] }) {
-  const barSteps = p.beatsPerBar * 4, barTicks = p.beatsPerBar * PPQ;
-  const totalBars = Math.max(1, Math.ceil(p.length / barTicks));
-  const barsPerPage = Math.max(1, Math.floor(MAX_PAGE_STEPS / barSteps));
-  const pages = Math.ceil(totalBars / barsPerPage);
-  const page = Math.min(pageOf.value.slot === slot ? pageOf.value.page : 0, pages - 1);
-  // One page keeps the pattern's own length; with several, every page is as wide as a full one.
-  const steps = pages > 1 ? barsPerPage * barSteps : Math.max(1, Math.ceil(p.length / STEP));
-  const pageTicks = steps * STEP, from = page * pageTicks, to = Math.min(from + pageTicks, p.length);
-  const pageBars = Math.max(1, Math.ceil((to - from) / barTicks));
-  const used = ((to - from) / pageTicks) * 100;
+  const pg = pagingOf(slot, p), { barSteps, steps, pageTicks, from, pageBars, used } = pg;
   const sel = selectedPad.value;
   const byPad = new Map<number, { n: PatternNote; idx: number }[]>();
   p.notes.forEach((n, idx) => byPad.set(n.pad, [...(byPad.get(n.pad) ?? []), { n, idx }]));
   const f = noteFocus.value?.slot === slot ? noteFocus.value : null;
-  const setPage = (v: number) => { pageOf.value = { slot, page: Math.max(0, Math.min(pages - 1, v)) }; };
   return (
     <>
-      {pages > 1 && <Pager page={page} pages={pages} barsPerPage={barsPerPage} totalBars={totalBars} onPage={setPage} />}
+      {pg.pages > 1 && <Pager page={pg.page} pages={pg.pages} barsPerPage={pg.barsPerPage} totalBars={pg.totalBars} onPage={pg.setPage} />}
       <div class="ptn-scroll" onClick={(e) => { if (f?.pinned && !(e.target as Element).closest(".ptn-note")) noteFocus.value = null; }}>
         <div class="ptn-grid" style={{ "--steps": steps, "--bar": barSteps }}>
           <div class="ptn-ruler-head" />
           <div class="ptn-ruler">
             {Array.from({ length: pageBars }, (_, bar) => (
-              <span key={bar} style={{ gridColumn: `span ${Math.min(barSteps, steps - bar * barSteps)}` }}>{page * barsPerPage + bar + 1}</span>
+              <span key={bar} style={{ gridColumn: `span ${Math.min(barSteps, steps - bar * barSteps)}` }}>{pg.page * pg.barsPerPage + bar + 1}</span>
             ))}
           </div>
           {rows.map((pad) => {
             const b = pads.value[pad];
             return [
               <button key={`h${pad}`} class={`ptn-row-head ${pad === sel ? "cur" : ""} ${b?.size ? "" : "missing"}`} onClick={() => selectPad(pad)}
-                title={b?.size ? `${padName(pad)} «${b.name}» — открыть справа` : `${padName(pad)} пуст: паттерн играет тишину`}>
+                title={b?.size ? `${padName(pad)} «${b.name}» — выбрать: в матрице отметятся паттерны, где он играет` : `${padName(pad)} пуст: паттерн играет тишину`}>
                 <b>{padName(pad)}</b><span>{b?.size ? b.name || "без имени" : "пусто"}</span>
               </button>,
               <div key={`l${pad}`} class={`ptn-lane ${pad === sel ? "cur" : ""} ${used < 100 ? "short" : ""}`} style={{ "--used": `${used}%` }}>
@@ -222,30 +226,6 @@ function StepGrid({ slot, p, rows }: { slot: number; p: Pattern; rows: number[] 
       </div>
       <NoteReadout slot={slot} p={p} />
     </>
-  );
-}
-
-/** Pages of the step grid: arrows and, while there are few, a button per page. */
-function Pager({ page, pages, barsPerPage, totalBars, onPage }: { page: number; pages: number; barsPerPage: number; totalBars: number; onPage: (p: number) => void }) {
-  const range = (i: number) => {
-    const a = i * barsPerPage + 1, b = Math.min(totalBars, (i + 1) * barsPerPage);
-    return a === b ? `${a}` : `${a}–${b}`;
-  };
-  return (
-    <div class="ptn-pager" role="group" aria-label="Страницы паттерна">
-      <button class="icon-btn" disabled={page === 0} onClick={() => onPage(page - 1)} title="Предыдущие такты" aria-label="Предыдущие такты"><IconChevronLeft /></button>
-      {pages <= 8 ? (
-        <div class="segmented">
-          {Array.from({ length: pages }, (_, i) => (
-            <button key={i} class={i === page ? "on" : ""} aria-pressed={i === page} onClick={() => onPage(i)} title={`Такты ${range(i)}`}>{range(i)}</button>
-          ))}
-        </div>
-      ) : (
-        <span class="ptn-pager-label">такты {range(page)} <span class="muted">из {totalBars}</span></span>
-      )}
-      <button class="icon-btn" disabled={page === pages - 1} onClick={() => onPage(page + 1)} title="Следующие такты" aria-label="Следующие такты"><IconChevronRight /></button>
-      {pages <= 8 && <span class="muted small">такты, всего {totalBars}</span>}
-    </div>
   );
 }
 
