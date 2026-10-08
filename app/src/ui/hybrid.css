@@ -1,28 +1,5 @@
-/* Existing opt-in inspector study (?graphics=hybrid), unchanged during pad integration.
-   The shared pad materials now live in styles.css and are enabled in every mode. */
-.hybrid-poc {
-  --hybrid-panel: url("../assets/nexus-ui/panels/panel-light.webp");
-  --hybrid-corners: url("../assets/nexus-ui/details/panel-corners.svg");
-}
-
-/* The graphic is the container's own border painting, so it does not scroll with its content.
-   The inspector keeps its original dimensions, inner scroll, tabs, and transport. */
-.hybrid-poc .inspector.glass {
-  isolation: isolate;
-  background: none;
-  border: 1px solid transparent;
-  border-image: var(--hybrid-panel) 96 fill / 20px / 4px stretch;
-  box-shadow: 0 3px 8px -4px #365e7e70;
-}
-.hybrid-poc .inspector.glass::before {
-  inset: 5px;
-  border: 0;
-  border-image: var(--hybrid-corners) 48 / 18px / 0 stretch;
-  border-radius: 0;
-  background: none;
-  box-shadow: none;
-}
-.hybrid-poc .inspector.glass::after { content: none; }
+/* Existing opt-in study of inspector inner sections (?graphics=hybrid).
+   Shared pad and outer panel materials live in styles.css in every mode. */
 .hybrid-poc .inspector .acc {
   background: #f5faff60;
   border-color: #a6c4d6;

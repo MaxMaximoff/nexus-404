@@ -308,17 +308,17 @@ button, input, select { font: inherit; color: inherit; }
 .workspace > :last-child { flex: 1; }
 
 /* Shared hybrid shells: reuse one material without changing layout or hit areas. */
-.bank-rail.glass, .pad-area.glass {
+.bank-rail.glass, .pad-area.glass, .inspector.glass {
   isolation: isolate; background: none; border: 1px solid transparent;
   border-image: var(--panel-skin) 96 fill / 20px / 4px stretch;
   box-shadow: 0 3px 8px -4px #365e7e70;
 }
-.bank-rail.glass::before, .pad-area.glass::before {
+.bank-rail.glass::before, .pad-area.glass::before, .inspector.glass::before {
   inset: 5px; border: 0; border-radius: 0;
   border-image: var(--panel-corners) 48 / 18px / 0 stretch;
   background: none; box-shadow: none;
 }
-.bank-rail.glass::after, .pad-area.glass::after { content: none; }
+.bank-rail.glass::after, .pad-area.glass::after, .inspector.glass::after { content: none; }
 
 /* ---------- banks: shared hybrid material, live occupancy indicators ---------- */
 .bank-rail { padding: 12px 24px 14px; display: flex; flex-direction: column; gap: 9px; }
@@ -652,7 +652,10 @@ button, input, select { font: inherit; color: inherit; }
 .card-path .card-delete { margin-left: 0; padding: 4px 6px; }
 .card-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .card-confirm .group-names { flex: 1 1 100%; max-height: 72px; overflow: auto; font-family: var(--mono); font-size: 12px; }
-.card-browser.drop { border-color: var(--led-border); box-shadow: var(--panel-depth), var(--led); }
+.card-browser.drop {
+  outline: 1px solid var(--led-border); outline-offset: 3px;
+  box-shadow: 0 3px 8px -4px #365e7e70, var(--led);
+}
 .card-play.on { color: var(--danger); }
 .card-empty { padding: 8px; font-size: 13px; }
 .card-row-act { padding: 2px 4px; justify-self: end; opacity: 0; transition: opacity 0.12s; }
