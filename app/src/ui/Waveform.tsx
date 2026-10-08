@@ -82,7 +82,7 @@ export function Waveform({ wave, range, onCommit }: { wave: Wave; range?: Range;
       const X = (f: number) => ((f - view.from) / (view.to - view.from)) * w;
 
       // grid
-      g.strokeStyle = "rgba(80, 130, 170, 0.14)";
+      g.strokeStyle = "rgba(255, 255, 255, 0.05)";
       g.lineWidth = 1;
       for (let i = 1; i < 8; i++) {
         const x = Math.round((w * i) / 8) + 0.5;
@@ -98,14 +98,14 @@ export function Waveform({ wave, range, onCommit }: { wave: Wave; range?: Range;
         const amp = laneH * 0.44;
         const n = peaks.length / 2;
         const grad = g.createLinearGradient(0, mid - amp, 0, mid + amp);
-        // A thin cyan trace: a light fill, a crisp outline with a little glow.
-        grad.addColorStop(0, "rgba(57, 223, 255, 0.35)");
-        grad.addColorStop(0.5, "rgba(7, 143, 255, 0.55)");
-        grad.addColorStop(1, "rgba(57, 223, 255, 0.35)");
+        // A thin orange trace: a dim fill, a crisp outline with a little glow.
+        grad.addColorStop(0, "rgba(255, 150, 90, 0.30)");
+        grad.addColorStop(0.5, "rgba(255, 106, 31, 0.50)");
+        grad.addColorStop(1, "rgba(255, 150, 90, 0.30)");
         g.fillStyle = grad;
-        g.strokeStyle = "#078fff";
+        g.strokeStyle = "#ff7a2f";
         g.lineWidth = 1;
-        g.shadowColor = "rgba(0, 200, 255, 0.6)";
+        g.shadowColor = "rgba(255, 106, 31, 0.55)";
         g.shadowBlur = 3;
         g.beginPath();
         for (let i = 0; i < n; i++) g.lineTo((i / n) * w, mid - Math.max(peaks[i * 2 + 1], 0.004) * amp);
@@ -114,22 +114,22 @@ export function Waveform({ wave, range, onCommit }: { wave: Wave; range?: Range;
         g.fill();
         g.stroke();
         g.shadowBlur = 0;
-        g.strokeStyle = "rgba(0, 200, 255, 0.35)";
+        g.strokeStyle = "rgba(255, 255, 255, 0.14)";
         g.beginPath(); g.moveTo(0, mid + 0.5); g.lineTo(w, mid + 0.5); g.stroke();
       });
 
       if (!shown) return;
       // Start/End: veil outside the played region, a glowing marker with a grab tab at each edge
       const x0 = X(rs), x1 = X(re);
-      g.fillStyle = "rgba(228, 237, 245, 0.74)";
+      g.fillStyle = "rgba(8, 9, 11, 0.72)";
       if (x0 > 0) g.fillRect(0, 0, Math.min(x0, w), h);
       if (x1 < w) g.fillRect(Math.max(x1, 0), 0, w - Math.max(x1, 0), h);
-      // The played range: a faint blue wash between crisp markers.
-      g.fillStyle = "rgba(0, 200, 255, 0.035)";
+      // The played range: a faint warm wash between crisp markers.
+      g.fillStyle = "rgba(255, 106, 31, 0.05)";
       g.fillRect(Math.max(x0, 0), 0, Math.min(x1, w) - Math.max(x0, 0), h);
-      g.strokeStyle = g.fillStyle = "#078fff";
+      g.strokeStyle = g.fillStyle = "#ff7a2f";
       g.lineWidth = 1.5;
-      g.shadowColor = "rgba(0, 200, 255, 0.85)";
+      g.shadowColor = "rgba(255, 106, 31, 0.8)";
       g.shadowBlur = 4;
       for (const [x, side] of [[Math.max(1, x0), 1], [Math.min(w - 1, x1), -1]] as const) {
         if (x < 0 || x > w) continue;
@@ -145,9 +145,9 @@ export function Waveform({ wave, range, onCommit }: { wave: Wave; range?: Range;
         g.font = "600 11px 'Inter Variable', system-ui, sans-serif";
         const tw = g.measureText(label).width + 10;
         const lx = Math.min(Math.max(X(f) - tw / 2, 2), w - tw - 2);
-        g.fillStyle = "rgba(255, 255, 255, 0.92)";
+        g.fillStyle = "rgba(20, 22, 26, 0.95)";
         g.fillRect(lx, h - 22, tw, 18);
-        g.fillStyle = "#007bff";
+        g.fillStyle = "#ff9a5c";
         g.fillText(label, lx + 5, h - 9);
       }
     };
