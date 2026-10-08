@@ -71,3 +71,12 @@ export function Pager({ page, pages, barsPerPage, totalBars, onPage }: { page: n
     </div>
   );
 }
+
+/** Show the page that holds `tick` (the playhead), when the pattern has several. */
+export function followTick(slot: number, p: Pattern, tick: number): void {
+  const pg = pagingOf(slot, p);
+  if (pg.pages < 2) return;
+  const want = Math.min(pg.pages - 1, Math.floor(tick / pg.pageTicks));
+  if (want !== pg.page) pg.setPage(want);
+}
+

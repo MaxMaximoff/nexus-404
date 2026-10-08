@@ -1,6 +1,6 @@
 // App state (signals) and the controller that drives the device.
 
-import { draftOf, dropDraft, drafts, editingSlot, isDirty } from "./patternDraft";
+import { draftOf, draftsProject, dropDraft, drafts, editingSlot, fileSum, isDirty, restoreDrafts } from "./patternDraft";
 import { batch, computed, effect, signal } from "@preact/signals";
 import { safeFileName, saveFile } from "./download";
 import {
@@ -219,7 +219,25 @@ async function loadAll(first = false): Promise<void> {
       const pats = await readPatterns(x, st.project + 1).catch((e) => (log("warn", `Паттерны не прочитаны: ${(e as Error).message}`), null));
       batch(() => {
         // Drafts belong to the project they were made in (status may already show the new project: compare with the one read last).
-        if (loadedProject !== null && loadedProject !== st.project) { drafts.value = new Map(); editingSlot.value = null; prevProject1 = loadedProject + 1; }
+        // On opening a project, its drafts come back from the browser — those whose SP file is still the one they started from.
+        if (loadedProject !== st.project) {
+          if (loadedProject !== null) prevProject1 = loadedProject + 1;
+          editingSlot.value = null;
+          if (pats) {
+            const files = patternFiles.value;
+            const r = restoreDrafts(st.project + 1, (slot) => {
+              const p = pats.get(slot), f = files.get(slot);
+              return p && typeof p !== "string" && f ? { p, sum: fileSum(f.bytes) } : null;
+            });
+            drafts.value = r.map;
+            draftsProject.value = st.project + 1;
+            if (r.map.size) log("info", `Черновики паттернов из браузера: ${[...r.map.keys()].map(padName).join(", ")}`);
+            if (r.stale.length) log("warn", `Черновики ${r.stale.map(padName).join(", ")} отброшены: паттерн на SP изменился с тех пор`);
+          } else {
+            drafts.value = new Map();
+            draftsProject.value = null; // patterns not read: keep what the browser has for later
+          }
+        }
         loadedProject = st.project;
         status.value = st;
         project.value = ps;
@@ -347,69 +365,82 @@ function reportPatternFiles(files: ReadonlyMap<number, { bytes: Uint8Array; exac
   for (const { s, d } of diffs.filter((x) => !x.d.same).slice(0, 4)) log("debug", `  ${padName(s)}: запись ${d.record}: SP ${d.sp} · наш ${d.ours}`);
 }
 
-/** The project the pattern-writing experiments write into: the user's scratch project, not loaded at power-on. */
-export const PATTERN_TEST_PROJECT = 11;
-/** A pattern write in progress (what it is), for the buttons. */
+/** A pattern being saved (what and at which stage), for the buttons. */
 export const patternWriting = signal<string | null>(null);
 
 /**
- * Pattern-writing experiment, step 1: the SP's own file of `slot`, byte for byte, into the same
- * slot of the test project. Step 2 (`edited`): the draft, written over the file it came from.
+ * Longest pattern we write: the SP's own files seen so far have 1–4 bars. A pattern already longer
+ * on the SP may keep its length.
  */
+export const SAVE_MAX_BARS = 4;
+/** Projects saved into in this session after the user confirmed it once: no question again. */
+const trustedProjects = new Set<number>();
+/** The slot whose first save into this project waits for the user's yes. */
+export const saveConfirm = signal<number | null>(null);
+
 /** Where the SP goes for a moment so that it reads the open project again: the project used before, or project 1 (2). */
 export const reloadVia = (): number => {
   const cur = project1.value;
   return prevProject1 && prevProject1 !== cur ? prevProject1 : cur === 1 ? 2 : 1;
 };
 
+/** Why the draft of `slot` cannot be saved now, or null. */
+export function saveBlockReason(slot: number): string | null {
+  const f = patternFiles.value.get(slot), draft = draftOf(slot), base = patterns.value?.get(slot);
+  if (demo.value) return "Демо-режим: SP не подключён";
+  if (!device || conn.value !== "ready") return "SP не подключён";
+  if (patternWriting.value) return `Идёт запись: ${patternWriting.value}`;
+  if (!draft || !isDirty(draft)) return "Изменений нет";
+  if (!f) return "Файл этого паттерна не прочитан с SP";
+  if (!f.exact) return "Наша запись не повторяет этот файл SP: сохранять его небезопасно";
+  const was = base && typeof base !== "string" ? base.bars : 0;
+  if (draft.p.bars > Math.max(SAVE_MAX_BARS, was)) return `Паттерны длиннее ${Math.max(SAVE_MAX_BARS, was)} тактов на SP не проверены`;
+  return writeBlockReason.value;
+}
+
+/** Save the draft of `slot` to the SP; the first time in a project this session, after a confirmation. */
+export function requestSave(slot: number): void {
+  if (saveBlockReason(slot)) return;
+  if (trustedProjects.has(project1.value)) void savePattern(slot);
+  else saveConfirm.value = slot;
+}
+
+export function confirmSave(yes: boolean): void {
+  const slot = saveConfirm.value;
+  saveConfirm.value = null;
+  if (!yes || slot === null) return;
+  trustedProjects.add(project1.value);
+  void savePattern(slot);
+}
+
 /**
- * Pattern-writing experiment, step 3: the edited pattern into the test project while it is open on
- * the SP, then the SP leaves the project for a moment and comes back to read it again. Then the
- * project is read here too and the draft, now on the SP, is closed.
+ * Save the edited pattern into the project open on the SP: write its file (every record we did not
+ * change kept as the SP wrote it), then the SP leaves the project for a moment and comes back to
+ * read it again (checked on the SP: the edit plays). Then the project is read here too and the
+ * draft, now on the SP, is closed.
  */
-export async function writePatternToOpen(slot: number): Promise<boolean> {
-  const d = device, f = patternFiles.value.get(slot), draft = draftOf(slot), p1 = PATTERN_TEST_PROJECT, via = reloadVia();
-  if (!d || conn.value !== "ready" || !f || patternWriting.value || project1.value !== p1 || !draft || !isDirty(draft)) return false;
-  if (!f.exact) { notice.value = { kind: "error", text: `${padName(slot)}: наша запись не повторяет этот файл SP, правки не пишу` }; return false; }
-  const bytes = writePattern(draft.p, f.bytes), what = `${padName(slot)} в открытый проект ${p1}`;
+async function savePattern(slot: number): Promise<boolean> {
+  const reason = saveBlockReason(slot);
+  if (reason) { notice.value = { kind: "error", text: `${padName(slot)}: ${reason}` }; return false; }
+  const d = device!, f = patternFiles.value.get(slot)!, draft = draftOf(slot)!, p1 = project1.value, via = reloadVia();
+  const bytes = writePattern(draft.p, f.bytes), what = `${padName(slot)} в проект ${p1}`;
   patternWriting.value = what;
   try {
     const r = await d.exclusive((x) => x.writePatternAndReload(p1, slot, bytes, via, (s) => (patternWriting.value = `${what}: ${s}`)));
     if (r.kept) {
-      log("info", `Паттерн записан: ${what} (${bytes.length} байт), SP перечитал проект через проект ${via}`);
-      notice.value = { kind: "info", text: `Записано: ${what}. SP перечитал проект — сыграйте паттерн ${padName(slot)}` };
+      log("info", `Паттерн сохранён: ${what} (${bytes.length} байт), SP перечитал проект через проект ${via}`);
+      notice.value = { kind: "info", text: `Сохранено на SP: ${padName(slot)}` };
       if (editingSlot.value === slot) editingSlot.value = null;
       dropDraft(slot);
     } else {
       log("warn", `${what}: после возврата в проект файл не наш — SP записал свою копию поверх`);
-      notice.value = { kind: "error", text: `${what}: SP при смене проекта записал свою копию паттерна поверх нашей. Этот способ не работает — черновик остался` };
+      notice.value = { kind: "error", text: `${what}: SP при смене проекта записал свою копию паттерна поверх нашей. Черновик остался` };
     }
     await loadAll();
     return r.kept;
   } catch (e) {
-    fail(e, `Запись паттерна ${what}`);
+    fail(e, `Сохранение паттерна ${what}`);
     void loadAll();
-    return false;
-  } finally {
-    patternWriting.value = null;
-  }
-}
-
-export async function writePatternToTest(slot: number, edited: boolean): Promise<boolean> {
-  const d = device, f = patternFiles.value.get(slot), draft = draftOf(slot), p1 = PATTERN_TEST_PROJECT;
-  if (!d || conn.value !== "ready" || !f || patternWriting.value) return false;
-  if (edited && (!draft || !isDirty(draft))) return false;
-  if (edited && !f.exact) { notice.value = { kind: "error", text: `${padName(slot)}: наша запись не повторяет этот файл SP, правки не пишу` }; return false; }
-  const bytes = edited ? writePattern(draft!.p, f.bytes) : f.bytes;
-  const what = `${padName(slot)} → проект ${p1}${edited ? ", с правками" : ", копия байт в байт"}`;
-  patternWriting.value = what;
-  try {
-    await d.exclusive((x) => x.writePatternFile(p1, slot, bytes));
-    log("info", `Паттерн записан: ${what} (${bytes.length} байт, прочитан обратно и сверен)`);
-    notice.value = { kind: "info", text: `Записано: ${what}. Переключите SP на проект ${p1} и сыграйте паттерн ${padName(slot)}` };
-    return true;
-  } catch (e) {
-    fail(e, `Запись паттерна ${what}`);
     return false;
   } finally {
     patternWriting.value = null;

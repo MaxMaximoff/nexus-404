@@ -1,9 +1,9 @@
 // Drafts: patterns being edited. A draft holds the pattern as the SP has it (`base`), the edited
-// one (`p`) and a history of earlier ones. Nothing here touches the unit: until writing patterns is
-// checked, a draft lives in memory and leaves as a MIDI file. One draft per slot, kept while the
-// project stays open, so switching to another pattern does not lose the edits.
+// one (`p`) and a history of earlier ones. One draft per slot, so switching to another pattern does
+// not lose the edits. Edited drafts are kept in the browser per project (not their history) and
+// come back when the project is read again, if the SP's file is still the one they started from.
 
-import { signal } from "@preact/signals";
+import { effect, signal } from "@preact/signals";
 import type { Pattern } from "../sp404";
 
 export interface Draft {
@@ -19,6 +19,8 @@ export interface Draft {
   active: number | null;
   /** Pads added by hand: their rows show even without notes. */
   rows: number[];
+  /** Checksum of the SP file the draft started from (fileSum): without it the draft is not kept in the browser. */
+  baseSum?: string;
 }
 
 const HISTORY = 200;
@@ -36,8 +38,49 @@ function put(d: Draft): void {
   drafts.value = m;
 }
 
-export function startDraft(slot: number, base: Pattern): void {
-  if (!drafts.value.has(slot)) put({ slot, base, p: base, undo: [], redo: [], sel: null, active: null, rows: [] });
+export function startDraft(slot: number, base: Pattern, baseSum?: string): void {
+  if (!drafts.value.has(slot)) put({ slot, base, p: base, undo: [], redo: [], sel: null, active: null, rows: [], baseSum });
+}
+
+/** FNV-1a of a file, with its length: tells whether the SP's file is still the one a draft started from. */
+export function fileSum(bytes: Uint8Array): string {
+  let h = 0x811c9dc5;
+  for (const b of bytes) h = Math.imul(h ^ b, 0x01000193) >>> 0;
+  return `${bytes.length}:${h.toString(16)}`;
+}
+
+/** The project (1-based) the drafts belong to, set when its patterns are read; null: not kept in the browser. */
+export const draftsProject = signal<number | null>(null);
+const storeKey = (p1: number) => `nexus404.drafts.${p1}`;
+interface Kept { p: Pattern; rows: number[]; base: string }
+
+// Keep the edited drafts of the project in the browser, on every change.
+effect(() => {
+  const p1 = draftsProject.value, m = drafts.value;
+  if (p1 === null) return;
+  try {
+    const keep: Record<number, Kept> = {};
+    for (const [slot, d] of m) if (isDirty(d) && d.baseSum) keep[slot] = { p: d.p, rows: d.rows, base: d.baseSum };
+    if (Object.keys(keep).length) localStorage.setItem(storeKey(p1), JSON.stringify(keep));
+    else localStorage.removeItem(storeKey(p1));
+  } catch { /* storage blocked or full: the drafts stay in memory */ }
+});
+
+/**
+ * The drafts the browser kept for project `p1`, over the patterns just read (`baseOf`: the pattern
+ * and its file's sum). A draft whose SP file changed since is dropped and its slot returned in
+ * `stale`. A restored draft can be undone back to the SP's version.
+ */
+export function restoreDrafts(p1: number, baseOf: (slot: number) => { p: Pattern; sum: string } | null): { map: Map<number, Draft>; stale: number[] } {
+  const map = new Map<number, Draft>(), stale: number[] = [];
+  let kept: Record<string, Kept> = {};
+  try { kept = JSON.parse(localStorage.getItem(storeKey(p1)) ?? "{}") ?? {}; } catch { /* nothing kept */ }
+  for (const [k, v] of Object.entries(kept)) {
+    const slot = Number(k), b = baseOf(slot);
+    if (!b || !v?.p?.notes || b.sum !== v.base) { stale.push(slot); continue; }
+    map.set(slot, { slot, base: b.p, p: v.p, undo: [b.p], redo: [], sel: null, active: null, rows: Array.isArray(v.rows) ? v.rows : [], baseSum: v.base });
+  }
+  return { map, stale };
 }
 
 export function dropDraft(slot: number): void {

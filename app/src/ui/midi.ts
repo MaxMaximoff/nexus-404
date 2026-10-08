@@ -61,3 +61,12 @@ export function auditionPad(pad: number, velocity = 100): void {
   out.send([0x90 | ch, note, Math.max(1, Math.min(127, velocity))], t);
   out.send([0x80 | ch, note, 0], t + 120);
 }
+
+/** A note at `at` and its release at `off` (performance.now() times; the past means now). Silent when the SP is not connected. */
+export function scheduleNote(pad: number, velocity: number, at: number, off: number): void {
+  if (!out) return;
+  const { ch, note } = padNote(pad);
+  out.send([0x90 | ch, note, Math.max(1, Math.min(127, velocity))], at);
+  out.send([0x80 | ch, note, 0], Math.max(at + 1, off));
+}
+

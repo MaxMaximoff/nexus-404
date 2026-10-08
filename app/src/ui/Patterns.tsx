@@ -2,16 +2,19 @@
 // 1/16 steps as columns). Notes off the grid (played live) are drawn where they are, not snapped to
 // a step. "Править" opens the editor (PatternEditor.tsx) on a draft; nothing is written to the SP.
 
-import { computed, signal } from "@preact/signals";
+import { computed, effect, signal } from "@preact/signals";
+import { useEffect } from "preact/hooks";
 import { BANKS, PPQ, decodeAudio, formatBpm, noteSemitones, padName, patternFileName, type Pattern, type PatternNote } from "../sp404";
 import {
-  PATTERN_TEST_PROJECT, bouncePattern, bouncing, conn, demo, downloadPatternMidi, log, notice, patternFiles, patternWriting, patterns, patternsLoading, patternsOf, pads, project1,
-  refreshPatterns, reloadVia, selectPad, selectedPad, tempoFor, writeBlockReason, writePatternToOpen, writePatternToTest,
+  bouncePattern, bouncing, conn, downloadPatternMidi, log, notice, patternFiles, patterns, patternsLoading, patternsOf, pads, project1,
+  refreshPatterns, selectPad, selectedPad, tempoFor, writeBlockReason,
 } from "./store";
-import { IconDownload, IconPencil, IconRefresh, IconWave } from "./icons";
-import { PatternEditor } from "./PatternEditor";
+import { IconDownload, IconPencil, IconPlay, IconRefresh, IconStop, IconWave } from "./icons";
+import { midiState } from "./midi";
+import { playingSlot, stopPattern, togglePattern } from "./ptnPlayer";
+import { PatternEditor, SaveControl } from "./PatternEditor";
 import { Pager, pagingOf } from "./PatternPager";
-import { draftOf, dropDraft, drafts, editingSlot, isDirty, revert, startDraft } from "./patternDraft";
+import { draftOf, dropDraft, drafts, editingSlot, fileSum, isDirty, revert, startDraft } from "./patternDraft";
 import { TakeCard } from "./Recorder";
 import { recTake, setTake } from "./rec";
 import { saveFile } from "./download";
@@ -23,6 +26,9 @@ function savedView(): View {
 }
 /** What the left column shows: banks and pads, or the patterns. */
 export const mainView = signal<View>(savedView());
+// Playing stops when the patterns leave the screen or the SP goes away.
+effect(() => { if (mainView.value !== "patterns" || (conn.value !== "ready" && conn.value !== "loading")) stopPattern(); });
+
 export function showView(v: View): void {
   mainView.value = v;
   try { localStorage.setItem(VIEW_KEY, v); } catch { /* not kept: fine */ }
@@ -105,15 +111,32 @@ function PatternView() {
   // TR-REC sub-steps sit between steps on purpose: only notes played live count as off the grid.
   const offGrid = p.notes.filter((n) => n.tick % STEP && noteSemitones(n) === null).length;
   const pitched = p.notes.some((n) => noteSemitones(n));
+  // Space plays and stops (not while a field or a button has the focus: they use it themselves).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.code !== "Space" || e.ctrlKey || e.metaKey || e.altKey || mainView.value !== "patterns") return;
+      if ((e.target as HTMLElement | null)?.closest?.("input, textarea, select, button, [contenteditable]")) return;
+      e.preventDefault();
+      void togglePattern(slot);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("keydown", onKey); if (playingSlot.peek() === slot) stopPattern(); };
+  }, [slot]);
+  const playing = playingSlot.value === slot, midi = midiState.value === "ready";
   const toggleEdit = () => {
     if (editing) { editingSlot.value = null; if (d && !dirty) dropDraft(slot); return; }
-    startDraft(slot, base);
+    const f = patternFiles.value.get(slot);
+    startDraft(slot, base, f ? fileSum(f.bytes) : undefined);
     editingSlot.value = slot;
   };
   return (
     <div class="ptn-view">
       <div class="ptn-info">
         <span class="chip chip-accent">{padName(slot)}</span>
+        <button class={`btn ptn-play ${playing ? "card-toggle on" : ""}`} onClick={() => void togglePattern(slot)} aria-pressed={playing}
+          title={`${playing ? "Остановить" : "Играть по кругу"} (пробел): ноты уходят на SP по MIDI${dirty ? ", с вашими правками" : ""}${midi ? "" : ". Сейчас MIDI-порта SP нет — будет идти только курсор"}. Транспонирование нот TR-REC не играется`}>
+          {playing ? <IconStop /> : <IconPlay />} {playing ? "Стоп" : "Играть"}
+        </button>
         <span>{p.bars} {bars(p.bars)} · {p.beatsPerBar}/4 · {p.notes.length} нот · {rows.length} pad'ов{t ? ` · ${formatBpm(t.tempoX100)} BPM ${t.of}` : ""}</span>
         {offGrid > 0 && !editing && <span class="chip" title="Ноты, сыгранные вживую мимо шагов 1/16. Показаны там, где они есть. Sub-step из TR-REC сюда не входят">вне сетки 1/16: {offGrid}</span>}
         {dirty && <span class="chip chip-warn" title="Правки лежат в браузере и на SP пока не пишутся: сохраните их как MIDI">изменён</span>}
@@ -129,47 +152,16 @@ function PatternView() {
         )}
       </div>
       {editing ? <PatternEditor slot={slot} /> : <StepGrid slot={slot} p={p} rows={rows} />}
-      {!demo.value && conn.value === "ready" && patternFiles.value.has(slot) && <WriteTest slot={slot} dirty={dirty} />}
       {dirty ? (
-        <p class="muted small">Bounce играет паттерн таким, как он на SP, поэтому правки в нём не слышны.{!editing && <> <button class="btn btn-ghost ptn-revert" onClick={() => revert(slot)}>сбросить правки</button></>}</p>
+        <div class="ptn-dirty-row">
+          {!editing && <SaveControl slot={slot} />}
+          <span class="muted small">Bounce играет паттерн таким, как он на SP: правки в нём не слышны, пока не сохранены.</span>
+          {!editing && <button class="btn btn-ghost ptn-revert" onClick={() => revert(slot)}>сбросить правки</button>}
+        </div>
       ) : (
         <Bounce slot={slot} p={base} />
       )}
       {!editing && <p class="hint">Строки — pad'ы, которые играет паттерн; клик по названию выбирает pad: в матрице выше видно, в каких ещё паттернах он играет. Столбцы — шаги 1/16, высота заливки ноты — сила удара{pitched ? ", цветные с «+1», «−2» — ноты, транспонированные в TR-REC" : ""}. «Править» открывает редактор.</p>}
-    </div>
-  );
-}
-
-/**
- * Writing patterns to the SP, as an experiment into the scratch project only: step 1 copies the
- * SP's own file byte for byte, step 2 writes the edited pattern. Never into the open project.
- */
-function WriteTest({ slot, dirty }: { slot: number; dirty: boolean }) {
-  const f = patternFiles.value.get(slot)!, busy = patternWriting.value, blocked = writeBlockReason.value, p11 = PATTERN_TEST_PROJECT;
-  const here = project1.value === p11, via = reloadVia();
-  if (here) {
-    // The test project is open: step 3 — write it and let the SP read the project again.
-    const why3 = blocked ?? busy ?? (!f.exact ? "Наша запись не повторяет этот файл SP: правки не пишем" : !dirty ? "Сначала измените паттерн в редакторе" : null);
-    return (
-      <div class="ptn-write">
-        <span class="ptn-vel-label">запись на SP · опыт</span>
-        <button class="btn ptn-mini" disabled={!!why3} onClick={() => void writePatternToOpen(slot)}
-          title={why3 ?? `Шаг 3: записать паттерн ${padName(slot)} с правками в этот проект, затем SP на секунду уйдёт в проект ${via} и вернётся, чтобы перечитать его`}>
-          3 · записать правки на SP
-        </button>
-        <span class="muted small">{busy ? `${busy}…` : `Слот ${padName(slot)} будет заменён. SP ненадолго переключится на проект ${via} и вернётся в ${p11}, чтобы перечитать паттерны.`}</span>
-      </div>
-    );
-  }
-  const why = blocked ?? busy;
-  return (
-    <div class="ptn-write">
-      <span class="ptn-vel-label">запись на SP · опыт</span>
-      <button class="btn ptn-mini" disabled={!!why} onClick={() => void writePatternToTest(slot, false)}
-        title={why ?? `Шаг 1: файл ${padName(slot)}, как его записал SP, байт в байт в слот ${padName(slot)} проекта ${p11} (он будет заменён)`}>1 · копия в проект {p11}</button>
-      <button class="btn ptn-mini" disabled={!!why || !dirty || !f.exact} onClick={() => void writePatternToTest(slot, true)}
-        title={why ?? (!f.exact ? "Наша запись не повторяет этот файл SP: правки не пишем" : !dirty ? "Сначала измените паттерн в редакторе" : `Шаг 2: паттерн с вашими правками в слот ${padName(slot)} проекта ${p11} (он будет заменён)`)}>2 · правки в проект {p11}</button>
-      <span class="muted small">{busy ? `Пишу: ${busy}…` : `Слот ${padName(slot)} проекта ${p11} будет заменён. Потом переключите SP на проект ${p11} и сыграйте паттерн.`}</span>
     </div>
   );
 }
@@ -245,7 +237,8 @@ function StepGrid({ slot, p, rows }: { slot: number; p: Pattern; rows: number[] 
     <>
       {pg.pages > 1 && <Pager page={pg.page} pages={pg.pages} barsPerPage={pg.barsPerPage} totalBars={pg.totalBars} onPage={pg.setPage} />}
       <div class="ptn-scroll" onClick={(e) => { if (f?.pinned && !(e.target as Element).closest(".ptn-note")) noteFocus.value = null; }}>
-        <div class="ptn-grid" style={{ "--steps": steps, "--bar": barSteps }}>
+        <div class="ptn-grid" style={{ "--steps": steps, "--bar": barSteps }} data-slot={slot} data-from={from} data-span={pageTicks}>
+          <div class="ptn-playhead" aria-hidden="true" />
           <div class="ptn-ruler-head" />
           <div class="ptn-ruler">
             {Array.from({ length: pageBars }, (_, bar) => (

@@ -1025,5 +1025,17 @@ button, input, select { font: inherit; color: inherit; }
 .ptn-strip-del { margin-left: auto; }
 .ptn-slot { position: relative; }
 .ptn-slot.edited::after { content: ""; position: absolute; top: 2px; right: 2px; width: 4px; height: 4px; border-radius: 50%; background: var(--warn); }
-.ptn-write { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 7px 10px; border-radius: var(--r-ctl); border: 1px dashed var(--warn); }
-
+/* Playhead: moved by ptnPlayer.ts through --ph (0..1 across the page). */
+.ptn-grid { position: relative; }
+.ptn-playhead {
+  display: none; position: absolute; top: 19px; bottom: 0; width: 2px; margin-left: -1px; z-index: 3; pointer-events: none;
+  left: calc(var(--head) + (100% - var(--head)) * var(--ph, 0));
+  background: var(--neon-hi); box-shadow: 0 0 6px var(--neon), 0 0 14px var(--neon);
+}
+.ptn-grid.playing .ptn-playhead { display: block; }
+.ptn-play { height: 26px; padding: 0 10px; font-size: 12px; }
+.ptn-save-slot { margin-left: auto; display: inline-flex; align-items: center; }
+.ptn-save { height: 28px; padding: 0 12px; font-size: 12px; }
+.ptn-save-ask { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; max-width: 520px; font-size: 12px; padding: 6px 10px; border-radius: var(--r-ctl); border: 1px solid var(--led-border); }
+.ptn-save-busy { max-width: 360px; }
+.ptn-dirty-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }

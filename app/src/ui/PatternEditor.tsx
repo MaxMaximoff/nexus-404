@@ -11,11 +11,11 @@ import {
   DEFAULT_VELOCITY, MAX_BARS, MAX_SEMITONES, STEP, addNote, barTicks, findNote, gateFor, moveNote, removeNote, resizeNote, rollNote, semitonesOf, setBars,
   setSemitones, setVelocity,
 } from "../sp404/patternEdit";
-import { IconMinus, IconPlus, IconRedo, IconTrash, IconUndo } from "./icons";
+import { IconMinus, IconPlus, IconRedo, IconTrash, IconUndo, IconUpload } from "./icons";
 import { auditionPad, connectMidi, midiState } from "./midi";
 import { Pager, pagingOf } from "./PatternPager";
 import { draftOf, edit, editingSlot, isDirty, pick, preview, redo, revert, settle, undo, type Draft } from "./patternDraft";
-import { pads, selectPad, selectedPad } from "./store";
+import { confirmSave, pads, patternWriting, project1, reloadVia, requestSave, saveBlockReason, saveConfirm, selectPad, selectedPad } from "./store";
 
 /** The grid's step: 1/8, 1/16 or 1/32 of a note. */
 const gridTicks = signal(STEP);
@@ -43,6 +43,7 @@ export function PatternEditor({ slot }: { slot: number }) {
       if ((e.key === "Delete" || e.key === "Backspace") && cur.sel !== null) { e.preventDefault(); edit(slot, removeNote(cur.p, cur.sel), { sel: null }); }
       else if (mod && key === "z") { e.preventDefault(); if (e.shiftKey) redo(slot); else undo(slot); }
       else if (mod && key === "y") { e.preventDefault(); redo(slot); }
+      else if (mod && key === "s") { e.preventDefault(); requestSave(slot); }
       else if (e.key === "Escape") pick(slot, { sel: null });
     };
     document.addEventListener("keydown", onKey);
@@ -129,7 +130,8 @@ export function PatternEditor({ slot }: { slot: number }) {
       <EditBar slot={slot} d={d} rows={rows} onAddPad={addPad} />
       {pg.pages > 1 && <Pager page={pg.page} pages={pg.pages} barsPerPage={pg.barsPerPage} totalBars={pg.totalBars} onPage={pg.setPage} />}
       <div class="ptn-scroll">
-        <div class="ptn-grid ptn-grid-edit" style={{ "--steps": pg.steps, "--bar": pg.barSteps }}>
+        <div class="ptn-grid ptn-grid-edit" style={{ "--steps": pg.steps, "--bar": pg.barSteps }} data-slot={slot} data-from={pg.from} data-span={pg.pageTicks}>
+          <div class="ptn-playhead" aria-hidden="true" />
           <div class="ptn-ruler-head" />
           <div class="ptn-ruler">
             {Array.from({ length: pg.pageBars }, (_, bar) => (
@@ -240,6 +242,7 @@ function EditBar({ slot, d, rows, onAddPad }: { slot: number; d: Draft; rows: nu
       </select>
       {isDirty(d) && <button class="btn btn-ghost ptn-revert" onClick={() => revert(slot)} title="Вернуть паттерн таким, как он на SP (можно отменить)">сбросить правки</button>}
       {midiState.value !== "ready" && <span class="muted small" title="Шаги слышны через SP по USB-MIDI. Откройте страницу в Chrome и подключите SP">звук: нет MIDI-порта SP</span>}
+      <span class="ptn-save-slot"><SaveControl slot={slot} /></span>
     </div>
   );
 }
@@ -284,6 +287,25 @@ function NoteStrip({ slot, d, grid }: { slot: number; d: Draft; grid: number }) 
       </span>
       <button class="icon-btn insp-delete ptn-strip-del" onClick={() => edit(slot, removeNote(p, n.seq), { sel: null })} title="Убрать ноту (Delete)" aria-label="Убрать ноту"><IconTrash /></button>
     </div>
+  );
+}
+
+/** Save to the SP: the button, the first-time question for the project, and the stage while it runs. */
+export function SaveControl({ slot }: { slot: number }) {
+  const why = saveBlockReason(slot), busy = patternWriting.value;
+  if (saveConfirm.value === slot) return (
+    <span class="ptn-save-ask" role="alertdialog" aria-label="Сохранить паттерн на SP">
+      Записать {padName(slot)} на SP в проект {project1.value}? SP на несколько секунд уйдёт в проект {reloadVia()} и вернётся, чтобы перечитать паттерны.
+      <button class="btn btn-primary ptn-mini" onClick={() => confirmSave(true)}>Записать</button>
+      <button class="btn ptn-mini" onClick={() => confirmSave(false)}>Отмена</button>
+    </span>
+  );
+  if (busy) return <span class="muted small ptn-save-busy">{busy}…</span>;
+  return (
+    <button class="btn btn-primary ptn-save" disabled={!!why} onClick={() => requestSave(slot)}
+      title={why ?? "Записать паттерн на SP (Ctrl+S). SP на несколько секунд уйдёт в другой проект и вернётся, чтобы перечитать паттерны"}>
+      <IconUpload /> Сохранить на SP
+    </button>
   );
 }
 
