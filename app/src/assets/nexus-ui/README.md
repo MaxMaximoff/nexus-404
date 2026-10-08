@@ -1,6 +1,6 @@
 # NEXUS-404: shared hybrid materials
 
-Open `http://localhost:5173/?demo`, then select A5. All occupied and empty pads in every bank share the approved raster materials. The bank panel, its ten tiles, the pad-grid panel and inspector shell use the same material family. Inspector inner sections use the approved translucent surfaces in the standard stylesheet. The old `?demo&graphics=hybrid` link displays the same interface; no experimental stylesheet or root class is required.
+Open `http://localhost:5173/?demo`, then select A5. All occupied and empty pads in every bank share the approved raster materials. The bank panel, its ten tiles, the pad-grid panel, inspector shell and header use the same material family. Inspector inner sections use the approved translucent surfaces in the standard stylesheet. The old `?demo&graphics=hybrid` link displays the same interface; no experimental stylesheet or root class is required.
 
 The original three-component proof of concept is preserved in checkpoint `b07b226` on branch `codex/hybrid-pad-grid`. Its 166 tests passed before integration. Before/after screenshots use the same demo project, A5, the Sample tab, viewport and browser scale at 1440 × 900 and 1920 × 1080.
 
@@ -15,6 +15,7 @@ The original three-component proof of concept is preserved in checkpoint `b07b22
 | Bank tiles | `pads/pad-light.webp` | `lighting/pad-emitter.svg` | Existing 16-cell occupancy, bank letter, tempo, lock and transfer target |
 | Inspector shell (including SD browser and recorder) | `panels/panel-light.webp` | `details/panel-corners.svg` | Existing tabs, inputs, waveform, scroll area and transport |
 | Inspector inner sections | Shared shell visible through translucent CSS fill | Thin CSS border and highlight | Existing sample, tempo/pitch, pad, envelope, mix and resample controls |
+| Header shell | `panels/panel-light.webp` | `details/panel-corners.svg` | Existing logo, connection LED/status, project/tempo controls and actions |
 
 The standard `.pad`, `.full`, `.empty`, `.selected`, `.picked` and `.drop*` rules in `src/ui/styles.css` provide the shared system. Pad-specific A5/A11 overrides were removed from `hybrid.css`. There is no parallel pad theme or duplicate asset per pad. No component contract, device, store, waveform, bank, pattern, import, keyboard, selection or drag handler changed during this integration.
 
@@ -87,4 +88,14 @@ Before/after screenshots cover A5 and the Sample inspector at 1440 × 900 and 19
 
 Production build and TypeScript check passed; all 166 existing tests passed. No new assets, dependencies or downloads were added. Device recording and writes were not exercised.
 
-Header and bottom service panels are pending the next sequential steps.
+## Stage 2, fifth step: header
+
+Checkpoint `9669ded` preserves the integrated inspector sections. The `.topbar.glass` shell now uses the shared panel material, fixed-size painted corners and non-interactive SVG corner detail. The separate CSS screw/brushed-metal header background was removed. Shared shell selectors retain the same specificity; existing semantic drop states continue to take precedence. No asset, component, handler or control style changed.
+
+Before/after screenshots use A5 and the Sample inspector at 1440 × 900 and 1920 × 1080. Recorded rectangles of the header and every descendant, plus the bank/grid/inspector panels and selected pad, match exactly at both desktop sizes. Button/input/select backgrounds, borders, colors and shadows also match. The header remains 1393 × 54 px at 1440 and 1448 × 54 px at 1920. The existing compact laptop layout was checked at 1280 × 900; it stays 54 px high without horizontal page overflow.
+
+At 390 × 844 the existing wrapping is preserved: the header remains 355 × 241 px, with matching control widths and positions and no horizontal overflow. Keyboard focus on the tempo field and the disconnected status/LED, Demo and Connect actions were checked. Connection actions were not invoked. Decorative corners retain `pointer-events: none`; no seams or deformed corners were apparent at the checked sizes. The header's controls and separators remain live HTML with their existing styling.
+
+Production build and TypeScript check passed; all 166 existing tests passed. No new resources or dependencies were added.
+
+Bottom service panels are pending the next sequential step.
