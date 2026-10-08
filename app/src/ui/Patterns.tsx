@@ -6,8 +6,8 @@ import { computed, effect, signal } from "@preact/signals";
 import { useEffect } from "preact/hooks";
 import { BANKS, PPQ, decodeAudio, formatBpm, noteSemitones, padName, patternFileName, type Pattern, type PatternNote } from "../sp404";
 import {
-  bouncePattern, bouncing, conn, downloadPatternMidi, log, notice, patternFiles, patterns, patternsLoading, patternsOf, pads, project1,
-  refreshPatterns, selectPad, selectedPad, tempoFor, writeBlockReason,
+  bouncePattern, bouncing, conn, downloadPatternMidi, emptyPattern, log, notice, patternFiles, patterns, patternsLoading, patternsOf, pads, project1,
+  refreshPatterns, selectPad, selectedBank, selectedPad, tempoFor, writeBlockReason,
 } from "./store";
 import { IconDownload, IconPencil, IconPlay, IconRefresh, IconStop, IconWave } from "./icons";
 import { midiState } from "./midi";
@@ -15,7 +15,7 @@ import { playingSlot, stopPattern, togglePattern } from "./ptnPlayer";
 import { RowSound, silentClass } from "./PatternRowSound";
 import { PatternEditor, SaveControl } from "./PatternEditor";
 import { Pager, pagingOf } from "./PatternPager";
-import { draftOf, dropDraft, drafts, editingSlot, fileSum, isDirty, revert, startDraft } from "./patternDraft";
+import { NEW_SLOT, draftOf, dropDraft, drafts, editingSlot, fileSum, isDirty, pick, revert, startDraft } from "./patternDraft";
 import { TakeCard } from "./Recorder";
 import { recTake, setTake } from "./rec";
 import { saveFile } from "./download";
@@ -40,8 +40,10 @@ export function showView(v: View): void {
 const pickedSlot = signal<number | null>(null);
 export const shownSlot = computed(() => {
   const m = patterns.value, s = pickedSlot.value;
-  if (!m?.size) return null;
-  return s !== null && m.has(s) ? s : [...m.keys()][0];
+  if (!m) return null;
+  // An empty slot shows too when picked: a new pattern is made there.
+  if (s !== null) return s;
+  return m.size ? [...m.keys()][0] : null;
 });
 /** Back from a pattern to one of its pads: the pads screen, that pad in the inspector. */
 export function openPad(pad: number): void {
@@ -78,7 +80,7 @@ export function PatternsPane() {
       ) : (
         <>
           <SlotMatrix />
-          {m.size ? <PatternView /> : <p class="muted ptn-empty">В проекте нет паттернов. Запишите паттерн на SP и нажмите «Обновить».</p>}
+          {shownSlot.value !== null ? <PatternView /> : <p class="muted ptn-empty">В проекте нет паттернов. Выберите слот выше, чтобы создать паттерн, или запишите его на SP и нажмите «Обновить».</p>}
         </>
       )}
     </section>
@@ -101,7 +103,7 @@ function SlotMatrix() {
             const title = p === undefined ? `${padName(slot)}: пусто`
               : typeof p === "string" ? `${padName(slot)}: не прочитан — ${p}`
               : `${padName(slot)}: ${p.bars} ${bars(p.bars)}, ${p.notes.length} нот${ofSel.has(slot) ? ` · играет ${padName(sel)}` : ""}${edited && isDirty(edited) ? " · есть правки" : ""}`;
-            return <button key={slot} role="gridcell" class={cls} disabled={p === undefined} title={title} aria-label={title} onClick={() => (pickedSlot.value = slot)}>{i + 1}</button>;
+            return <button key={slot} role="gridcell" class={`${cls} ${p === undefined ? "empty" : ""}`} title={p === undefined ? `${padName(slot)}: пусто — создать паттерн` : title} aria-label={title} onClick={() => (pickedSlot.value = slot)}>{i + 1}</button>;
           })}
         </div>
       ))}
@@ -112,9 +114,11 @@ function SlotMatrix() {
 const bars = (n: number) => (n % 10 === 1 && n % 100 !== 11 ? "такт" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? "такта" : "тактов");
 
 function PatternView() {
-  const slot = shownSlot.value!, base = patterns.value!.get(slot)!;
-  if (typeof base === "string") return <p class="err ptn-empty">{padName(slot)}: файл паттерна не прочитан — {base}</p>;
-  const d = draftOf(slot), p = d?.p ?? base, dirty = !!d && isDirty(d), editing = editingSlot.value === slot;
+  const slot = shownSlot.value!, read = patterns.value!.get(slot), d = draftOf(slot);
+  if (typeof read === "string") return <p class="err ptn-empty">{padName(slot)}: файл паттерна не прочитан — {read}</p>;
+  if (!read && !d) return <NewPattern slot={slot} />;
+  const base = read ?? d!.base, isNew = !read;
+  const p = d?.p ?? base, dirty = !!d && isDirty(d), editing = editingSlot.value === slot;
   const t = tempoFor(slot >> 4);
   const rows = [...new Set(p.notes.map((n) => n.pad))].sort((a, b) => a - b);
   // TR-REC sub-steps sit between steps on purpose: only notes played live count as off the grid.
@@ -135,7 +139,7 @@ function PatternView() {
   const toggleEdit = () => {
     if (editing) { editingSlot.value = null; if (d && !dirty) dropDraft(slot); return; }
     const f = patternFiles.value.get(slot);
-    startDraft(slot, base, f ? fileSum(f.bytes) : undefined);
+    startDraft(slot, base, isNew ? NEW_SLOT : f ? fileSum(f.bytes) : undefined);
     editingSlot.value = slot;
   };
   return (
@@ -148,7 +152,8 @@ function PatternView() {
         </button>
         <span>{p.bars} {bars(p.bars)} · {p.beatsPerBar}/4 · {p.notes.length} нот · {rows.length} pad'ов{t ? ` · ${formatBpm(t.tempoX100)} BPM ${t.of}` : ""}</span>
         {offGrid > 0 && !editing && <span class="chip" title="Ноты, сыгранные вживую мимо шагов 1/16. Показаны там, где они есть. Sub-step из TR-REC сюда не входят">вне сетки 1/16: {offGrid}</span>}
-        {dirty && <span class="chip chip-warn" title="Правки лежат в браузере и на SP пока не пишутся: сохраните их как MIDI">изменён</span>}
+        {isNew && <span class="chip chip-warn" title="Этого паттерна на SP ещё нет: он появится после сохранения">новый</span>}
+        {dirty && !isNew && <span class="chip chip-warn" title="Правки лежат в браузере: «Сохранить на SP» запишет их">изменён</span>}
         <button class={`btn ptn-edit-toggle ${editing ? "card-toggle on" : ""}`} onClick={toggleEdit} aria-pressed={editing}
           title={editing ? "Закрыть редактор: правки остаются в браузере" : "Править паттерн: правки остаются в браузере, на SP они не пишутся"}>
           <IconPencil /> {editing ? "Готово" : "Править"}
@@ -161,7 +166,7 @@ function PatternView() {
         )}
       </div>
       {editing ? <PatternEditor slot={slot} /> : <StepGrid slot={slot} p={p} rows={rows} />}
-      {dirty ? (
+      {dirty || isNew ? (
         <div class="ptn-dirty-row">
           {!editing && <SaveControl slot={slot} />}
           <span class="muted small">Bounce играет паттерн таким, как он на SP: правки в нём не слышны, пока не сохранены.</span>
@@ -171,6 +176,28 @@ function PatternView() {
         <Bounce slot={slot} p={base} />
       )}
       {!editing && <p class="hint">Строки — pad'ы, которые играет паттерн; клик по номеру pad'а (A1) открывает его сэмпл, по названию — выбирает pad: в матрице выше видно, в каких ещё паттернах он играет. Столбцы — шаги 1/16, высота заливки ноты — сила удара{pitched ? ", цветные с «+1», «−2» — ноты, транспонированные в TR-REC" : ""}. «Править» открывает редактор.</p>}
+    </div>
+  );
+}
+
+/** An empty slot: make a new pattern there, 1, 2 or 4 bars long, and open the editor on it. */
+function NewPattern({ slot }: { slot: number }) {
+  const create = (bars: number) => {
+    startDraft(slot, emptyPattern(bars), NEW_SLOT);
+    // Rows to start with: the loaded pads of the slot's own bank (A5 → bank A), else of the bank open now.
+    const of = (bank: number) => Array.from({ length: 16 }, (_, i) => bank * 16 + i).filter((i) => pads.value[i]?.size);
+    const rows = of(slot >> 4).length ? of(slot >> 4) : of(selectedBank.value);
+    pick(slot, { rows, active: rows[0] ?? null });
+    editingSlot.value = slot;
+  };
+  return (
+    <div class="ptn-view">
+      <div class="ptn-info">
+        <span class="chip chip-accent">{padName(slot)}</span>
+        <span>пусто — создать паттерн:</span>
+        {[1, 2, 4].map((b) => <button key={b} class="btn ptn-mini" onClick={() => create(b)}>{b} {bars(b)}</button>)}
+      </div>
+      <p class="hint">Новый паттерн собирается в браузере; на SP он появится после «Сохранить на SP». Размер такта берётся из паттернов этого проекта.</p>
     </div>
   );
 }

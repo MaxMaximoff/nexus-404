@@ -53,4 +53,19 @@ describe("drafts kept in the browser", () => {
     D.edit(1, pattern([0, 240]));
     expect([...mem.keys()]).toEqual([]);
   });
+
+  it("keeps a new pattern while its slot is still empty on the SP", () => {
+    D.drafts.value = new Map(); // the app sets the drafts and their project together; start clean here
+    D.draftsProject.value = 11;
+    const empty = pattern([]);
+    D.startDraft(7, empty, D.NEW_SLOT);
+    D.edit(7, pattern([0, 960]));
+    expect(JSON.parse(mem.get("nexus404.drafts.11")!)["7"].base).toBe("new");
+    const back = D.restoreDrafts(11, () => null, (slot) => slot === 7);
+    const d = back.map.get(7)!;
+    expect([d.p.notes.length, d.base.notes.length, D.isDirty(d), d.baseSum]).toEqual([2, 0, true, "new"]);
+    expect(D.restoreDrafts(11, () => null, () => false).stale).toEqual([7]); // the slot has a pattern on the SP now
+    D.dropDraft(7);
+    D.draftsProject.value = null;
+  });
 });

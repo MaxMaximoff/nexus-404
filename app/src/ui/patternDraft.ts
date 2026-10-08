@@ -21,7 +21,7 @@ export interface Draft {
   active: number | null;
   /** Pads added by hand: their rows show even without notes. */
   rows: number[];
-  /** Checksum of the SP file the draft started from (fileSum): without it the draft is not kept in the browser. */
+  /** Checksum of the SP file the draft started from (fileSum), or NEW_SLOT for a new pattern: without it the draft is not kept in the browser. */
   baseSum?: string;
 }
 
@@ -43,6 +43,9 @@ function put(d: Draft): void {
 export function startDraft(slot: number, base: Pattern, baseSum?: string): void {
   if (!drafts.value.has(slot)) put({ slot, base, p: base, undo: [], redo: [], sel: null, group: [], active: null, rows: [], baseSum });
 }
+
+/** `baseSum` of a draft for a slot that was empty on the SP. */
+export const NEW_SLOT = "new";
 
 /** FNV-1a of a file, with its length: tells whether the SP's file is still the one a draft started from. */
 export function fileSum(bytes: Uint8Array): string {
@@ -73,12 +76,19 @@ effect(() => {
  * and its file's sum). A draft whose SP file changed since is dropped and its slot returned in
  * `stale`. A restored draft can be undone back to the SP's version.
  */
-export function restoreDrafts(p1: number, baseOf: (slot: number) => { p: Pattern; sum: string } | null): { map: Map<number, Draft>; stale: number[] } {
+export function restoreDrafts(p1: number, baseOf: (slot: number) => { p: Pattern; sum: string } | null, emptyOnSp: (slot: number) => boolean = () => false): { map: Map<number, Draft>; stale: number[] } {
   const map = new Map<number, Draft>(), stale: number[] = [];
   let kept: Record<string, Kept> = {};
   try { kept = JSON.parse(localStorage.getItem(storeKey(p1)) ?? "{}") ?? {}; } catch { /* nothing kept */ }
   for (const [k, v] of Object.entries(kept)) {
     const slot = Number(k), b = baseOf(slot);
+    if (v?.base === NEW_SLOT && v.p?.notes) {
+      // A new pattern comes back while its slot is still empty on the SP; its base is the empty pattern it began as.
+      if (!emptyOnSp(slot)) { stale.push(slot); continue; }
+      const base: Pattern = { ...v.p, notes: [], controls: [] };
+      map.set(slot, { slot, base, p: v.p, undo: [base], redo: [], sel: null, group: [], active: null, rows: Array.isArray(v.rows) ? v.rows : [], baseSum: NEW_SLOT });
+      continue;
+    }
     if (!b || !v?.p?.notes || b.sum !== v.base) { stale.push(slot); continue; }
     map.set(slot, { slot, base: b.p, p: v.p, undo: [b.p], redo: [], sel: null, group: [], active: null, rows: Array.isArray(v.rows) ? v.rows : [], baseSum: v.base });
   }

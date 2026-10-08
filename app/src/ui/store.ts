@@ -5,7 +5,7 @@ import { batch, computed, effect, signal } from "@preact/signals";
 import { safeFileName, saveFile } from "./download";
 import {
   PAD_COUNT, SP404Device, SampleUploader, WebSerialTransport, bpmFromFileName, computeEnvelope, computePeaks, isSp404Port,
-  BANKS, encodeWav, BPM_MAX_X100, BPM_MIN_X100, BPM_RANGES, VARI_MODES, bpmFromLength, byteToFrame, detectBpm, formatBpm, newJob, padName, padSpeed, samplePath, smpToPcm,
+  BANKS, PPQ, encodeWav, BPM_MAX_X100, BPM_MIN_X100, BPM_RANGES, VARI_MODES, bpmFromLength, byteToFrame, detectBpm, formatBpm, newJob, padName, padSpeed, samplePath, smpToPcm,
   parsePattern, patternDir, patternMidiName, patternPads, patternPath, patternToMidi, rebuildDiff, slotOfFileName, writePattern,
   type BpmResult, type DeviceStatus, type ImportJob, type LogLevel, type PadBlock, type Pattern, type ProjectSettings,
 } from "../sp404";
@@ -228,7 +228,7 @@ async function loadAll(first = false): Promise<void> {
             const r = restoreDrafts(st.project + 1, (slot) => {
               const p = pats.get(slot), f = files.get(slot);
               return p && typeof p !== "string" && f ? { p, sum: fileSum(f.bytes) } : null;
-            });
+            }, (slot) => !pats.has(slot));
             drafts.value = r.map;
             draftsProject.value = st.project + 1;
             if (r.map.size) log("info", `Черновики паттернов из браузера: ${[...r.map.keys()].map(padName).join(", ")}`);
@@ -385,14 +385,37 @@ export const reloadVia = (): number => {
 };
 
 /** Why the draft of `slot` cannot be saved now, or null. */
+/** The SP file a new pattern is written over as a template (its skeleton only): the first one our writer reproduces. */
+export function patternTemplate(): { slot: number; bytes: Uint8Array; p: Pattern } | null {
+  for (const [slot, f] of patternFiles.value) {
+    const p = patterns.value?.get(slot);
+    if (f.exact && p && typeof p !== "string") return { slot, bytes: f.bytes, p };
+  }
+  return null;
+}
+
+/** An empty pattern of `bars` bars, in the template's time signature (4/4 without one). */
+export function emptyPattern(bars: number): Pattern {
+  const t = patternTemplate(), bpb = t?.p.beatsPerBar ?? 4;
+  return { notes: [], controls: [], length: bars * bpb * PPQ, bars, beatsPerBar: bpb, unknown: 0, records: t?.p.records ?? 0 };
+}
+
+/** Whether `slot` holds no pattern on the SP (a draft there is a new pattern). */
+export const isNewSlot = (slot: number): boolean => !!patterns.value && !patterns.value.has(slot);
+
 export function saveBlockReason(slot: number): string | null {
   const f = patternFiles.value.get(slot), draft = draftOf(slot), base = patterns.value?.get(slot);
   if (demo.value) return "Демо-режим: SP не подключён";
   if (!device || conn.value !== "ready") return "SP не подключён";
   if (patternWriting.value) return `Идёт запись: ${patternWriting.value}`;
   if (!draft || !isDirty(draft)) return "Изменений нет";
-  if (!f) return "Файл этого паттерна не прочитан с SP";
-  if (!f.exact) return "Наша запись не повторяет этот файл SP: сохранять его небезопасно";
+  if (isNewSlot(slot)) {
+    if (!patternTemplate()) return "Нужен образец: в проекте должен быть хотя бы один паттерн, записанный на SP";
+    if (!draft.p.notes.length) return "Паттерн пуст";
+  } else {
+    if (!f) return "Файл этого паттерна не прочитан с SP";
+    if (!f.exact) return "Наша запись не повторяет этот файл SP: сохранять его небезопасно";
+  }
   const was = base && typeof base !== "string" ? base.bars : 0;
   if (draft.p.bars > Math.max(SAVE_MAX_BARS, was)) return `Паттерны длиннее ${Math.max(SAVE_MAX_BARS, was)} тактов на SP не проверены`;
   return writeBlockReason.value;
@@ -422,8 +445,10 @@ export function confirmSave(yes: boolean): void {
 async function savePattern(slot: number): Promise<boolean> {
   const reason = saveBlockReason(slot);
   if (reason) { notice.value = { kind: "error", text: `${padName(slot)}: ${reason}` }; return false; }
-  const d = device!, f = patternFiles.value.get(slot)!, draft = draftOf(slot)!, p1 = project1.value, via = reloadVia();
-  const bytes = writePattern(draft.p, f.bytes), what = `${padName(slot)} в проект ${p1}`;
+  const d = device!, draft = draftOf(slot)!, p1 = project1.value, via = reloadVia(), fresh = isNewSlot(slot);
+  // An existing pattern: its own file, every record we did not change kept. A new one: over a template's skeleton.
+  const bytes = fresh ? writePattern(draft.p, patternTemplate()!.bytes, { fresh: true }) : writePattern(draft.p, patternFiles.value.get(slot)!.bytes);
+  const what = `${padName(slot)} в проект ${p1}${fresh ? " (новый)" : ""}`;
   patternWriting.value = what;
   try {
     const r = await d.exclusive((x) => x.writePatternAndReload(p1, slot, bytes, via, (s) => (patternWriting.value = `${what}: ${s}`)));

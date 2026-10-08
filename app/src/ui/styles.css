@@ -1078,4 +1078,6 @@ button, input, select { font: inherit; color: inherit; }
 .ptn-vel-num.in { bottom: auto; top: 3px; color: #04110e; }
 /* Cell cursor of the keyboard. */
 .ptn-cursor { position: absolute; top: 1px; bottom: 1px; z-index: 2; pointer-events: none; border: 1.5px solid var(--neon-hi); border-radius: 4px; box-shadow: 0 0 6px var(--neon); }
+.ptn-slot.empty:not(.cur) { opacity: 0.55; }
+.ptn-slot.empty:hover { opacity: 1; }
 

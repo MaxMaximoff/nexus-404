@@ -158,6 +158,8 @@ function varLen(out: number[], v: number): void {
 
 // ------------------------------------------------------------------ writing a pattern file
 
+/** `xx 80 00 00 00 00 00 yy`: a filler, or the record the SP puts once in every file (`yy` = FF). */
+const isTimeOnly = (r: Uint8Array): boolean => r[1] === 0x80 && r[2] === 0 && r[3] === 0 && r[4] === 0 && r[5] === 0 && r[6] === 0;
 const isNoteRecord = (r: Uint8Array): boolean => r[1] >= NOTE_FIRST && r[1] < NOTE_FIRST + NOTES_PER_GROUP && (r[2] & 0x0f) < 2;
 /** A time-only record: the SP pads gaps longer than 255 ticks with `FF 80 00 00 00 00 00 00`. */
 const filler = (delta: number): Uint8Array => Uint8Array.of(delta, 0x80, 0, 0, 0, 0, 0, 0);
@@ -200,10 +202,14 @@ function noteRecord(n: PatternNote, base?: Uint8Array): Uint8Array {
  * after the records already on their tick. So an unedited pattern comes out byte for byte, and an
  * edit changes only what was edited. Gaps over 255 ticks get `FF 80` fillers. The trailer stays,
  * with the length in bars (bytes 0 and 6) changed only when the bars changed.
+ * With `fresh`, the original is only a template for a new pattern: of its records only the
+ * time-only ones stay (fillers and the `…FF` one), not its notes, control changes, erased events or
+ * unknown records; its trailer gives the time signature, with this pattern's bars.
  * Without an original (a diagnostic of how we lay a file out), notes and control changes are
  * written in tick order with `trailer` (or the one SP files have) and no extra records.
  */
-export function writePattern(p: Pattern, original?: Uint8Array | null, trailer?: Uint8Array): Uint8Array {
+export function writePattern(p: Pattern, original?: Uint8Array | null, opts: { trailer?: Uint8Array; fresh?: boolean } = {}): Uint8Array {
+  const { trailer, fresh = false } = opts;
   const parts = original ? splitPattern(original) : null;
   const bySeq = new Map(p.notes.map((n) => [n.seq, n]));
   const out: { tick: number; r: Uint8Array }[] = [];
@@ -211,10 +217,11 @@ export function writePattern(p: Pattern, original?: Uint8Array | null, trailer?:
   if (parts) {
     for (const { tick, seq, r } of parts.recs) {
       if (isNoteRecord(r)) {
+        if (fresh) continue; // a template's notes are never ours, whatever their numbers
         bases.set(seq, r);
         const n = bySeq.get(seq);
         if (n && n.tick === tick) { out.push({ tick, r: noteRecord(n, r) }); placed.add(seq); }
-      } else if (tick < p.length) out.push({ tick, r: r.slice() });
+      } else if (tick < p.length && (!fresh || isTimeOnly(r))) out.push({ tick, r: r.slice() });
     }
   } else {
     for (const c of p.controls) if (c.tick < p.length) out.push({ tick: c.tick, r: Uint8Array.of(0, CONTROL, c.channel & 0x0f, 0, 0, c.controller & 0x7f, c.value & 0x7f, 0) });
@@ -265,7 +272,7 @@ export function writePattern(p: Pattern, original?: Uint8Array | null, trailer?:
  * differs, if any. It tells whether files we make for new patterns look like the SP's.
  */
 export function rebuildDiff(bytes: Uint8Array): { same: boolean; record: number; sp: string; ours: string } {
-  const p = parsePattern(bytes), ours = writePattern(p, null, splitPattern(bytes).trailer);
+  const p = parsePattern(bytes), ours = writePattern(p, null, { trailer: splitPattern(bytes).trailer });
   const n = Math.max(bytes.length, ours.length) / REC;
   for (let i = 0; i < n; i++) {
     const a = bytes.subarray(i * REC, i * REC + REC), b = ours.subarray(i * REC, i * REC + REC);

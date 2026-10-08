@@ -117,4 +117,21 @@ describe("writing a pattern file", () => {
     expect(p.records).toBe(12);
     expect(addNote(p, 9, 960).note?.seq).toBe(12);
   });
+
+  it("writes a new pattern over an SP file as a template: its skeleton, not its events", () => {
+    const tpl = parsePattern(SP_LIKE);
+    const empty: Pattern = { notes: [], controls: [], length: 1920, bars: 1, beatsPerBar: tpl.beatsPerBar, unknown: 0, records: tpl.records };
+    let p = addNote(empty, 4, 0).pattern;
+    p = addNote(p, 4, 960).pattern;
+    expect(p.notes.map((n) => n.seq)).toEqual([12, 13]); // past the template's records: none of its notes is taken for ours
+    const out = writePattern(p, SP_LIKE, { fresh: true }), back = parsePattern(out);
+    expect(notes(back)).toEqual(notes(p));
+    expect(back.controls).toEqual([]);
+    const recs = Array.from({ length: out.length / 8 }, (_, i) => out.subarray(i * 8, i * 8 + 8));
+    expect(recs.some((r) => r[1] === 0x80 && r[3] === 0x8d)).toBe(false); // no erased event
+    expect(recs.some((r) => r[1] === 0x80 && r[7] === 0xff)).toBe(true); // the …FF record stays
+    expect([back.length, back.bars, deltas(out).every((d) => d <= 255)]).toEqual([1920, 1, true]);
+    const two = parsePattern(writePattern(setBars(p, 2), SP_LIKE, { fresh: true }));
+    expect([two.length, two.bars, notes(two)]).toEqual([3840, 2, notes(p)]);
+  });
 });
