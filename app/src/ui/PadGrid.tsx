@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { BANKS, formatBpm, padName } from "../sp404";
 import {
-  PAD_DRAG, copyPad, copying, dragCopy, dragGroup, dropGroup, groupDrop, groupTargets, clearPicked, confirmGroupDelete, deletePicked, groupProgress, pickPad, picked, pickedList, conn, dragOverBank, draggedPad, endPadDrag, moveSpeedChange, connect, hasGrant, importFiles, jobs, movePad, pads, project, reconnect, reload, selectPad, selectedBank, selectedPad, setBankTempo, status,
+  PAD_DRAG, copyPad, copying, dragCopy, dragGroup, dropGroup, groupDrop, groupTargets, clearPicked, confirmGroupDelete, deletePicked, groupProgress, pickPad, picked, pickedList, conn, dragOverBank, draggedPad, endPadDrag, patternsOf, moveSpeedChange, connect, hasGrant, importFiles, jobs, movePad, pads, project, reconnect, reload, selectPad, selectedBank, selectedPad, setBankTempo, status,
   waveforms, writeBlockReason,
 } from "./store";
 import { IconLock, IconRefresh, IconTrash } from "./icons";
@@ -67,12 +67,14 @@ function GroupBar() {
   }
   if (!list.length) return null;
   const names = list.map((i) => `${padName(i)} «${pads.value[i]!.name || "без имени"}»`);
+  const inPatterns = [...new Set(list.flatMap(patternsOf))].sort((a, b) => a - b);
   if (confirming) {
     return (
       <div class="group-bar confirm-delete" role="alertdialog" aria-label="Подтверждение удаления"
         onKeyDown={(e) => { if (e.key === "Escape") confirmGroupDelete.value = false; }}>
         <span class="confirm-text">Удалить {list.length} {padsWord(list.length)} с SP? Вернуть будет нельзя.</span>
         <span class="group-names">{names.join(", ")}</span>
+        {inPatterns.length > 0 && <span class="confirm-ptn">Они звучат в паттернах {inPatterns.map(padName).join(", ")} — там станет тишина.</span>}
         <button ref={yes} class="btn btn-danger" onClick={deletePicked}><IconTrash /> Удалить {list.length}</button>
         <button class="btn" onClick={() => (confirmGroupDelete.value = false)}>Отмена</button>
       </div>
@@ -93,7 +95,13 @@ function GroupBar() {
 function DragSpeed() {
   const src = draggedPad.value, bank = dragOverBank.value;
   const s = src !== null && bank !== null ? moveSpeedChange(src, bank) : null;
-  return s && <span class="chip chip-warn drag-speed">{s.text}</span>;
+  const inPatterns = src !== null ? patternsOf(src) : [];
+  return (
+    <>
+      {s && <span class="chip chip-warn drag-speed">{s.text}</span>}
+      {inPatterns.length > 0 && <span class="chip drag-speed" title="После переноса паттерны перечитаются, и в журнале будет видно, перевёл ли SP их ноты">{padName(src!)} в паттернах {inPatterns.map(padName).join(", ")}</span>}
+    </>
+  );
 }
 
 function ConnectOverlay() {
@@ -191,6 +199,7 @@ function PadCard({ index }: { index: number }) {
       </span>
       <span class="pad-tags">
         {!!p?.size && p.muteGroup > 0 && <span class="pad-tag tag-mute" title={`Mute Group ${BANKS[p.muteGroup - 1]}: pad'ы группы глушат друг друга`}>M {BANKS[p.muteGroup - 1] ?? p.muteGroup}</span>}
+        {!!p?.size && patternsOf(index).length > 0 && <span class="pad-tag tag-ptn" title={`Звучит в паттернах ${patternsOf(index).map(padName).join(", ")}`}>P {patternsOf(index).length}</span>}
         {!!p?.size && p.padLink > 0 && <span class="pad-tag tag-link" title={`PAD Link ${BANKS[p.padLink - 1]}: pad'ы группы звучат вместе`}>L {BANKS[p.padLink - 1] ?? p.padLink}</span>}
       </span>
       {p?.size ? (

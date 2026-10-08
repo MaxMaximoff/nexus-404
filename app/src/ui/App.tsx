@@ -5,6 +5,7 @@ import { CardBrowser } from "./CardBrowser";
 import { Recorder } from "./Recorder";
 import { canUploadHere, cardBusy, cardConfirm, cardEdit, cardSel, sideTab } from "./card";
 import { PadGrid } from "./PadGrid";
+import { PatternsPane, mainView } from "./Patterns";
 import { TopBar } from "./TopBar";
 import { useEffect } from "preact/hooks";
 import { dragCopy, draggedPad, groupDrop, clearPicked, confirmDelete, confirmGroupDelete, groupProgress, notice, pads, pickBank, pickedList, selectedBank, selectedPad, writeBlockReason } from "./store";
@@ -56,10 +57,9 @@ export function App() {
           <button class="icon-btn" onClick={() => (notice.value = null)} aria-label="Закрыть"><IconX /></button>
         </div>
       )}
-      <main class="layout">
+      <main class={`layout ${mainView.value === "patterns" ? "layout-ptn" : ""}`}>
         <div class="workspace">
-          <BankRail />
-          <PadGrid />
+          {mainView.value === "patterns" ? <PatternsPane /> : <><BankRail /><PadGrid /></>}
         </div>
         {sideTab.value === "card" ? <CardBrowser /> : sideTab.value === "rec" ? <Recorder /> : <Inspector />}
       </main>

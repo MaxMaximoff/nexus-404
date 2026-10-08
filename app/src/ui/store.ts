@@ -5,7 +5,8 @@ import { safeFileName, saveFile } from "./download";
 import {
   PAD_COUNT, SP404Device, SampleUploader, WebSerialTransport, bpmFromFileName, computeEnvelope, computePeaks, isSp404Port,
   BANKS, encodeWav, BPM_MAX_X100, BPM_MIN_X100, BPM_RANGES, VARI_MODES, bpmFromLength, byteToFrame, detectBpm, formatBpm, newJob, padName, padSpeed, samplePath, smpToPcm,
-  type BpmResult, type DeviceStatus, type ImportJob, type LogLevel, type PadBlock, type ProjectSettings,
+  parsePattern, patternDir, patternMidiName, patternPads, patternPath, patternToMidi, slotOfFileName,
+  type BpmResult, type DeviceStatus, type ImportJob, type LogLevel, type PadBlock, type Pattern, type ProjectSettings,
 } from "../sp404";
 
 export type Conn = "unsupported" | "idle" | "connecting" | "loading" | "ready" | "lost";
@@ -179,12 +180,14 @@ async function loadAll(first = false): Promise<void> {
       const ps = await x.projectSettings(st.project);
       const blocks = await x.allPadBlocks((done, total) => (loadProgress.value = done / total));
       const kb = await x.freeKb().catch(() => null);
+      const pats = await readPatterns(x, st.project + 1).catch((e) => (log("warn", `Паттерны не прочитаны: ${(e as Error).message}`), null));
       batch(() => {
         status.value = st;
         project.value = ps;
         pads.value = blocks;
         picked.value = new Set();
         freeKb.value = kb;
+        patterns.value = pats;
         waveforms.value = new Map();
         padChannels.value = new Map();
         if (first) {
@@ -192,7 +195,7 @@ async function loadAll(first = false): Promise<void> {
           selectedPad.value = st.bank * 16 + st.pad;
         }
       });
-      log("info", `Проект ${st.project + 1} «${ps.name || ps.names[st.project]}»: ${blocks.filter((b) => b.size).length} сэмплов`);
+      log("info", `Проект ${st.project + 1} «${ps.name || ps.names[st.project]}»: ${blocks.filter((b) => b.size).length} сэмплов${pats ? `, паттернов ${pats.size}` : ""}`);
     });
     if (device === d) conn.value = "ready";
     loadWaveformIfSmall(selectedPad.value);
@@ -251,6 +254,85 @@ async function poll(): Promise<void> {
     }
   } catch {
     /* a missed poll is not worth reporting; a dead link reports itself via onLost */
+  }
+}
+
+// ------------------------------------------------------------------ patterns
+
+/** A pattern slot as read: the pattern, or why its file could not be read. */
+export type PatternSlot = Pattern | string;
+/** Patterns of the current project by slot (0..159); null until read. */
+export const patterns = signal<Map<number, PatternSlot> | null>(null);
+export const patternsLoading = signal(false);
+
+/** Every pattern file in the project's PTN/ folder: one listing, then one small read per file. */
+async function readPatterns(x: SP404Device, p1: number): Promise<Map<number, PatternSlot>> {
+  const out = new Map<number, PatternSlot>();
+  const slots = (await x.listDir(patternDir(p1))).flatMap((e) => (e.dir ? [] : [slotOfFileName(e.name)])).filter((s): s is number => s !== null).sort((a, b) => a - b);
+  for (const slot of slots) {
+    const bytes = await x.readFile(patternPath(p1, slot));
+    try {
+      if (!bytes) throw new Error("файл пропал");
+      out.set(slot, parsePattern(bytes));
+    } catch (e) {
+      out.set(slot, (e as Error).message);
+      log("warn", `Паттерн ${padName(slot)}: ${(e as Error).message}`);
+    }
+  }
+  return out;
+}
+
+/** Read the patterns again (they change when one is recorded on the SP). */
+export async function refreshPatterns(): Promise<Map<number, PatternSlot> | null> {
+  const d = device, p1 = project1.value;
+  if (!d || conn.value !== "ready" || patternsLoading.value) return null;
+  patternsLoading.value = true;
+  try {
+    const m = await d.exclusive((x) => readPatterns(x, p1));
+    if (device === d && project1.value === p1) patterns.value = m;
+    return m;
+  } catch (e) {
+    fail(e, "Чтение паттернов");
+    return null;
+  } finally {
+    patternsLoading.value = false;
+  }
+}
+
+/** For each pad: the pattern slots that play it. */
+export const patternUse = computed(() => {
+  const m = new Map<number, number[]>();
+  for (const [slot, p] of patterns.value ?? []) if (typeof p !== "string") for (const pad of patternPads(p)) m.set(pad, [...(m.get(pad) ?? []), slot]);
+  return m;
+});
+export const patternsOf = (pad: number): number[] => patternUse.value.get(pad) ?? [];
+
+/** Save a pattern as a MIDI file, as the SP's own export, but with the tempo that plays now (project or bank). */
+export function downloadPatternMidi(slot: number): void {
+  const p = patterns.value?.get(slot), t = tempoFor(slot >> 4);
+  if (!p || typeof p === "string" || !t) return;
+  const name = patternMidiName(project1.value, slot);
+  saveFile(name, patternToMidi(p, t.tempoX100), "audio/midi");
+  log("info", `Паттерн ${padName(slot)} → ${name} (${formatBpm(t.tempoX100)} BPM ${t.of})`);
+}
+
+/**
+ * After a move or swap: read the patterns again and say what became of those that played the
+ * moved pads (whether the SP rewrites them is not known yet; this shows it).
+ */
+async function reportPatternsAfterMove(src: number, dst: number, swapped: boolean): Promise<void> {
+  const before = new Map([[src, patternsOf(src)], [dst, patternsOf(dst)]]);
+  if (!before.get(src)!.length && !before.get(dst)!.length) return;
+  const after = await refreshPatterns();
+  if (!after) return;
+  const plays = (slot: number, pad: number) => { const p = after.get(slot); return !!p && typeof p !== "string" && p.notes.some((n) => n.pad === pad); };
+  for (const [from, to] of [[src, dst], ...(swapped ? [[dst, src]] : [])]) {
+    const slots = before.get(from)!;
+    if (!slots.length) continue;
+    const followed = slots.filter((s) => !plays(s, from) && plays(s, to));
+    const stayed = slots.filter((s) => plays(s, from));
+    if (followed.length) log("info", `Паттерны ${followed.map(padName).join(", ")}: SP перевёл ноты ${padName(from)} на ${padName(to)}`);
+    if (stayed.length) log("warn", `Паттерны ${stayed.map(padName).join(", ")} по-прежнему играют ${padName(from)}${swapped ? ` (там теперь сэмпл с ${padName(to)})` : " (он теперь пуст)"}`);
   }
 }
 
@@ -583,6 +665,7 @@ export async function movePad(src: number, dst: number, onlyToEmpty = false): Pr
     });
     log("info", r.swapped ? `${padName(src)} ⇄ ${padName(dst)}: поменялись местами` : `${padName(src)} → ${padName(dst)}: перенесён`);
     selectPad(dst);
+    await reportPatternsAfterMove(src, dst, r.swapped);
     return true;
   } catch (e) {
     fail(e, `Перенос ${padName(src)} → ${padName(dst)}`);

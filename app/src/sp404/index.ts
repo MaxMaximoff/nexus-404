@@ -10,3 +10,4 @@ export * from "./device";
 export * from "./uploader";
 export { md5 } from "./md5";
 export * from "./bpm";
+export * from "./pattern";

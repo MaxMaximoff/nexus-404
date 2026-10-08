@@ -7,7 +7,7 @@ import {
 } from "../sp404";
 import {
   bpmRange, channelsOf, confirmDelete, conn, deletePad, detectPadBpm, downloadPadWav, importFiles, loadWaveform, pads, playing, preview, project, selectedPad, setBpm, setBpmSync, setGate, setLevel, setLoop, setFixedVelocity, setOneShot, setPadParam, setPitch, setTimeStretch, setVari, setVinyl,
-  setRange, stopPlaying, waveLoading, waveforms, writeBlockReason, editGroup, pickedList, selectedBank, planGroupBpm, applyGroupBpm, type BpmPlan,
+  patternsOf, setRange, stopPlaying, waveLoading, waveforms, writeBlockReason, editGroup, pickedList, selectedBank, planGroupBpm, applyGroupBpm, type BpmPlan,
 } from "./store";
 import type { PadBlock } from "../sp404";
 import { Waveform, type Range } from "./Waveform";
@@ -15,6 +15,7 @@ import { InputPicker, RecMeter, TakeCard } from "./Recorder";
 import { disarm, recState, takeTarget } from "./rec";
 import { emptyPadsOf, groupPlan, linkedPads, resampleGroup, resamplePad, rsBusy, rsCancel, rsNormalize, rsTail } from "./resample";
 import { midiPort, midiState } from "./midi";
+import { mainView, openPattern, shownSlot } from "./Patterns";
 
 const MIDI_NOTE = { off: "MIDI подключится при ресэмпле", asking: "жду разрешения на MIDI…", ready: "MIDI готов", nodevice: "MIDI-порт SP не найден",
   denied: "доступ к MIDI запрещён", unsupported: "браузер без Web MIDI" } as const;
@@ -60,7 +61,8 @@ function ConfirmDelete({ pad }: { pad: number }) {
   return (
     <div class="insp-head confirm-delete" role="alertdialog" aria-label="Подтверждение удаления"
       onKeyDown={(e) => { if (e.key === "Escape") confirmDelete.value = null; }}>
-      <span class="confirm-text">Удалить <b>{padName(pad)}</b> «{p.name || "без имени"}» с SP? Вернуть будет нельзя.</span>
+      <span class="confirm-text">Удалить <b>{padName(pad)}</b> «{p.name || "без имени"}» с SP? Вернуть будет нельзя.
+        {patternsOf(pad).length > 0 && <> Он звучит в паттернах {patternsOf(pad).map(padName).join(", ")} — там станет тишина.</>}</span>
       <button ref={yes} class="btn btn-danger" onClick={() => deletePad(pad)}><IconTrash /> Удалить</button>
       <button class="btn" onClick={() => (confirmDelete.value = null)}>Отмена</button>
     </div>
@@ -84,6 +86,7 @@ function FilledPad({ pad, ready }: { pad: number; ready: boolean }) {
           title="Скачать весь сэмпл на компьютер как WAV 48 kHz / 16 bit (BPM — в имени файла)" aria-label="Скачать WAV"><IconDownload /> WAV</button>
       </div>
       <PadChips pad={pad} />
+      <PadPatterns pad={pad} />
       <Tabs />
       <div class="insp-scroll">
         <TabPanel id="sample">
@@ -263,6 +266,21 @@ function PadChips({ pad }: { pad: number }) {
     <div class="pad-chips">
       {chips.map(([label, tab, hint]) => (
         <button key={label} type="button" class={`pchip ${inspTab.value === tab ? "cur" : ""}`} onClick={() => showTab(tab)} title={hint ?? `Открыть «${TABS.find(([t]) => t === tab)?.[1] ?? "Ресэмпл"}»`}>{label}</button>
+      ))}
+    </div>
+  );
+}
+
+/** The patterns that play this pad; a click shows one. */
+function PadPatterns({ pad }: { pad: number }) {
+  const slots = patternsOf(pad);
+  if (!slots.length) return null;
+  const shown = mainView.value === "patterns" ? shownSlot.value : null;
+  return (
+    <div class="pad-chips pad-ptns">
+      <span class="muted small">В паттернах:</span>
+      {slots.map((s) => (
+        <button key={s} type="button" class={`pchip ${s === shown ? "cur" : ""}`} onClick={() => openPattern(s)} title={`Показать паттерн ${padName(s)}`}>{padName(s)}</button>
       ))}
     </div>
   );
