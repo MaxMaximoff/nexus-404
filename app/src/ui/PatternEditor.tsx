@@ -13,12 +13,12 @@ import { useEffect } from "preact/hooks";
 import { PPQ, padName, type Pattern, type PatternNote } from "../sp404";
 import {
   DEFAULT_VELOCITY, MAX_BARS, MAX_SEMITONES, STEP, addNote, barTicks, clearBar, clearPad, copyBar, copyNotes, doublePattern, duplicateOffset, fillPad, findNote,
-  gateFor, moveNote, moveNotes, pasteNotes, removeNote, removeNotes, resizeNote, rollNote, semitonesOf, setBars, setSemitones, setVelocities, setVelocity, shiftPad,
+  gateFor, moveNote, moveNotes, noteAt, pasteNotes, removeNote, removeNotes, resizeNote, rollNote, semitonesOf, setBars, setSemitones, setVelocities, setVelocity, shiftPad,
   type Clip,
 } from "../sp404/patternEdit";
 import { IconMinus, IconPlus, IconRedo, IconTrash, IconUndo, IconUpload } from "./icons";
 import { auditionPad, connectMidi, midiState } from "./midi";
-import { Pager, pagingOf } from "./PatternPager";
+import { Pager, followTick, pagingOf } from "./PatternPager";
 import { openPad } from "./Patterns";
 import { RowSound, silentClass } from "./PatternRowSound";
 import { draftOf, edit, editingSlot, isDirty, pick, preview, redo, revert, settle, undo, type Draft } from "./patternDraft";
@@ -63,8 +63,11 @@ let held: Pattern | null = null;
 let velLock: { seq: number; x0: number } | null = null;
 /** Copied notes: they can be pasted into this pattern or another one. */
 let clip: Clip | null = null;
-/** Where Ctrl+V pastes: the last cell clicked. */
-let cursor = { slot: -1, tick: 0 };
+/**
+ * The cell cursor: set by any click on the grid, moved by the arrows when no note is picked; Enter
+ * puts a note there or takes it away, Ctrl+V pastes there.
+ */
+const cursor = signal<{ slot: number; pad: number; tick: number } | null>(null);
 
 /** The notes picked: the group, or the one picked note. */
 const pickedSeqs = (d: Draft): number[] => (d.group.length ? d.group : d.sel !== null ? [d.sel] : []);
@@ -85,6 +88,7 @@ export function PatternEditor({ slot }: { slot: number }) {
     if (midiState.value !== "ready") void connectMidi();
     const onKey = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement | null)?.closest("input, textarea, select, [contenteditable]")) return;
+      if (e.key === "Enter" && (e.target as HTMLElement | null)?.closest?.("button")) return; // a focused button takes its own Enter
       const cur = draftOf(slot);
       if (!cur) return;
       const mod = e.ctrlKey || e.metaKey, key = e.key.toLowerCase(), picked = pickedSeqs(cur);
@@ -97,13 +101,30 @@ export function PatternEditor({ slot }: { slot: number }) {
       else if (mod && key === "c" && picked.length) { e.preventDefault(); clip = copyNotes(cur.p, picked); }
       else if (mod && key === "v" && clip?.length) {
         e.preventDefault();
-        const r = pasteNotes(cur.p, clip, cursor.slot === slot ? cursor.tick : 0);
+        const c = cursor.value, r = pasteNotes(cur.p, clip, c?.slot === slot ? c.tick : 0);
         if (r.seqs.length) edit(slot, r.pattern, { group: r.seqs, sel: null });
       } else if (mod && key === "d" && picked.length) {
         e.preventDefault();
         const t0 = Math.min(...cur.p.notes.filter((n) => picked.includes(n.seq)).map((n) => n.tick));
         const r = pasteNotes(cur.p, copyNotes(cur.p, picked), t0 + duplicateOffset(cur.p, picked));
         if (r.seqs.length) edit(slot, r.pattern, { group: r.seqs, sel: null });
+      } else if (!picked.length && !mod && (e.key.startsWith("Arrow") || e.key === "Enter")) {
+        // Nothing picked: the arrows walk the cell cursor, Enter toggles a note under it.
+        const rows = [...new Set([...cur.p.notes.map((n) => n.pad), ...cur.rows])].sort((a, b) => a - b);
+        if (!rows.length) return;
+        e.preventDefault();
+        const g = gridTicks.value, c = cursor.value?.slot === slot && rows.includes(cursor.value.pad) ? cursor.value : { slot, pad: rows[0], tick: 0 };
+        let { pad, tick } = c;
+        if (e.key === "ArrowLeft") tick = Math.max(0, Math.ceil(tick / g) * g - g);
+        else if (e.key === "ArrowRight") tick = Math.min(Math.floor((cur.p.length - 1) / g) * g, Math.floor(tick / g) * g + g);
+        else if (e.key === "ArrowUp") pad = rows[Math.max(0, rows.indexOf(pad) - 1)];
+        else if (e.key === "ArrowDown") pad = rows[Math.min(rows.length - 1, rows.indexOf(pad) + 1)];
+        else {
+          const there = noteAt(cur.p, pad, tick);
+          edit(slot, there ? removeNote(cur.p, there.seq) : addNote(cur.p, pad, tick, gateFor(g), newVelocity.value).pattern, { active: pad });
+        }
+        cursor.value = { slot, pad, tick };
+        followTick(slot, cur.p, tick);
       } else if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && picked.length) {
         e.preventDefault();
         edit(slot, moveNotes(cur.p, picked, (e.key === "ArrowLeft" ? -1 : 1) * gridTicks.value));
@@ -147,7 +168,7 @@ export function PatternEditor({ slot }: { slot: number }) {
     const lane = e.currentTarget as HTMLElement, rect = lane.getBoundingClientRect(), cur = draftOf(slot)!;
     const target = e.target as HTMLElement, noteEl = target.closest<HTMLElement>(".ptn-note");
     lane.setPointerCapture(e.pointerId);
-    cursor = { slot, tick: clamp(snapDown(tickAt(e.clientX, rect)), 0, cur.p.length - 1) };
+    cursor.value = { slot, pad, tick: clamp(snapDown(tickAt(e.clientX, rect)), 0, cur.p.length - 1) };
     if (noteEl) {
       const seq = +noteEl.dataset.seq!, n = findNote(cur.p, seq);
       if (!n) return;
@@ -239,7 +260,7 @@ export function PatternEditor({ slot }: { slot: number }) {
   const addPads = (list: number[]) => { if (list.length) pick(slot, { rows: [...new Set([...d.rows, ...list])], active: list[0] }); };
   const dropRow = (pad: number) => pick(slot, { rows: d.rows.filter((r) => r !== pad), active: d.active === pad ? null : d.active });
   const active = d.active !== null && rows.includes(d.active) ? d.active : rows[0] ?? null;
-  const m = menu.value;
+  const m = menu.value, cur = cursor.value?.slot === slot ? cursor.value : null;
 
   return (
     <div class="ptn-edit">
@@ -281,6 +302,9 @@ export function PatternEditor({ slot }: { slot: number }) {
               <div key={`l${pad}`} class={`ptn-lane ptn-lane-edit ${pad === selectedPad.value ? "cur" : ""} ${pg.used < 100 ? "short" : ""} ${silentClass(pad)}`} data-pad={pad} style={{ "--used": `${pg.used}%` }}
                 onPointerDown={(e) => onDown(e, pad)} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} onContextMenu={(e) => e.preventDefault()}>
                 {mine.map((n) => <EditNote key={n.seq} n={n} picked={d.sel === n.seq || group.has(n.seq)} from={pg.from} pageTicks={pg.pageTicks} length={p.length} />)}
+                {cur?.pad === pad && cur.tick >= pg.from && cur.tick < pg.from + pg.pageTicks && (
+                  <i class="ptn-cursor" aria-hidden="true" style={{ left: `${((cur.tick - pg.from) / pg.pageTicks) * 100}%`, width: `${(g / pg.pageTicks) * 100}%` }} />
+                )}
               </div>,
             ];
           })}
@@ -529,7 +553,7 @@ function EditBar({ slot, d, rows, onAddPads }: { slot: number; d: Draft; rows: n
 /** Pitch, length and rolls of the picked note; velocity too, as a number. */
 function NoteStrip({ slot, d, grid }: { slot: number; d: Draft; grid: number }) {
   const n = d.sel !== null ? findNote(d.p, d.sel) : undefined;
-  if (!n) return <div class="ptn-readout idle">Пустая клетка — нота, протяните — ряд нот. Клик по ноте выбирает её, второй клик или правая кнопка убирает (с протяжкой правой — несколько; Delete). Alt+протяжка по ноте вверх-вниз — сила. Тяните ноту — сдвиг, за край — длина. Shift+протяжка — рамка, Shift+клик — добавить к выбору, Ctrl+A — все. Ctrl+C / Ctrl+V / Ctrl+D, стрелки — сдвиг. ⋯ у строки и номер такта — их действия.</div>;
+  if (!n) return <div class="ptn-readout idle">Пустая клетка — нота, протяните — ряд нот. Клик по ноте выбирает её, второй клик или правая кнопка убирает (с протяжкой правой — несколько; Delete). Alt+протяжка по ноте вверх-вниз — сила. Тяните ноту — сдвиг, за край — длина. Shift+протяжка — рамка, Shift+клик — добавить к выбору, Ctrl+A — все. Ctrl+C / Ctrl+V / Ctrl+D, стрелки — сдвиг выбранного; без выбора стрелки водят курсор, Enter ставит или убирает ноту. ⋯ у строки и номер такта — их действия.</div>;
   const p = d.p, bt = barTicks(p), inBar = n.tick % bt, off = inBar % STEP, st = semitonesOf(n);
   const lenSteps = (n.gate + 1) / STEP;
   const b = pads.value[n.pad];

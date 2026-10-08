@@ -1076,3 +1076,6 @@ button, input, select { font: inherit; color: inherit; }
 .ptn-vellane i { overflow: visible; }
 .ptn-vel-num { position: absolute; bottom: calc(100% + 2px); left: 50%; transform: translateX(-50%); font-size: 10px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; pointer-events: none; }
 .ptn-vel-num.in { bottom: auto; top: 3px; color: #04110e; }
+/* Cell cursor of the keyboard. */
+.ptn-cursor { position: absolute; top: 1px; bottom: 1px; z-index: 2; pointer-events: none; border: 1.5px solid var(--neon-hi); border-radius: 4px; box-shadow: 0 0 6px var(--neon); }
+
