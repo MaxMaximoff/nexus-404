@@ -1080,4 +1080,7 @@ button, input, select { font: inherit; color: inherit; }
 .ptn-cursor { position: absolute; top: 1px; bottom: 1px; z-index: 2; pointer-events: none; border: 1.5px solid var(--neon-hi); border-radius: 4px; box-shadow: 0 0 6px var(--neon); }
 .ptn-slot.empty:not(.cur) { opacity: 0.55; }
 .ptn-slot.empty:hover { opacity: 1; }
-
+.ptn-copy { position: relative; }
+.ptn-copy-panel { position: absolute; top: calc(100% + 6px); left: 0; min-width: 320px; }
+.ptn-copy-panel .project-select { max-width: 220px; height: 28px; font-size: 12px; }
+.ptn-copy-note { margin: 0; max-width: 340px; }

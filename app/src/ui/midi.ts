@@ -69,4 +69,3 @@ export function scheduleNote(pad: number, velocity: number, at: number, off: num
   out.send([0x90 | ch, note, Math.max(1, Math.min(127, velocity))], at);
   out.send([0x80 | ch, note, 0], Math.max(at + 1, off));
 }
-

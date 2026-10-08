@@ -4,9 +4,9 @@
 
 import { computed, effect, signal } from "@preact/signals";
 import { useEffect } from "preact/hooks";
-import { BANKS, PPQ, decodeAudio, formatBpm, noteSemitones, padName, patternFileName, type Pattern, type PatternNote } from "../sp404";
+import { BANKS, PPQ, decodeAudio, formatBpm, noteSemitones, padName, parsePattern, patternFileName, type Pattern, type PatternNote } from "../sp404";
 import {
-  bouncePattern, bouncing, conn, downloadPatternMidi, emptyPattern, log, notice, patternFiles, patterns, patternsLoading, patternsOf, pads, project1,
+  bouncePattern, bouncing, conn, copyPatternToProject, currentPatternFile, downloadPatternMidi, emptyPattern, patternExistsIn, project, log, notice, patternFiles, patterns, patternsLoading, patternsOf, pads, project1,
   refreshPatterns, selectPad, selectedBank, selectedPad, tempoFor, writeBlockReason,
 } from "./store";
 import { IconDownload, IconPencil, IconPlay, IconRefresh, IconStop, IconWave } from "./icons";
@@ -15,7 +15,7 @@ import { playingSlot, stopPattern, togglePattern } from "./ptnPlayer";
 import { RowSound, silentClass } from "./PatternRowSound";
 import { PatternEditor, SaveControl } from "./PatternEditor";
 import { Pager, pagingOf } from "./PatternPager";
-import { NEW_SLOT, draftOf, dropDraft, drafts, editingSlot, fileSum, isDirty, pick, revert, startDraft } from "./patternDraft";
+import { NEW_SLOT, draftOf, dropDraft, drafts, editingSlot, fileSum, isDirty, pick, revert, startCopy, startDraft } from "./patternDraft";
 import { TakeCard } from "./Recorder";
 import { recTake, setTake } from "./rec";
 import { saveFile } from "./download";
@@ -154,6 +154,7 @@ function PatternView() {
         {offGrid > 0 && !editing && <span class="chip" title="Ноты, сыгранные вживую мимо шагов 1/16. Показаны там, где они есть. Sub-step из TR-REC сюда не входят">вне сетки 1/16: {offGrid}</span>}
         {isNew && <span class="chip chip-warn" title="Этого паттерна на SP ещё нет: он появится после сохранения">новый</span>}
         {dirty && !isNew && <span class="chip chip-warn" title="Правки лежат в браузере: «Сохранить на SP» запишет их">изменён</span>}
+        <CopyButton slot={slot} />
         <button class={`btn ptn-edit-toggle ${editing ? "card-toggle on" : ""}`} onClick={toggleEdit} aria-pressed={editing}
           title={editing ? "Закрыть редактор: правки остаются в браузере" : "Править паттерн: правки остаются в браузере, на SP они не пишутся"}>
           <IconPencil /> {editing ? "Готово" : "Править"}
@@ -178,6 +179,92 @@ function PatternView() {
       {!editing && <p class="hint">Строки — pad'ы, которые играет паттерн; клик по номеру pad'а (A1) открывает его сэмпл, по названию — выбирает pad: в матрице выше видно, в каких ещё паттернах он играет. Столбцы — шаги 1/16, высота заливки ноты — сила удара{pitched ? ", цветные с «+1», «−2» — ноты, транспонированные в TR-REC" : ""}. «Править» открывает редактор.</p>}
     </div>
   );
+}
+
+/** Copy a pattern into this slot of the open project: a draft there, opened in the editor, saved as usual. */
+function copyHere(src: number, dst: number): boolean {
+  const bytes = currentPatternFile(src), there = draftOf(dst);
+  if (!bytes || src === dst) return false;
+  if (there && isDirty(there)) {
+    notice.value = { kind: "error", text: `В ${padName(dst)} есть несохранённые правки: сохраните или сбросьте их, потом копируйте` };
+    return false;
+  }
+  const p = parsePattern(bytes), had = patterns.value?.get(dst), f = patternFiles.value.get(dst);
+  const base = had && typeof had !== "string" ? had : { ...p, notes: [], controls: [] };
+  startCopy(dst, base, had && f ? fileSum(f.bytes) : NEW_SLOT, p, bytes, [...new Set(p.notes.map((n) => n.pad))].sort((a, b) => a - b));
+  pickedSlot.value = dst;
+  editingSlot.value = dst;
+  notice.value = { kind: "info", text: `${padName(src)} скопирован в ${padName(dst)} как черновик: правьте и сохраняйте на SP` };
+  return true;
+}
+
+const copyOpen = signal<number | null>(null);
+
+/** «Копировать…»: into another slot of this project (a draft there) or into another project (written at once). */
+function CopyButton({ slot }: { slot: number }) {
+  const can = !!currentPatternFile(slot), open = copyOpen.value === slot;
+  return (
+    <span class="ptn-copy">
+      <button class={`btn ptn-edit-toggle ${open ? "card-toggle on" : ""}`} disabled={!can} onClick={() => (copyOpen.value = open ? null : slot)} aria-expanded={open}
+        title={can ? "Копировать паттерн (с правками, если они есть) в другой слот или проект" : "Копировать можно паттерн, прочитанный с SP"}>копировать…</button>
+      {open && <CopyPanel slot={slot} />}
+    </span>
+  );
+}
+
+function CopyPanel({ slot }: { slot: number }) {
+  const here = project1.value, names = project.value?.names ?? [];
+  const to = copyTo.value.src === slot ? copyTo.value : { src: slot, p1: here, dst: firstEmpty(slot), exists: null as boolean | null, ask: false };
+  const set = (v: Partial<typeof to>) => { copyTo.value = { ...to, ...v, ask: false }; };
+  const sameProject = to.p1 === here, taken = sameProject ? patterns.value?.has(to.dst) : to.exists;
+  const run = async () => {
+    if (sameProject) { if (copyHere(slot, to.dst)) copyOpen.value = null; return; }
+    if (!to.ask) {
+      const exists = await patternExistsIn(to.p1, to.dst);
+      if (exists === null) return;
+      copyTo.value = { ...to, exists, ask: true };
+      return;
+    }
+    if (await copyPatternToProject(slot, to.p1, to.dst)) copyOpen.value = null;
+  };
+  return (
+    <div class="ptn-menu ptn-copy-panel" role="dialog" aria-label="Копировать паттерн">
+      <div class="ptn-menu-title">копировать {padName(slot)}{draftOf(slot) && isDirty(draftOf(slot)!) ? " (с правками)" : ""} в</div>
+      <div class="ptn-menu-row">
+        <select class="project-select" value={to.p1} onChange={(e) => set({ p1: +(e.currentTarget as HTMLSelectElement).value, exists: null })} aria-label="Проект">
+          {Array.from({ length: 16 }, (_, i) => i + 1).map((n) => <option key={n} value={n}>Проект {n}{names[n - 1] ? ` · ${names[n - 1]}` : ""}{n === here ? " (открыт)" : ""}</option>)}
+        </select>
+        <select class="project-select" value={to.dst} onChange={(e) => set({ dst: +(e.currentTarget as HTMLSelectElement).value, exists: null })} aria-label="Слот">
+          {[...BANKS].map((letter, b) => (
+            <optgroup key={letter} label={`Банк ${letter}`}>
+              {Array.from({ length: 16 }, (_, i) => b * 16 + i).filter((s) => !(sameProject && s === slot)).map((s) => (
+                <option key={s} value={s}>{padName(s)}{sameProject ? (patterns.value?.has(s) ? " · занят" : " · пусто") : ""}</option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
+      </div>
+      <p class="muted small ptn-copy-note">
+        {sameProject
+          ? `Копия станет черновиком в ${padName(to.dst)}${taken ? " поверх паттерна, что там есть" : ""}: поправьте и нажмите «Сохранить на SP».`
+          : to.ask
+            ? (to.exists ? `В проекте ${to.p1} слот ${padName(to.dst)} занят — паттерн там будет заменён. Записать?` : `Записать ${padName(slot)} в проект ${to.p1}, слот ${padName(to.dst)}?`)
+            : `Запишется сразу. Ноты играют те же pad'ы (A1 — A1 проекта ${to.p1}).`}
+      </p>
+      <div class="ptn-menu-row">
+        <button class="btn btn-primary ptn-mini" onClick={() => void run()}>{sameProject ? "Копировать" : to.ask ? "Записать" : "Дальше"}</button>
+        <button class="btn ptn-mini" onClick={() => (copyOpen.value = null)}>Отмена</button>
+      </div>
+    </div>
+  );
+}
+
+/** The copy target being chosen: project (1-based) and slot, whether it is taken there, and whether the question is asked. */
+const copyTo = signal<{ src: number; p1: number; dst: number; exists: boolean | null; ask: boolean }>({ src: -1, p1: 0, dst: 0, exists: null, ask: false });
+/** The next empty slot after `slot` in the open project (or the one after it). */
+function firstEmpty(slot: number): number {
+  for (let i = 1; i < 160; i++) { const s = (slot + i) % 160; if (!patterns.value?.has(s) && !drafts.value.has(s)) return s; }
+  return (slot + 1) % 160;
 }
 
 /** An empty slot: make a new pattern there, 1, 2 or 4 bars long, and open the editor on it. */

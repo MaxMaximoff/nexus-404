@@ -400,6 +400,78 @@ export function emptyPattern(bars: number): Pattern {
   return { notes: [], controls: [], length: bars * bpb * PPQ, bars, beatsPerBar: bpb, unknown: 0, records: t?.p.records ?? 0 };
 }
 
+/**
+ * The file of `slot` as it is now: the SP's own, or with the draft's edits written over it. Null when
+ * the SP's file is not read or our writer does not reproduce it (then it is not copied).
+ */
+export function currentPatternFile(slot: number): Uint8Array | null {
+  const f = patternFiles.value.get(slot), d = draftOf(slot);
+  if (d?.source) return isDirty(d) || d.p !== d.base ? writePattern(d.p, d.source) : d.source;
+  if (!f || !f.exact) return null;
+  return d && isDirty(d) ? writePattern(d.p, f.bytes) : f.bytes;
+}
+
+/** Whether pattern `slot` exists in project `p1` (another project than the open one: its files are not read here). */
+export async function patternExistsIn(p1: number, slot: number): Promise<boolean | null> {
+  const d = device;
+  if (!d || conn.value !== "ready") return null;
+  try {
+    return !!(await d.exclusive((x) => x.stat(patternPath(p1, slot))));
+  } catch (e) {
+    fail(e, "Проверка слота");
+    return null;
+  }
+}
+
+/**
+ * Copy pattern `src` of the open project, as it is now (with its edits), into slot `dst` of another
+ * project: written there at once (that project is not open, so the SP reads the file when it is
+ * selected). Notes keep their pads: A1 plays that project's A1.
+ */
+export async function copyPatternToProject(src: number, p1: number, dst: number): Promise<boolean> {
+  const d = device, bytes = currentPatternFile(src);
+  if (!d || conn.value !== "ready" || !bytes || patternWriting.value || p1 === project1.value) return false;
+  const what = `${padName(src)} → проект ${p1}, ${padName(dst)}`;
+  patternWriting.value = what;
+  try {
+    await d.exclusive((x) => x.writePatternFile(p1, dst, bytes));
+    log("info", `Паттерн скопирован: ${what} (${bytes.length} байт, прочитан обратно и сверен)`);
+    notice.value = { kind: "info", text: `Скопировано: ${what}. Он появится, когда на SP откроют проект ${p1}` };
+    return true;
+  } catch (e) {
+    fail(e, `Копирование паттерна ${what}`);
+    return false;
+  } finally {
+    patternWriting.value = null;
+  }
+}
+
+/**
+ * Silence pads that play on after their note-off: Gate off (and Loop) pads ignore note-off, and
+ * neither MIDI All Sound Off / All Notes Off nor `9D` stops them (checked on the SP). What works
+ * is the pad stop the inspector uses (SP404Device.stopPad: Gate on, press and release, Gate off).
+ */
+export async function silencePads(list: number[]): Promise<void> {
+  const d = device;
+  if (!d || conn.value !== "ready" || !list.length) return;
+  try {
+    await d.exclusive(async (x) => { for (const pad of list) setPad(await x.stopPad(project1.value, pad)); });
+    log("info", `Стоп паттерна: заглушены ${list.map(padName).join(", ")} (Gate off)`);
+  } catch (e) {
+    fail(e, "Остановка pad'ов паттерна");
+  }
+}
+
+/** How long pad `pad` sounds after a hit, in ms (Infinity with Loop), at the tempo of its bank. */
+export function padSoundMs(pad: number): number {
+  const b = pads.value[pad];
+  if (!b?.size) return 0;
+  if (b.loop) return Infinity;
+  const ch = padChannels.value.get(pad)?.channels ?? 1; // unknown: take mono, the longer guess
+  const ratio = padSpeed(b, tempoFor(pad >> 4)?.tempoX100 ?? 12000).ratio || 1;
+  return ((b.endByte - b.startByte) / (2 * ch) / 48000 / ratio) * 1000;
+}
+
 /** Whether `slot` holds no pattern on the SP (a draft there is a new pattern). */
 export const isNewSlot = (slot: number): boolean => !!patterns.value && !patterns.value.has(slot);
 
@@ -409,7 +481,9 @@ export function saveBlockReason(slot: number): string | null {
   if (!device || conn.value !== "ready") return "SP не подключён";
   if (patternWriting.value) return `Идёт запись: ${patternWriting.value}`;
   if (!draft || !isDirty(draft)) return "Изменений нет";
-  if (isNewSlot(slot)) {
+  if (draft.source) {
+    // A copy: written over its source file, which our writer reproduced when the copy was made.
+  } else if (isNewSlot(slot)) {
     if (!patternTemplate()) return "Нужен образец: в проекте должен быть хотя бы один паттерн, записанный на SP";
     if (!draft.p.notes.length) return "Паттерн пуст";
   } else {
@@ -447,8 +521,9 @@ async function savePattern(slot: number): Promise<boolean> {
   if (reason) { notice.value = { kind: "error", text: `${padName(slot)}: ${reason}` }; return false; }
   const d = device!, draft = draftOf(slot)!, p1 = project1.value, via = reloadVia(), fresh = isNewSlot(slot);
   // An existing pattern: its own file, every record we did not change kept. A new one: over a template's skeleton.
-  const bytes = fresh ? writePattern(draft.p, patternTemplate()!.bytes, { fresh: true }) : writePattern(draft.p, patternFiles.value.get(slot)!.bytes);
-  const what = `${padName(slot)} в проект ${p1}${fresh ? " (новый)" : ""}`;
+  const bytes = draft.source ? writePattern(draft.p, draft.source)
+    : fresh ? writePattern(draft.p, patternTemplate()!.bytes, { fresh: true }) : writePattern(draft.p, patternFiles.value.get(slot)!.bytes);
+  const what = `${padName(slot)} в проект ${p1}${draft.source ? " (копия)" : fresh ? " (новый)" : ""}`;
   patternWriting.value = what;
   try {
     const r = await d.exclusive((x) => x.writePatternAndReload(p1, slot, bytes, via, (s) => (patternWriting.value = `${what}: ${s}`)));

@@ -10,7 +10,7 @@ import { padName, type Pattern } from "../sp404";
 import { connectMidi, midiPort, midiState, scheduleNote, releasePads } from "./midi";
 import { draftOf } from "./patternDraft";
 import { followTick } from "./PatternPager";
-import { demo, log, notice, patterns, tempoFor } from "./store";
+import { demo, log, notice, padSoundMs, pads, patterns, silencePads, tempoFor } from "./store";
 
 const LOOKAHEAD_MS = 100;
 const TICK_EVERY_MS = 25;
@@ -39,6 +39,8 @@ interface State {
   timer: ReturnType<typeof setInterval>;
   raf: number;
   pads: Set<number>;
+  /** When each pad was last hit (performance.now(), up to the lookahead ahead). */
+  hits: Map<number, number>;
 }
 let st: State | null = null;
 
@@ -59,7 +61,7 @@ export function playPattern(slot: number): void {
   const p = current(slot);
   if (!p || !p.length) return;
   const now = performance.now();
-  st = { slot, t0: now + START_DELAY_MS, tickMs: msPerTick(slot), next: 0, timer: setInterval(pump, TICK_EVERY_MS), raf: requestAnimationFrame(frame), pads: new Set() };
+  st = { slot, t0: now + START_DELAY_MS, tickMs: msPerTick(slot), next: 0, timer: setInterval(pump, TICK_EVERY_MS), raf: requestAnimationFrame(frame), pads: new Set(), hits: new Map() };
   playingSlot.value = slot;
   pump();
 }
@@ -69,6 +71,14 @@ export function stopPattern(): void {
   clearInterval(st.timer);
   cancelAnimationFrame(st.raf);
   releasePads([...st.pads]);
+  // Gate off pads play on after note-off: once the notes already handed to MIDI have gone out,
+  // stop the ones whose sample would still be sounding.
+  const hits = st.hits;
+  setTimeout(() => {
+    const now = performance.now();
+    const on = [...hits].filter(([pad, t]) => pads.value[pad]?.size && !pads.value[pad]!.gate && t + padSoundMs(pad) > now).map(([pad]) => pad);
+    void silencePads(on);
+  }, LOOKAHEAD_MS + 40);
   st = null;
   playingSlot.value = null;
   document.querySelectorAll<HTMLElement>(".ptn-grid.playing").forEach((g) => g.classList.remove("playing"));
@@ -119,6 +129,7 @@ function pump(): void {
         if (at < a || at >= end || !audible(n.pad)) continue;
         scheduleNote(n.pad, n.velocity, s.t0 + at * s.tickMs, s.t0 + (at + Math.max(1, n.gate)) * s.tickMs);
         s.pads.add(n.pad);
+        s.hits.set(n.pad, Math.max(s.hits.get(n.pad) ?? 0, s.t0 + at * s.tickMs));
       }
       a = end;
     }

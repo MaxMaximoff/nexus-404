@@ -23,6 +23,11 @@ export interface Draft {
   rows: number[];
   /** Checksum of the SP file the draft started from (fileSum), or NEW_SLOT for a new pattern: without it the draft is not kept in the browser. */
   baseSum?: string;
+  /**
+   * A copy of another pattern: the file it came from. Saving writes over this file instead of the
+   * slot's own, so an unedited copy lands byte for byte.
+   */
+  source?: Uint8Array;
 }
 
 const HISTORY = 200;
@@ -44,6 +49,16 @@ export function startDraft(slot: number, base: Pattern, baseSum?: string): void 
   if (!drafts.value.has(slot)) put({ slot, base, p: base, undo: [], redo: [], sel: null, group: [], active: null, rows: [], baseSum });
 }
 
+const sourceOf = (v: Kept): Uint8Array | undefined => (Array.isArray(v.source) ? Uint8Array.from(v.source) : undefined);
+
+/**
+ * Put a copy into `slot`: the pattern `p` parsed from `source` (the file of the pattern copied), over
+ * the slot's own `base` (what it holds on the SP, or an empty pattern). Replaces a draft already there.
+ */
+export function startCopy(slot: number, base: Pattern, baseSum: string, p: Pattern, source: Uint8Array, rows: number[]): void {
+  put({ slot, base, p, undo: [base], redo: [], sel: null, group: [], active: rows[0] ?? null, rows, baseSum, source });
+}
+
 /** `baseSum` of a draft for a slot that was empty on the SP. */
 export const NEW_SLOT = "new";
 
@@ -57,7 +72,7 @@ export function fileSum(bytes: Uint8Array): string {
 /** The project (1-based) the drafts belong to, set when its patterns are read; null: not kept in the browser. */
 export const draftsProject = signal<number | null>(null);
 const storeKey = (p1: number) => `nexus404.drafts.${p1}`;
-interface Kept { p: Pattern; rows: number[]; base: string }
+interface Kept { p: Pattern; rows: number[]; base: string; source?: number[] }
 
 // Keep the edited drafts of the project in the browser, on every change.
 effect(() => {
@@ -65,7 +80,7 @@ effect(() => {
   if (p1 === null) return;
   try {
     const keep: Record<number, Kept> = {};
-    for (const [slot, d] of m) if (isDirty(d) && d.baseSum) keep[slot] = { p: d.p, rows: d.rows, base: d.baseSum };
+    for (const [slot, d] of m) if (isDirty(d) && d.baseSum) keep[slot] = { p: d.p, rows: d.rows, base: d.baseSum, ...(d.source ? { source: [...d.source] } : {}) };
     if (Object.keys(keep).length) localStorage.setItem(storeKey(p1), JSON.stringify(keep));
     else localStorage.removeItem(storeKey(p1));
   } catch { /* storage blocked or full: the drafts stay in memory */ }
@@ -86,11 +101,11 @@ export function restoreDrafts(p1: number, baseOf: (slot: number) => { p: Pattern
       // A new pattern comes back while its slot is still empty on the SP; its base is the empty pattern it began as.
       if (!emptyOnSp(slot)) { stale.push(slot); continue; }
       const base: Pattern = { ...v.p, notes: [], controls: [] };
-      map.set(slot, { slot, base, p: v.p, undo: [base], redo: [], sel: null, group: [], active: null, rows: Array.isArray(v.rows) ? v.rows : [], baseSum: NEW_SLOT });
+      map.set(slot, { slot, base, p: v.p, undo: [base], redo: [], sel: null, group: [], active: null, rows: Array.isArray(v.rows) ? v.rows : [], baseSum: NEW_SLOT, source: sourceOf(v) });
       continue;
     }
     if (!b || !v?.p?.notes || b.sum !== v.base) { stale.push(slot); continue; }
-    map.set(slot, { slot, base: b.p, p: v.p, undo: [b.p], redo: [], sel: null, group: [], active: null, rows: Array.isArray(v.rows) ? v.rows : [], baseSum: v.base });
+    map.set(slot, { slot, base: b.p, p: v.p, undo: [b.p], redo: [], sel: null, group: [], active: null, rows: Array.isArray(v.rows) ? v.rows : [], baseSum: v.base, source: sourceOf(v) });
   }
   return { map, stale };
 }
