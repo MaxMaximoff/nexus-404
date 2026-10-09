@@ -6,6 +6,7 @@ import { Recorder } from "./Recorder";
 import { canUploadHere, cardBusy, cardConfirm, cardEdit, cardSel, sideTab } from "./card";
 import { PadGrid } from "./PadGrid";
 import { PatternsPane, mainView } from "./Patterns";
+import { SlicerPane } from "./Slicer";
 import { editingSlot } from "./patternDraft";
 import { TopBar } from "./TopBar";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
@@ -13,8 +14,11 @@ import { dragCopy, draggedPad, groupDrop, clearPicked, confirmDelete, confirmGro
 import { IconX } from "./icons";
 
 export function App() {
-  const n = notice.value, ptn = mainView.value === "patterns";
-  // The patterns take the whole width: the pad inspector steps aside (the SD card and the recorder stay when picked).
+  const n = notice.value, ptn = mainView.value !== "pads";
+  // The wide column keeps what it showed last while it slides away, so it does not flip to the other view.
+  const wide = useRef<"patterns" | "slicer">("patterns");
+  if (mainView.value !== "pads") wide.current = mainView.value;
+  // The patterns (or the slicer) take the whole width: the pad inspector steps aside (the SD card and the recorder stay when picked).
   const solo = ptn && sideTab.value === "pad";
   // While the pads and the patterns trade width, the slots clip their content (not otherwise: pad glows reach out).
   const [switching, setSwitching] = useState(false), lastPtn = useRef(ptn);
@@ -32,6 +36,7 @@ export function App() {
       if (t?.closest("input, textarea, select, [contenteditable]")) return;
       // On the patterns screen the pad inspector is hidden, so its Delete confirmation would be invisible; while a pattern is edited the keys are the editor's.
       if (mainView.value === "patterns" && (editingSlot.value !== null || sideTab.value !== "card")) return;
+      if (mainView.value === "slicer" && sideTab.value !== "card") return; // the slicer has its own keys
       if (sideTab.value === "card" && (e.key === "Delete" || e.key === "Escape" || e.key === "F2")) {
         // The card browser is shown: Delete / Esc act on the files picked there, not on pads.
         if (e.key === "Delete" && cardSel.value.size && canUploadHere.value && !cardBusy.value) cardConfirm.value = true;
@@ -79,7 +84,7 @@ export function App() {
             <BankRail /><PadGrid />
           </div>
           <div class="ptn-col slot" inert={!ptn} aria-hidden={!ptn}>
-            <PatternsPane />
+            {wide.current === "slicer" ? <SlicerPane /> : <PatternsPane />}
           </div>
           {sideTab.value === "card" ? <CardBrowser /> : sideTab.value === "rec" ? <Recorder /> : (
             <div class="side slot" inert={solo} aria-hidden={solo}><Inspector /></div>

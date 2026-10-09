@@ -1083,6 +1083,20 @@ export function applyGroupBpm(plan: BpmPlan[]): Promise<boolean> {
 }
 
 /**
+ * A pad's whole sample as interleaved PCM: from the waveform cache when its PCM is there, else read
+ * from the SP. Null (with a notice) when it cannot be read.
+ */
+export async function padPcm(pad: number): Promise<{ samples: Int16Array; channels: number; frames: number } | null> {
+  const b = pads.value[pad];
+  if (!b?.size) return null;
+  const cached = () => { const w = waveforms.value.get(pad); return w?.key === waveKey(b) && w.samples ? w : undefined; };
+  if (!cached()) await loadWaveform(pad);
+  const w = cached();
+  if (!w?.samples) { notice.value = { kind: "error", text: `${padName(pad)}: could not read the sample` }; return null; }
+  return { samples: w.samples, channels: w.channels, frames: w.frames };
+}
+
+/**
  * Save a pad's whole sample to the computer as a 48 kHz 16-bit WAV: from the waveform cache when
  * its PCM is there, else read from the SP. The BPM goes into the name, so importing the file
  * again picks it up.
@@ -1090,10 +1104,8 @@ export function applyGroupBpm(plan: BpmPlan[]): Promise<boolean> {
 export async function downloadPadWav(pad: number): Promise<void> {
   const b = pads.value[pad];
   if (!b?.size) return;
-  const cached = () => { const w = waveforms.value.get(pad); return w?.key === waveKey(b) && w.samples ? w : undefined; };
-  if (!cached()) await loadWaveform(pad);
-  const w = cached();
-  if (!w?.samples) return void (notice.value = { kind: "error", text: `${padName(pad)}: could not read the sample` });
+  const w = await padPcm(pad);
+  if (!w) return;
   const base = safeFileName(b.name || padName(pad));
   const name = bpmFromFileName(base) === null && b.bpmX100 >= 4000 && b.bpmX100 <= 20000 ? `${base}_${formatBpm(b.bpmX100)}bpm.wav` : `${base}.wav`;
   saveFile(name, encodeWav(w.samples, w.channels), "audio/wav");

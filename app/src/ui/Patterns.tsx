@@ -22,11 +22,11 @@ import { saveFile } from "./download";
 import { showSide } from "./card";
 
 const VIEW_KEY = "nexus404.main.view";
-type View = "pads" | "patterns";
+type View = "pads" | "patterns" | "slicer";
 function savedView(): View {
-  try { return localStorage.getItem(VIEW_KEY) === "patterns" ? "patterns" : "pads"; } catch { return "pads"; }
+  try { const v = localStorage.getItem(VIEW_KEY); return v === "patterns" || v === "slicer" ? v : "pads"; } catch { return "pads"; }
 }
-/** What the left column shows: banks and pads, or the patterns. */
+/** What the left column shows: banks and pads, the patterns, or the track slicer. */
 export const mainView = signal<View>(savedView());
 // Playing stops when the patterns leave the screen or the SP goes away.
 effect(() => { if (mainView.value !== "patterns" || (conn.value !== "ready" && conn.value !== "loading")) stopPattern(); });

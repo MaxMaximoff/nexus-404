@@ -15,7 +15,7 @@ const MARKER_WINDOW_FRAMES = 4800; // "→ Start" / "→ End" show 100 ms around
 type Drag = { kind: "start" | "end" } | { kind: "pan"; x: number; view: View };
 
 /** Per channel [min, max] pairs, one per column, for frames [a, b); like computePeaks, but for a slice. */
-function columns(samples: Int16Array, channels: number, a: number, b: number, cols: number): Float32Array[] {
+export function columns(samples: Int16Array, channels: number, a: number, b: number, cols: number): Float32Array[] {
   const frames = samples.length / channels;
   return Array.from({ length: channels }, (_, ch) => {
     const out = new Float32Array(cols * 2);

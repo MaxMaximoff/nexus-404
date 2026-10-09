@@ -21,7 +21,8 @@ const MIDI_NOTE = { off: "MIDI connects when resampling starts", asking: "Waitin
   denied: "MIDI access denied", unsupported: "This browser does not support Web MIDI" } as const;
 import type { Waveform as Wave } from "./store";
 import { ValueField, intIn, signed, type Parse } from "./ValueField";
-import { IconCheck, IconDownload, IconPlay, IconStop, IconTrash, IconUpload, IconWave } from "./icons";
+import { IconCheck, IconDownload, IconPlay, IconScissors, IconStop, IconTrash, IconUpload, IconWave } from "./icons";
+import { openInSlicer, slBusy } from "./slice";
 
 const RATE = 48000;
 const TRIM_THRESHOLDS = [-60, -48, -36, -24];
@@ -84,6 +85,9 @@ function FilledPad({ pad, ready }: { pad: number; ready: boolean }) {
         <span>{facts}</span>
         <button class="icon-btn insp-dl" disabled={!ready && !wave?.samples} onClick={() => void downloadPadWav(pad)}
           title="Download the entire sample as a 48 kHz / 16-bit WAV (BPM in the filename)" aria-label="Download WAV"><IconDownload /> WAV</button>
+        <button class="icon-btn insp-dl" disabled={(!ready && !wave?.samples) || !!slBusy.value || (total !== null && total < 4 * RATE)} onClick={() => openInSlicer(pad)}
+          title={total !== null && total < 4 * RATE ? "Too short to cut into loops (under 4 s)" : "Open the whole sample in the slicer: cut it into loops of whole bars for the SD card"}
+          aria-label="Open in slicer"><IconScissors /> Slicer</button>
       </div>
       <PadChips pad={pad} />
       <PadPatterns pad={pad} />

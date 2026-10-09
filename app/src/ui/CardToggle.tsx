@@ -1,5 +1,5 @@
 import { showSide, sideTab } from "./card";
-import { IconCard, IconGrid, IconMic } from "./icons";
+import { IconCard, IconGrid, IconMic, IconScissors } from "./icons";
 import { mainView, showView } from "./Patterns";
 import { patterns } from "./store";
 
@@ -32,6 +32,18 @@ export function RecToggle() {
     <button type="button" class={`btn card-toggle ${on ? "on" : ""}`} aria-pressed={on} onClick={() => showSide(on ? "pad" : "rec")}
       title={on ? "Return to pad" : "Record audio from a computer input (such as Ableton) onto a pad"}>
       <IconMic /> Record
+    </button>
+  );
+}
+
+/** Top bar switch: the left column shows the track slicer instead of banks and pads. */
+export function SlicerToggle() {
+  const on = mainView.value === "slicer";
+  return (
+    <button type="button" class={`btn card-toggle ${on ? "on" : ""}`} aria-pressed={on}
+      onClick={() => { showView(on ? "pads" : "slicer"); if (!on && sideTab.value === "pad") showSide("card"); }}
+      title={on ? "Return to pads" : "Cut a long track into loops of whole bars; the loops go to a folder on the SD card"}>
+      <IconScissors /> Slicer
     </button>
   );
 }

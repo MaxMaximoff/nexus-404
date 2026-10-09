@@ -38,7 +38,12 @@ export interface BpmResult {
  */
 export function detectBpm(samples: Int16Array, channels: number, minBpm: number): BpmResult | null {
   const frames = Math.floor(samples.length / channels);
-  const env = onsetEnvelope(samples, channels, Math.min(frames, MAX_SECONDS * RATE));
+  return bpmOfEnvelope(onsetEnvelopes(samples, channels, Math.min(frames, MAX_SECONDS * RATE)).full, frames, minBpm);
+}
+
+/** detectBpm on an envelope already computed (its first MAX_SECONDS are used); `frames` is the whole length. */
+export function bpmOfEnvelope(full: Float64Array, frames: number, minBpm: number): BpmResult | null {
+  const env = full.subarray(0, Math.min(full.length, Math.ceil(MAX_SECONDS * FPS)));
   const n = env.length;
   const maxLag = (60 * FPS) / minBpm; // one beat at the slowest tempo of the range
   if (n * 0.6 < maxLag) return null;
@@ -83,8 +88,23 @@ function at(a: Float64Array, x: number): number {
   return a[i]! * (1 - f) + a[i + 1]! * f;
 }
 
-/** Onset strength per hop: half-wave rectified spectral flux of log magnitudes, detrended, smoothed. */
-function onsetEnvelope(samples: Int16Array, channels: number, frames: number): Float64Array {
+/** Envelope frames per second; frame h covers the audio from h / ENV_FPS seconds on. */
+export const ENV_FPS = FPS;
+/** FFT bins 1..LOW_BINS (≈ 23–140 Hz): the kick drum, for finding the first beat of a bar. */
+const LOW_BINS = 6;
+
+export interface OnsetEnvelopes {
+  /** Onset strength over all bands. */
+  full: Float64Array;
+  /** The same over the lowest bands only. */
+  low: Float64Array;
+}
+
+/**
+ * Onset strength per hop: half-wave rectified spectral flux of log magnitudes, detrended, smoothed;
+ * over all bands and over the lowest ones. `frames` limits how much of the sample is analysed.
+ */
+export function onsetEnvelopes(samples: Int16Array, channels: number, frames = Math.floor(samples.length / channels)): OnsetEnvelopes {
   // Mono, decimated by averaging (a crude low-pass, enough for onsets).
   const m = new Float64Array(Math.floor(frames / DECIMATE));
   const scale = 1 / (32768 * channels * DECIMATE);
@@ -95,7 +115,7 @@ function onsetEnvelope(samples: Int16Array, channels: number, frames: number): F
     m[i] = s * scale;
   }
   const count = Math.max(0, Math.floor((m.length - FFT) / HOP) + 1);
-  const flux = new Float64Array(count);
+  const flux = new Float64Array(count), lowFlux = new Float64Array(count);
   const win = new Float64Array(FFT).map((_, i) => 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / FFT));
   const re = new Float64Array(FFT), im = new Float64Array(FFT);
   const bins = FFT / 2;
@@ -104,15 +124,21 @@ function onsetEnvelope(samples: Int16Array, channels: number, frames: number): F
     const off = f * HOP;
     for (let i = 0; i < FFT; i++) { re[i] = m[off + i]! * win[i]!; im[i] = 0; }
     fft(re, im);
-    let s = 0;
+    let s = 0, low = 0;
     for (let b = 1; b < bins; b++) {
       const v = Math.log1p(100 * Math.hypot(re[b]!, im[b]!));
       cur[b] = v;
-      if (f > 0 && v > prev[b]!) s += v - prev[b]!;
+      if (f > 0 && v > prev[b]!) { s += v - prev[b]!; if (b <= LOW_BINS) low += v - prev[b]!; }
     }
     flux[f] = s;
+    lowFlux[f] = low;
     [prev, cur] = [cur, prev];
   }
+  return { full: shape(flux), low: shape(lowFlux) };
+}
+
+function shape(flux: Float64Array): Float64Array {
+  const count = flux.length;
   // Minus the local mean (≈ 0.25 s), rectified: keeps the attacks, drops loudness swells.
   const half = Math.round(FPS * 0.125);
   const prefix = new Float64Array(count + 1);
@@ -150,7 +176,7 @@ function autocorrelation(x: Float64Array, maxLag: number): Float64Array {
 }
 
 /** In-place iterative radix-2 FFT (length a power of two). */
-function fft(re: Float64Array, im: Float64Array): void {
+export function fft(re: Float64Array, im: Float64Array): void {
   const n = re.length;
   for (let i = 1, j = 0; i < n; i++) {
     let bit = n >> 1;

@@ -31,3 +31,4 @@ export const IconUndo = () => svg("M9 14 4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3", 14);
 export const IconRedo = () => svg("M15 14l5-5-5-5M20 9H10a6 6 0 0 0 0 12h3", 14);
 export const IconPlus = () => svg("M12 5v14M5 12h14", 14);
 export const IconMinus = () => svg("M5 12h14", 14);
+export const IconScissors = () => svg("M6 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM20 4 8.1 15.9M14.5 14.5 20 20M8.1 8.1 12 12", 14);

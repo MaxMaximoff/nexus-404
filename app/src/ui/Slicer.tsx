@@ -1,0 +1,489 @@
+// The track slicer: a long track on a bar grid, cut into loops; the chosen loops go to a new
+// folder of IMPORT/ on the SD card (logic in slice.ts).
+
+import { useEffect, useRef, useState } from "preact/hooks";
+import { BPM_RANGES, barEdge, barFrames, formatBpm, loopFileName, padName, parseBpmInput, trackName } from "../sp404";
+import { AUDIO_RE } from "./card";
+import { mainView } from "./Patterns";
+import {
+  OVERVIEW_COLS, analyze, cancelWrite, cutEvery, joinNext, nudge, openTrack, play, playheadFrame, resetGrid, selLoop, selStep, setAllOff, setBar1, setPreRoll,
+  setTempo, slBars, slBusy, slChosen, slCuts, slDetected, slEvery, slFadeMs, slGrid, slLoops, slMetronome, slOff, slPickBar1, slPlay, slPreRollMs, slSel,
+  slState, slTrack, slWriteBlock, splitSel, stopPlay, toggleCut, toggleOff, togglePlay, writeLoops, type Track,
+} from "./slice";
+import { bpmRange } from "./store";
+import { columns } from "./Waveform";
+import { IconPlay, IconScissors, IconStop, IconUpload } from "./icons";
+
+const RATE = 48000;
+const fmtTime = (frames: number) => { const s = frames / RATE; return `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, "0")}`; };
+const mb = (bytes: number) => `${(bytes / 1048576).toFixed(1)} MB`;
+
+export function SlicerPane() {
+  const t = slTrack.value, st = slState.value;
+  const [over, setOver] = useState(false);
+  const input = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (mainView.value !== "slicer" || !slGrid.value || e.ctrlKey || e.metaKey || e.altKey) return;
+      if ((e.target as HTMLElement | null)?.closest?.("input, textarea, select, button, [contenteditable], .card-browser")) return;
+      const k = e.key;
+      if (k === " ") togglePlay();
+      else if (k === "ArrowLeft" || k === "ArrowRight") {
+        selStep(k === "ArrowLeft" ? -1 : 1);
+        if (slPlay.value && slSel.value !== null) play(slSel.value);
+      } else if (k.toLowerCase() === "s") splitSel();
+      else if (k.toLowerCase() === "j") joinNext();
+      else if (k === "Enter" && slSel.value !== null) toggleOff(slSel.value);
+      else if (k === "Escape") { slPickBar1.value = false; stopPlay(); }
+      else return;
+      e.preventDefault();
+    };
+    addEventListener("keydown", onKey);
+    return () => removeEventListener("keydown", onKey);
+  }, []);
+
+  const take = (files: FileList | null | undefined) => {
+    const f = [...(files ?? [])].find((x) => AUDIO_RE.test(x.name) || x.type.startsWith("audio/"));
+    if (f) void openTrack(f);
+  };
+
+  return (
+    <section class={`ptn-area glass slicer ${over ? "drop" : ""}`}
+      onDragOver={(e) => { if (e.dataTransfer?.types.includes("Files")) { e.preventDefault(); setOver(true); } }}
+      onDragLeave={(e) => { if (!(e.currentTarget as Element).contains(e.relatedTarget as Node)) setOver(false); }}
+      onDrop={(e) => { e.preventDefault(); setOver(false); take(e.dataTransfer?.files); }}>
+      <div class="ptn-head">
+        <div class="panel-title">Slicer</div>
+        {t && <span class="muted small sl-file" title={t.name}>{t.pad !== undefined ? `pad ${padName(t.pad)} · ${t.name.replace(/\.wav$/, "")}` : t.name} · {fmtTime(t.frames)} · {t.channels === 1 ? "mono" : "stereo"}</span>}
+        <button class="btn btn-ghost" disabled={!!slBusy.value || st === "decoding"} onClick={() => input.current?.click()}>Open track…</button>
+        <input ref={input} type="file" accept="audio/*,.wav,.aif,.aiff,.flac,.mp3,.ogg,.m4a" hidden
+          onChange={(e) => { take((e.target as HTMLInputElement).files); (e.target as HTMLInputElement).value = ""; }} />
+      </div>
+      {st === "decoding" || (!t && st === "analyzing") ? <p class="muted ptn-empty">Decoding…</p>
+        : !t ? (
+          <div class={`dropzone ${over ? "drop" : ""}`}>
+            <IconScissors />
+            <b>Drop a long track here, or open one</b>
+            <span class="muted">WAV, AIFF, FLAC, MP3… up to 15 minutes. Tempo and bars are found here; the loops are written to a new folder of IMPORT on the SD card, and from there you put them on pads.</span>
+          </div>
+        ) : (
+          <>
+            <GridBar />
+            <CutBar />
+            {st === "analyzing" ? <div class="sl-wave sl-wave-wait muted">Finding tempo and bars…</div> : slGrid.value && <SliceWave track={t} />}
+            {slGrid.value && st === "ready" && <><LoopList /><WriteBar track={t} /></>}
+          </>
+        )}
+    </section>
+  );
+}
+
+/** Tempo, the tempo range, bar 1 and moving the grid. */
+function GridBar() {
+  const g = slGrid.value, det = slDetected.value, busy = slState.value === "analyzing" || !!slBusy.value;
+  const [text, setText] = useState("");
+  const shown = g ? formatBpm(g.x100) : "";
+  useEffect(() => setText(shown), [shown]);
+  const parsed = parseBpmInput(text);
+  const apply = () => { if (parsed && "x100" in parsed) setTempo(parsed.x100); else setText(shown); };
+  const changed = !!g && !!det && (g.x100 !== det.x100 || g.origin !== det.origin);
+  return (
+    <div class="sl-bar">
+      <label class="sl-field">
+        <span class="muted">Tempo</span>
+        <input class={`value-field ${parsed && "error" in parsed ? "invalid" : ""}`} style={{ width: "64px" }} type="text" inputMode="decimal" spellcheck={false}
+          disabled={!g || busy} value={text} aria-label="Track tempo, BPM" title={parsed && "error" in parsed ? parsed.error : "Track tempo: Enter to apply (the cuts are laid out again)"}
+          onInput={(e) => setText((e.target as HTMLInputElement).value)} onBlur={apply}
+          onKeyDown={(e) => { if (e.key === "Enter") apply(); if (e.key === "Escape") { setText(shown); (e.target as HTMLInputElement).blur(); } }} />
+        <span class="muted">BPM</span>
+      </label>
+      <span class="segmented" role="group" aria-label="Double or halve the tempo">
+        <button type="button" disabled={!g || busy} onClick={() => g && setTempo(g.x100 * 2)} title="Double the tempo">×2</button>
+        <button type="button" disabled={!g || busy} onClick={() => g && setTempo(Math.round(g.x100 / 2))} title="Halve the tempo">÷2</button>
+      </span>
+      <select class="sl-range" value={bpmRange.value} disabled={busy} aria-label="Tempo range for detection" title="Tempo range for detection: the tempo is looked for in this octave"
+        onChange={(e) => { bpmRange.value = +(e.target as HTMLSelectElement).value; void analyze(); }}>
+        {BPM_RANGES.map(([a, b], i) => <option key={i} value={i}>{a}–{b}</option>)}
+      </select>
+      <span class="sl-sep" />
+      <button type="button" class={`btn ${slPickBar1.value ? "btn-primary" : ""}`} disabled={!g || busy} aria-pressed={slPickBar1.value}
+        onClick={() => (slPickBar1.value = !slPickBar1.value)} title="Then click the beat on the wave where a bar starts (snaps to the nearest beat)">
+        {slPickBar1.value ? "Click a beat…" : "Set bar 1"}
+      </button>
+      <span class="segmented dense" role="group" aria-label="Move the grid">
+        <button type="button" disabled={!g || busy} onClick={() => nudge(-10)} title="Grid 10 ms earlier">−10</button>
+        <button type="button" disabled={!g || busy} onClick={() => nudge(-1)} title="Grid 1 ms earlier">−1</button>
+        <button type="button" disabled={!g || busy} onClick={() => nudge(1)} title="Grid 1 ms later">+1</button>
+        <button type="button" disabled={!g || busy} onClick={() => nudge(10)} title="Grid 10 ms later">+10</button>
+      </span>
+      <span class="muted small">ms</span>
+      {changed && <button type="button" class="btn btn-ghost" disabled={busy} onClick={resetGrid} title={`Back to the detected grid: ${formatBpm(det!.x100)} BPM`}>Reset grid</button>}
+      <span class="muted small sl-detected">
+        {slState.value === "analyzing" ? "Analysing…" : det ? `Detected ${formatBpm(det.x100)} BPM · pulse ${Math.round(det.clarity * 100)} %` : g ? "No clear beat: set by hand" : ""}
+      </span>
+    </div>
+  );
+}
+
+/** How the track is cut, and how the loops sound. */
+function CutBar() {
+  const g = slGrid.value, l = selLoop(), busy = !!slBusy.value;
+  const next = l && slLoops.value.some((x) => x.bar === l.bar + l.bars);
+  return (
+    <div class="sl-bar">
+      <span class="muted">Cut every</span>
+      <span class="segmented" role="group" aria-label="Cut every N bars">
+        {[1, 2, 4, 8, 16].map((n) => (
+          <button key={n} type="button" class={slEvery.value === n ? "on" : ""} aria-pressed={slEvery.value === n} disabled={!g || busy}
+            onClick={() => cutEvery(n)} title={`Cut the whole track into loops of ${n} bar${n > 1 ? "s" : ""} (manual cuts are reset)`}>{n}</button>
+        ))}
+      </span>
+      <span class="muted">bars</span>
+      <button type="button" class="btn" disabled={!l || l.bars < 2 || busy} onClick={splitSel} title="Split the picked loop in two (S)">Split</button>
+      <button type="button" class="btn" disabled={!next || busy} onClick={joinNext} title="Join the picked loop with the next one (J)">Join →</button>
+      <span class="sl-sep" />
+      <label class="sl-field" title="Every cut this much before the bar line, for hits that come a little early">
+        <span class="muted">Pre-roll</span>
+        <select value={slPreRollMs.value} disabled={busy} onChange={(e) => setPreRoll(+(e.target as HTMLSelectElement).value)}>
+          {[0, 2, 5, 10, 20].map((v) => <option key={v} value={v}>{v} ms</option>)}
+        </select>
+      </label>
+      <label class="sl-field" title="Short fade at both ends of each loop, against clicks">
+        <span class="muted">Fades</span>
+        <select value={slFadeMs.value} disabled={busy} onChange={(e) => (slFadeMs.value = +(e.target as HTMLSelectElement).value)}>
+          {[0, 1, 3, 5].map((v) => <option key={v} value={v}>{v ? `${v} ms` : "off"}</option>)}
+        </select>
+      </label>
+      <button type="button" class={`btn ${slMetronome.value ? "btn-primary" : ""}`} aria-pressed={slMetronome.value}
+        onClick={() => { slMetronome.value = !slMetronome.value; if (slPlay.value) play(slPlay.value.bar, !slPlay.value.loop); }}
+        title="Clicks on the beats while listening, to check the grid (not written to the files)">Metronome</button>
+    </div>
+  );
+}
+
+interface View { from: number; to: number }
+
+/** Min/max per column from the overview peaks, for columns wider than one overview column. */
+function aggregate(peaks: Float32Array[], a: number, b: number, cols: number): Float32Array[] {
+  return peaks.map((p) => {
+    const out = new Float32Array(cols * 2);
+    for (let i = 0; i < cols; i++) {
+      const from = Math.floor(a + ((b - a) * i) / cols), to = Math.max(from + 1, Math.floor(a + ((b - a) * (i + 1)) / cols));
+      let lo = 0, hi = 0;
+      for (let j = Math.max(0, from); j < Math.min(to, p.length / 2); j++) { lo = Math.min(lo, p[j * 2]!); hi = Math.max(hi, p[j * 2 + 1]!); }
+      out[i * 2] = lo; out[i * 2 + 1] = hi;
+    }
+    return out;
+  });
+}
+
+const LINE_GRAB_PX = 8;
+
+/** The track's wave with the bar grid, the cuts and the loops; click a bar line to cut, a loop to hear it. */
+function SliceWave({ track }: { track: Track }) {
+  const base = useRef<HTMLCanvasElement>(null), top = useRef<HTMLCanvasElement>(null), head = useRef<HTMLDivElement>(null);
+  const [view, setView] = useState<View>({ from: 0, to: track.frames });
+  const [size, setSize] = useState({ w: 600, h: 200 });
+  const [hover, setHover] = useState<{ frame: number; x: number } | null>(null);
+  const drag = useRef<{ x: number; view: View; moved: boolean } | null>(null);
+  const g = slGrid.value!, bars = slBars.value, loops = slLoops.value, cuts = slCuts.value, off = slOff.value, sel = slSel.value;
+  const pre = Math.round((slPreRollMs.value * RATE) / 1000);
+  const span = view.to - view.from;
+  const X = (f: number) => ((f - view.from) / span) * size.w;
+  const frameAt = (x: number) => view.from + (x / size.w) * span;
+
+  useEffect(() => setView({ from: 0, to: track.frames }), [track]);
+  // The track may be moved half a view past either end, so its start or end can sit mid-view.
+  const clamp = (from: number, s: number): View => {
+    const sp = Math.min(track.frames, Math.max(size.w, s));
+    const f = Math.min(Math.max(-sp / 2, from), track.frames - sp / 2);
+    return { from: f, to: f + sp };
+  };
+
+  // Keep the picked loop in sight when it changes from the keyboard or the list.
+  useEffect(() => {
+    const l = loops.find((x) => x.bar === sel);
+    if (!l || (l.start >= view.from && l.start + l.frames <= view.to)) return;
+    setView((v) => clamp(l.start + l.frames / 2 - (v.to - v.from) / 2, v.to - v.from));
+  }, [sel]);
+
+  useEffect(() => {
+    const c = base.current!;
+    const ro = new ResizeObserver(() => setSize({ w: c.clientWidth, h: c.clientHeight }));
+    ro.observe(c);
+    return () => ro.disconnect();
+  }, []);
+
+  const prep = (c: HTMLCanvasElement) => {
+    const dpr = window.devicePixelRatio || 1;
+    c.width = Math.round(size.w * dpr); c.height = Math.round(size.h * dpr);
+    const x = c.getContext("2d")!;
+    x.scale(dpr, dpr);
+    x.clearRect(0, 0, size.w, size.h);
+    return x;
+  };
+  const hue = () => getComputedStyle(base.current!).getPropertyValue("--ah").trim() || "180";
+
+  // The wave: only when the view or the size changes.
+  useEffect(() => {
+    const x = prep(base.current!), ah = hue(), h = size.h;
+    // Only the part of the view that has audio (the view may reach past the track's ends).
+    const a = Math.max(0, view.from), b = Math.min(track.frames, view.to);
+    if (b <= a) return;
+    const x0 = Math.round(X(a)), cols = Math.max(1, Math.round(X(b)) - x0);
+    const perCol = ((b - a) / track.frames) * OVERVIEW_COLS / cols;
+    const lanes = perCol >= 1
+      ? aggregate(track.peaks, (a / track.frames) * OVERVIEW_COLS, (b / track.frames) * OVERVIEW_COLS, cols)
+      : columns(track.samples, track.channels, a, b, cols);
+    const laneH = (h - 18) / lanes.length;
+    lanes.forEach((p, ch) => {
+      const mid = 18 + laneH * ch + laneH / 2, amp = laneH * 0.46;
+      x.fillStyle = `hsl(${ah} 90% 55% / 0.42)`;
+      x.strokeStyle = `hsl(${ah} 85% 56% / 0.9)`;
+      x.lineWidth = 1;
+      x.beginPath();
+      for (let i = 0; i < cols; i++) x.lineTo(x0 + i, mid - Math.max(p[i * 2 + 1]!, 0.004) * amp);
+      for (let i = cols - 1; i >= 0; i--) x.lineTo(x0 + i, mid - Math.min(p[i * 2]!, -0.004) * amp);
+      x.closePath(); x.fill(); x.stroke();
+    });
+  }, [track, view.from, view.to, size.w, size.h]);
+
+  // The grid, the cuts and the loops on top.
+  useEffect(() => {
+    const x = prep(top.current!), ah = hue(), w = size.w, h = size.h;
+    const barPx = (barFrames(g) / span) * w;
+    const labelTop = 13;
+    // Outside the loops: dimmed.
+    x.fillStyle = "rgba(6, 10, 14, 0.5)";
+    let cursor = view.from;
+    for (const l of loops) {
+      if (l.start > cursor) x.fillRect(X(cursor), 0, X(l.start) - X(cursor), h);
+      cursor = Math.max(cursor, l.start + l.frames);
+    }
+    if (cursor < view.to) x.fillRect(X(cursor), 0, w - X(cursor), h);
+    // The loops: alternate washes, left-out ones dimmed, the picked one outlined; their numbers.
+    let n = 0;
+    x.font = "600 11px 'Inter Variable', system-ui, sans-serif";
+    loops.forEach((l, i) => {
+      const on = !off.has(l.bar);
+      if (on) n++;
+      const x0 = X(l.start), x1 = X(l.start + l.frames);
+      if (x1 < 0 || x0 > w) return;
+      x.fillStyle = !on ? "rgba(6, 10, 14, 0.62)" : `hsl(${ah} 90% 50% / ${l.bar === sel ? 0.16 : i % 2 ? 0.03 : 0.08})`;
+      x.fillRect(x0, 18, x1 - x0, h - 18);
+      if (l.bar === sel) {
+        x.strokeStyle = `hsl(${ah} 90% 62%)`;
+        x.lineWidth = 1.5;
+        x.strokeRect(x0 + 0.75, 18.75, x1 - x0 - 1.5, h - 19.5);
+      }
+      const label = on ? `${String(n).padStart(2, "0")}${x1 - x0 > 60 ? ` · ${l.bars} bar${l.bars > 1 ? "s" : ""}` : ""}` : x1 - x0 > 40 ? "off" : "";
+      if (x1 - x0 > 26 && label) {
+        x.fillStyle = on ? `hsl(${ah} 90% 78%)` : "rgba(160, 175, 190, 0.6)";
+        x.fillText(label, Math.max(x0, 0) + 5, h - 7);
+      }
+    });
+    if (!bars) return;
+    // Bar lines (and beats when there is room), cuts brighter; bar numbers along the top.
+    const step = [1, 2, 4, 8, 16, 32, 64, 128].find((s) => s * barPx >= 34) ?? 256;
+    const firstBar = Math.max(bars.first, Math.floor((view.from + pre - g.origin) / barFrames(g)) + 1);
+    const lastBar = Math.min(bars.last + 1, Math.ceil((view.to + pre - g.origin) / barFrames(g)) + 1);
+    for (let b = firstBar; b <= lastBar; b++) {
+      const bx = Math.round(X(barEdge(g, b, pre))) + 0.5, cut = cuts.has(b);
+      if (cut) {
+        x.strokeStyle = `hsl(${ah} 90% 60%)`; x.lineWidth = 1.5;
+        x.shadowColor = `hsl(${ah} 90% 50% / 0.8)`; x.shadowBlur = 4;
+      } else {
+        x.strokeStyle = barPx >= 5 ? "rgba(255, 255, 255, 0.13)" : "rgba(255, 255, 255, 0.05)"; x.lineWidth = 1;
+      }
+      x.beginPath(); x.moveTo(bx, cut ? 0 : 18); x.lineTo(bx, h); x.stroke();
+      x.shadowBlur = 0;
+      if (barPx >= 48) {
+        x.strokeStyle = "rgba(255, 255, 255, 0.07)";
+        for (let k = 1; k < g.beatsPerBar; k++) {
+          const tx = Math.round(X(barEdge(g, b, pre) + (k * barFrames(g)) / g.beatsPerBar)) + 0.5;
+          x.beginPath(); x.moveTo(tx, 18); x.lineTo(tx, 26); x.stroke();
+        }
+      }
+      if ((((b - 1) % step) + step) % step === 0) {
+        x.fillStyle = b === 1 ? `hsl(${ah} 100% 74%)` : cut ? `hsl(${ah} 80% 70%)` : "rgba(170, 185, 200, 0.75)";
+        x.fillText(String(b), bx + 3, labelTop);
+      }
+    }
+    // Picking bar 1: the beat it would snap to.
+    if (slPickBar1.value && hover) {
+      const beat = barFrames(g) / g.beatsPerBar;
+      const f = g.origin + Math.round((hover.frame - g.origin) / beat) * beat;
+      const hx = Math.round(X(f)) + 0.5;
+      x.strokeStyle = "#fff"; x.setLineDash([4, 3]); x.lineWidth = 1;
+      x.beginPath(); x.moveTo(hx, 0); x.lineTo(hx, h); x.stroke();
+      x.setLineDash([]);
+    }
+  }, [g, loops, cuts, off, sel, bars, view.from, view.to, size.w, size.h, slPickBar1.value, hover, pre]);
+
+  // The playhead follows the sound.
+  useEffect(() => {
+    let raf = 0;
+    const tick = () => {
+      const f = playheadFrame(), el = head.current;
+      if (el) {
+        const px = f === null ? -1 : ((f - view.from) / span) * size.w;
+        el.style.display = px >= 0 && px <= size.w ? "block" : "none";
+        el.style.transform = `translateX(${px}px)`;
+      }
+      if (slPlay.value) raf = requestAnimationFrame(tick);
+    };
+    tick();
+    return () => cancelAnimationFrame(raf);
+  }, [slPlay.value, view.from, view.to, size.w]);
+
+  /** The bar line within reach of pixel `px`, or null. */
+  const lineAt = (px: number): number | null => {
+    if (!bars) return null;
+    const b = Math.round((frameAt(px) + pre - g.origin) / barFrames(g)) + 1;
+    if (b < bars.first || b > bars.last + 1) return null;
+    return Math.abs(X(barEdge(g, b, pre)) - px) <= LINE_GRAB_PX ? b : null;
+  };
+  const click = (px: number) => {
+    const f = frameAt(px);
+    if (slPickBar1.value) return setBar1(f);
+    const line = lineAt(px);
+    if (line !== null) return toggleCut(line);
+    const l = loops.find((x) => f >= x.start && f < x.start + x.frames);
+    if (!l) return;
+    if (slSel.value === l.bar && slPlay.value?.bar === l.bar) return stopPlay();
+    slSel.value = l.bar;
+    play(l.bar);
+  };
+  const pos = (e: MouseEvent) => e.clientX - base.current!.getBoundingClientRect().left;
+  const zoom = (at: number, factor: number) => {
+    const s = Math.min(track.frames, Math.max(size.w, span * factor));
+    setView(clamp(at - ((at - view.from) * s) / span, s));
+  };
+  const cursor = drag.current?.moved ? "grabbing" : slPickBar1.value ? "crosshair" : hover && lineAt(hover.x) !== null ? "col-resize" : "pointer";
+  const l = selLoop();
+
+  return (
+    <div class="wave sl-wave-wrap">
+      <div class="sl-wave">
+        <canvas ref={base} class="sl-canvas" />
+        <canvas ref={top} class="sl-canvas" style={{ cursor }} role="img"
+          aria-label="Track waveform with bars: click a bar line to add or remove a cut, click a loop to hear it; wheel to zoom, drag to move"
+          onPointerDown={(e) => {
+            drag.current = { x: e.clientX, view, moved: false };
+            try { (e.target as HTMLCanvasElement).setPointerCapture(e.pointerId); } catch { /* gone */ }
+          }}
+          onPointerMove={(e) => {
+            const d = drag.current;
+            if (d) {
+              if (!d.moved && Math.abs(e.clientX - d.x) < 4) return;
+              d.moved = true;
+              const s = d.view.to - d.view.from;
+              setView(clamp(d.view.from - ((e.clientX - d.x) / size.w) * s, s));
+              return;
+            }
+            const px = pos(e);
+            setHover({ frame: frameAt(px), x: px });
+          }}
+          onPointerUp={(e) => {
+            const d = drag.current;
+            drag.current = null;
+            if (d && !d.moved) click(pos(e));
+          }}
+          onPointerCancel={() => (drag.current = null)}
+          onPointerLeave={() => setHover(null)}
+          onWheel={(e) => {
+            e.preventDefault();
+            if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+              const d = e.shiftKey ? e.deltaY || e.deltaX : e.deltaX;
+              return setView(clamp(view.from + (d / size.w) * span, span));
+            }
+            zoom(frameAt(pos(e)), Math.exp(e.deltaY * 0.0015));
+          }} />
+        <div ref={head} class="sl-head" />
+      </div>
+      <div class="wave-tools">
+        <button class="btn btn-ghost" title="Zoom out" disabled={span >= track.frames} onClick={() => zoom(view.from + span / 2, 2)}>−</button>
+        <button class="btn btn-ghost" title="Zoom in (or the mouse wheel over the wave)" disabled={span <= size.w} onClick={() => zoom(view.from + span / 2, 0.5)}>+</button>
+        <button class="btn btn-ghost" disabled={view.from === 0 && view.to === track.frames} onClick={() => setView({ from: 0, to: track.frames })}>Full</button>
+        <button class="btn btn-ghost" disabled={!l} title="Zoom to the picked loop"
+          onClick={() => l && setView(clamp(l.start - l.frames * 0.1, l.frames * 1.2))}>Loop</button>
+        <span class="wave-view">
+          {slPickBar1.value ? "Click the beat where a bar starts" : "Click a bar line to cut · click a loop to hear it · Space, ←/→, S, J, Enter"}
+          {" · "}{fmtTime(Math.max(0, view.from))}–{fmtTime(Math.min(track.frames, view.to))}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/** Every loop: in or out of the write, listen, the joint with the next one. */
+function LoopList() {
+  const loops = slLoops.value, off = slOff.value, sel = slSel.value, t = slTrack.value!, playing = slPlay.value;
+  const chosen = slChosen.value;
+  const bytes = chosen.reduce((s, l) => s + l.frames * t.channels * 2 + 44, 0);
+  let n = 0;
+  return (
+    <div class="sl-list-wrap">
+      <div class="sl-list-head">
+        <span><b>{chosen.length}</b> of {loops.length} loops chosen · {mb(bytes)}</span>
+        <button class="btn btn-ghost" disabled={!!slBusy.value || chosen.length === loops.length} onClick={() => setAllOff(false)}>All</button>
+        <button class="btn btn-ghost" disabled={!!slBusy.value || !chosen.length} onClick={() => setAllOff(true)}>None</button>
+      </div>
+      {!loops.length ? <p class="muted ptn-empty">No whole loops: add cuts on the bar lines, or cut every fewer bars.</p> : (
+        <ol class="sl-list">
+          {loops.map((l, i) => {
+            const on = !off.has(l.bar);
+            if (on) n++;
+            const next = loops[i + 1];
+            const joint = !!next && next.start === l.start + l.frames;
+            return (
+              <li key={l.bar} class={`sl-row ${l.bar === sel ? "sel" : ""} ${on ? "" : "off"}`} onClick={() => (slSel.value = l.bar)}>
+                <input type="checkbox" checked={on} disabled={!!slBusy.value} aria-label={`Write loop of bars ${l.bar}–${l.bar + l.bars - 1}`}
+                  onClick={(e) => e.stopPropagation()} onChange={() => toggleOff(l.bar)} />
+                <span class="sl-num">{on ? String(n).padStart(2, "0") : "—"}</span>
+                <span>bars {l.bar}–{l.bar + l.bars - 1}</span>
+                <span class="muted">{l.bars} bar{l.bars > 1 ? "s" : ""} · {(l.frames / RATE).toFixed(2)} s</span>
+                <span class="sl-row-actions">
+                  <button class="icon-btn" title="Listen round and round (Space)" aria-label="Listen"
+                    onClick={(e) => { e.stopPropagation(); slSel.value = l.bar; if (playing?.bar === l.bar && playing.loop) stopPlay(); else play(l.bar); }}>
+                    {playing?.bar === l.bar && playing.loop ? <IconStop /> : <IconPlay />}
+                  </button>
+                  <button class="btn btn-ghost sl-joint" disabled={!joint} title="This loop and the next one once, to hear the joint"
+                    onClick={(e) => { e.stopPropagation(); slSel.value = l.bar; if (playing?.bar === l.bar && !playing.loop) stopPlay(); else play(l.bar, true); }}>
+                    {playing?.bar === l.bar && !playing.loop ? "■" : "→ next"}
+                  </button>
+                </span>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+    </div>
+  );
+}
+
+/** Where the loops go, the write button and its progress. */
+function WriteBar({ track }: { track: Track }) {
+  const busy = slBusy.value, block = slWriteBlock.value, n = slChosen.value.length;
+  return (
+    <div class="sl-write">
+      {busy ? (
+        <>
+          <div class="sl-progress" role="progressbar" aria-valuenow={Math.round(busy.progress * 100)} aria-valuemin={0} aria-valuemax={100}>
+            <span style={{ width: `${busy.progress * 100}%` }} />
+          </div>
+          <span class="small sl-write-text">{busy.text}</span>
+          <button class="btn btn-stop" onClick={cancelWrite} title="Stop after the file being written">Stop</button>
+        </>
+      ) : (
+        <>
+          <span class="muted small sl-write-text">To the SD card, a new folder <b>IMPORT/{trackName(track.name)}/</b> · files like {loopFileName(track.name, 1, Math.max(n, 1), slGrid.value!.x100)}</span>
+          <button class="btn btn-primary" disabled={!!block} title={block ?? "Write the chosen loops to the card"} onClick={() => void writeLoops()}>
+            <IconUpload /> Write {n} loop{n === 1 ? "" : "s"} to SD card
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
