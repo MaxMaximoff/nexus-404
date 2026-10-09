@@ -7,7 +7,7 @@ import {
 } from "../sp404";
 import {
   bpmRange, channelsOf, confirmDelete, conn, deletePad, detectPadBpm, downloadPadWav, importFiles, loadWaveform, pads, playing, preview, project, selectedPad, setBpm, setBpmSync, setGate, setLevel, setLoop, setFixedVelocity, setOneShot, setPadParam, setPitch, setTimeStretch, setVari, setVinyl,
-  patternsOf, setRange, stopPlaying, waveLoading, waveforms, writeBlockReason, editGroup, pickedList, selectedBank, planGroupBpm, applyGroupBpm, type BpmPlan,
+  patterns, patternsOf, setRange, stopPlaying, waveLoading, waveforms, writeBlockReason, editGroup, pickedList, selectedBank, planGroupBpm, applyGroupBpm, type BpmPlan,
 } from "./store";
 import type { PadBlock } from "../sp404";
 import { Waveform, type Range } from "./Waveform";
@@ -271,17 +271,16 @@ function PadChips({ pad }: { pad: number }) {
   );
 }
 
-/** The patterns that play this pad; a click shows one. */
+/** The patterns that play this pad; a click shows one. The row is always there, so the inspector does not jump between pads. */
 function PadPatterns({ pad }: { pad: number }) {
   const slots = patternsOf(pad);
-  if (!slots.length) return null;
   const shown = mainView.value === "patterns" ? shownSlot.value : null;
   return (
     <div class="pad-chips pad-ptns">
       <span class="muted small">В паттернах:</span>
-      {slots.map((s) => (
+      {slots.length ? slots.map((s) => (
         <button key={s} type="button" class={`pchip ${s === shown ? "cur" : ""}`} onClick={() => openPattern(s)} title={`Показать паттерн ${padName(s)}`}>{padName(s)}</button>
-      ))}
+      )) : <span class="muted small">{patterns.value ? "ни в одном" : "—"}</span>}
     </div>
   );
 }
@@ -453,14 +452,11 @@ function TempoPitch({ pad }: { pad: number }) {
       <SpeedLine pad={pad} />
       <VariControl pad={pad} />
       <div class="tp-row">
-        <span>Stretch</span>
-        <ValueField value={p.timeStretchX100} format={formatStretch} parse={parseStretch} label="Time Stretch" width={64}
+        <span title="Скорость, 50–150 %, по умолчанию 100">Stretch</span>
+        <ValueField value={p.timeStretchX100} format={formatStretch} parse={parseStretch} label="Time Stretch, 50–150 %" width={64}
           onSave={(v) => setTimeStretch(pad, v)} />
         <span class="unit">%</span>
-        <span class="note">скорость, 50–150, по умолчанию 100</span>
-      </div>
-      <div class="tp-row">
-        <span>Pitch</span>
+        <span class="tp-next">Pitch</span>
         <ValueField value={p.pitchCoarse} format={signed} parse={intIn(-PITCH_COARSE_MAX, PITCH_COARSE_MAX)} label="Pitch, полутоны" width={52}
           disabled={pitchOff} dim={p.vinyl} onSave={(v) => setPitch(pad, v, p.pitchFine)} />
         <span class="unit">st</span>
@@ -576,10 +572,10 @@ function RangeEditor({ pad, channels, wave }: { pad: number; channels: number; w
           </select>
         </label>
         {trimNote && <span class="muted">{trimNote}</span>}
+        <span class={`bpm-note ${dirty && error ? "err" : ""}`}>
+          {(dirty && error) || blocked || (dirty ? "Enter — применить, Esc — отменить" : `Звучит ${fmtSec(e0 - s0)} s из ${fmtSec(total)} s`)}
+        </span>
       </div>
-      <span class={`bpm-note ${dirty && error ? "err" : ""}`}>
-        {(dirty && error) || blocked || (dirty ? "Enter — применить, Esc — отменить" : `Звучит ${fmtSec(e0 - s0)} s из ${fmtSec(total)} s`)}
-      </span>
     </div>
   );
 }
