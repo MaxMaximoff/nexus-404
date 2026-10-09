@@ -71,3 +71,23 @@ Git работает и из подпапки `app`: он обновляет в�
 find dist -type d -exec chmod 755 {} \;
 find dist -type f -exec chmod 644 {} \;
 ```
+
+## Главная Sound Playground
+
+`hosting/index.htm` — главная хаба с карточками Mutagen Lab, Blofeld Editor
+и Nexus-404. Она хранится в этом репозитории отдельно от приложения:
+`npm run ship` собирает только `app/dist`.
+
+Чтобы опубликовать главную, в SSH-консоли Timeweb:
+
+```sh
+cd ~/soundplayground/repos/nexus-404/app
+git pull --ff-only
+cp -pn ~/soundplayground/public_html/index.htm ~/soundplayground/index.htm.before-nexus-404
+install -m 644 ../hosting/index.htm ~/soundplayground/public_html/index.htm
+```
+
+Первоначальная главная сохраняется за пределами `public_html` в
+`~/soundplayground/index.htm.before-nexus-404`; существующая резервная копия
+не перезаписывается. При следующих изменениях главной после `git pull`
+повторяйте команду `install`. Обновления самого приложения требуют только `git pull`.
