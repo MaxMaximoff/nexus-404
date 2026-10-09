@@ -80,6 +80,8 @@ function GroupBar() {
       </div>
     );
   }
+  // It covers the bank header: step aside while a pad is dragged, so the header's speed and pattern chips show.
+  if (draggedPad.value !== null) return null;
   return (
     <div class="group-bar">
       <span class="group-count">Выбрано {list.length}</span>
