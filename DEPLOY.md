@@ -45,22 +45,29 @@ ln -s ~/soundplayground/repos/nexus-404/app/dist ~/soundplayground/public_html/n
 ```sh
 cd app
 npm run ship
-cd ..
-git add app/package.json app/vite.config.ts app/public/.htaccess app/README.md .gitignore .gitattributes DEPLOY.md
+git add -u
 git commit -m "Deploy Nexus-404 to Timeweb"
 git push origin main
 ```
 
-При следующих обновлениях включайте в коммит изменённые исходники и
-результат `npm run ship`: сервер использует готовую сборку.
+`npm run ship` собирает приложение и добавляет `dist` в индекс Git.
+`git add -u` добавляет изменения уже отслеживаемых исходников; новые
+исходные файлы добавляйте отдельно. После коммита и push сервер получает
+готовую сборку через Git, как `mutagen-lab`.
 
 На сервере:
 
 ```sh
-cd ~/soundplayground/repos/nexus-404
+cd ~/soundplayground/repos/nexus-404/app
 git pull --ff-only
-find app/dist -type d -exec chmod 755 {} \;
-find app/dist -type f -exec chmod 644 {} \;
 ```
 
 Ссылка из `public_html` остаётся прежней и сразу использует обновлённый `app/dist`.
+Git работает и из подпапки `app`: он обновляет весь репозиторий `nexus-404`.
+
+Если после обновления появился 403, восстановите права из этой же папки:
+
+```sh
+find dist -type d -exec chmod 755 {} \;
+find dist -type f -exec chmod 644 {} \;
+```
