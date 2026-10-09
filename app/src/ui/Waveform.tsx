@@ -71,8 +71,8 @@ export function Waveform({ wave, range, onCommit }: { wave: Wave; range?: Range;
     const canvas = ref.current;
     if (!canvas) return;
     const draw = () => {
-      // The accent hue comes from the theme (--ah in theme-matte.css), so the trace follows it.
-      const ah = getComputedStyle(canvas).getPropertyValue("--ah").trim() || "172";
+      // The accent hue comes from the theme (--ah in styles.css), so the trace follows it.
+      const ah = getComputedStyle(canvas).getPropertyValue("--ah").trim() || "180";
       const dpr = window.devicePixelRatio || 1;
       const w = canvas.clientWidth, h = canvas.clientHeight;
       widthRef.current = w;
@@ -123,7 +123,7 @@ export function Waveform({ wave, range, onCommit }: { wave: Wave; range?: Range;
       if (!shown) return;
       // Start/End: veil outside the played region, a glowing marker with a grab tab at each edge
       const x0 = X(rs), x1 = X(re);
-      g.fillStyle = "rgba(8, 9, 11, 0.72)";
+      g.fillStyle = "rgba(6, 10, 14, 0.72)";
       if (x0 > 0) g.fillRect(0, 0, Math.min(x0, w), h);
       if (x1 < w) g.fillRect(Math.max(x1, 0), 0, w - Math.max(x1, 0), h);
       // The played range: a faint warm wash between crisp markers.
@@ -147,7 +147,7 @@ export function Waveform({ wave, range, onCommit }: { wave: Wave; range?: Range;
         g.font = "600 11px 'Inter Variable', system-ui, sans-serif";
         const tw = g.measureText(label).width + 10;
         const lx = Math.min(Math.max(X(f) - tw / 2, 2), w - tw - 2);
-        g.fillStyle = "rgba(20, 22, 26, 0.95)";
+        g.fillStyle = "rgba(16, 22, 28, 0.95)";
         g.fillRect(lx, h - 22, tw, 18);
         g.fillStyle = `hsl(${ah} 85% 68%)`;
         g.fillText(label, lx + 5, h - 9);

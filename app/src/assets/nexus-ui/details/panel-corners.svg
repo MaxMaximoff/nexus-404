@@ -1,5 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" fill="none">
-  <!-- Sparse assembly registration cuts; repeated with 9-slice rather than stretched. -->
-  <path d="M12 44V24a12 12 0 0 1 12-12h20M212 12h20a12 12 0 0 1 12 12v20M244 212v20a12 12 0 0 1-12 12h-20M44 244H24a12 12 0 0 1-12-12v-20" stroke="#f5ffff" stroke-width="1.7"/>
-  <path d="M12 33V24a12 12 0 0 1 12-12h9M244 223v9a12 12 0 0 1-12 12h-9" stroke="#00c8ff" stroke-width="1.2"/>
-</svg>
