@@ -2,31 +2,31 @@ import { useEffect, useRef } from "preact/hooks";
 import { BPM_RANGES, formatBpm, padName } from "../sp404";
 import { bpmRange, clearFinishedJobs, defaultBpm, detectOnImport, jobs, logLines, showDebug } from "./store";
 
-const BPM_FROM = { name: "из имени", detected: "определён", field: "из поля", source: "от исходного pad'а" } as const;
+const BPM_FROM = { name: "from filename", detected: "detected", field: "from field", source: "from source pad" } as const;
 
 export function ImportPanel() {
   const list = jobs.value;
   return (
     <section class="import-panel glass">
       <div class="panel-row">
-        <div class="panel-title">Импорт</div>
-        <label class="default-bpm detect-bpm" title="Для файлов, в имени которых нет «120bpm» и т.п.: темп определяется по звуку">
+        <div class="panel-title">Import</div>
+        <label class="default-bpm detect-bpm" title="Detect tempo from audio when the filename has no BPM, such as ‘120bpm’">
           <input type="checkbox" checked={detectOnImport.value} onChange={(e) => (detectOnImport.value = (e.target as HTMLInputElement).checked)} />
-          определять BPM
-          <select value={bpmRange.value} disabled={!detectOnImport.value} title="Темп сворачивается в этот диапазон, как на SP"
+          Detect BPM
+          <select value={bpmRange.value} disabled={!detectOnImport.value} title="Fold the tempo into this range, as on SP"
             onChange={(e) => (bpmRange.value = +(e.target as HTMLSelectElement).value)}>
             {BPM_RANGES.map(([a, b], i) => <option value={i}>{a}–{b}</option>)}
           </select>
         </label>
-        <label class="default-bpm" title={detectOnImport.value ? "Если в имени файла нет BPM и по звуку он не определился" : "Для файлов, в имени которых нет «120bpm» и т.п."}>
-          {detectOnImport.value ? "иначе BPM" : "BPM новых сэмплов"}
+        <label class="default-bpm" title={detectOnImport.value ? "Used when BPM is missing from the filename and cannot be detected from audio" : "For files with no BPM in the filename, such as ‘120bpm’"}>
+          {detectOnImport.value ? "Fallback BPM" : "New sample BPM"}
           <input type="text" inputMode="decimal" placeholder="—" value={defaultBpm.value}
             onInput={(e) => (defaultBpm.value = (e.target as HTMLInputElement).value)} />
         </label>
-        {list.some((j) => j.state === "done" || j.state === "error") && <button class="btn btn-ghost" onClick={clearFinishedJobs}>Очистить</button>}
+        {list.some((j) => j.state === "done" || j.state === "error") && <button class="btn btn-ghost" onClick={clearFinishedJobs}>Clear</button>}
       </div>
       {list.length === 0 ? (
-        <p class="muted small">Очередь пуста. BPM берётся из имени файла («loop_96bpm.wav»){detectOnImport.value ? ", иначе определяется по звуку" : ""}, иначе из поля выше, иначе остаётся 90.</p>
+        <p class="muted small">Queue is empty. BPM comes from the filename (‘loop_96bpm.wav’){detectOnImport.value ? ", then from audio detection" : ""}, then from the field above, otherwise it stays at 90.</p>
       ) : (
         <ul class="jobs">
           {list.map((j) => (
@@ -53,10 +53,10 @@ export function LogPanel() {
   return (
     <details class="log-panel glass">
       <summary>
-        <span class="panel-title">Журнал</span>
-        <span class="muted small">{lines.length ? lines[lines.length - 1].text : "пусто"}</span>
+        <span class="panel-title">Log</span>
+        <span class="muted small">{lines.length ? lines[lines.length - 1].text : "empty"}</span>
       </summary>
-      <label class="small"><input type="checkbox" checked={showDebug.value} onChange={(e) => (showDebug.value = (e.target as HTMLInputElement).checked)} /> показывать USB-кадры</label>
+      <label class="small"><input type="checkbox" checked={showDebug.value} onChange={(e) => (showDebug.value = (e.target as HTMLInputElement).checked)} /> Show USB frames</label>
       <div class="log" ref={box}>
         {lines.map((l, i) => <div key={i} class={`log-${l.level}`}><span>{l.t}</span> {l.text}</div>)}
       </div>

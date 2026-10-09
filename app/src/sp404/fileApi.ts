@@ -93,7 +93,7 @@ export const FileReq = {
     const block = new Uint8Array(2 * RENAME_SLOT);
     for (const [i, p] of [from, to].entries()) {
       const bytes = enc.encode(remotePath(p));
-      if (bytes.length >= RENAME_SLOT) throw new Error(`путь длиннее ${RENAME_SLOT - 1} байт: ${remotePath(p)}`);
+      if (bytes.length >= RENAME_SLOT) throw new Error(`Path exceeds ${RENAME_SLOT - 1} bytes: ${remotePath(p)}`);
       block.set(bytes, i * RENAME_SLOT);
     }
     return request(Op.Rename, septEnc(0), septEnc(block.length), block);

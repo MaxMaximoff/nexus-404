@@ -43,7 +43,7 @@ export async function connectMidi(): Promise<boolean> {
 
 /** Hit pads like hands: all note-ons in one go (the same timestamp), velocity 1–127. */
 export function hitPads(pads: number[], velocity = 127): void {
-  if (!out) throw new Error("MIDI-порт SP не подключён");
+  if (!out) throw new Error("SP MIDI port is not connected");
   const t = performance.now();
   for (const pad of pads) { const { ch, note } = padNote(pad); out.send([0x90 | ch, note, velocity], t); }
 }

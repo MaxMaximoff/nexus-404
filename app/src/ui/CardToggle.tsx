@@ -8,8 +8,8 @@ export function CardToggle() {
   const on = sideTab.value === "card";
   return (
     <button type="button" class={`btn card-toggle ${on ? "on" : ""}`} aria-pressed={on} onClick={() => showSide(on ? "pad" : "card")}
-      title={on ? "Вернуться к pad'у" : "Открыть карту SD справа: раскладывать сэмплы с карты по pad'ам"}>
-      <IconCard /> Карта SD
+      title={on ? "Return to pad" : "Open the SD card on the right to load card samples onto pads"}>
+      <IconCard /> SD Card
     </button>
   );
 }
@@ -19,8 +19,8 @@ export function PatternsToggle() {
   const on = mainView.value === "patterns", n = patterns.value?.size;
   return (
     <button type="button" class={`btn card-toggle ${on ? "on" : ""}`} aria-pressed={on} onClick={() => showView(on ? "pads" : "patterns")}
-      title={on ? "Вернуться к pad'ам" : "Паттерны проекта: какие pad'ы и когда они играют, экспорт в MIDI"}>
-      <IconGrid /> Паттерны{n ? ` · ${n}` : ""}
+      title={on ? "Return to pads" : "Project patterns: which pads play and when, with MIDI export"}>
+      <IconGrid /> Patterns{n ? ` · ${n}` : ""}
     </button>
   );
 }
@@ -30,8 +30,8 @@ export function RecToggle() {
   const on = sideTab.value === "rec";
   return (
     <button type="button" class={`btn card-toggle ${on ? "on" : ""}`} aria-pressed={on} onClick={() => showSide(on ? "pad" : "rec")}
-      title={on ? "Вернуться к pad'у" : "Записать звук со входа компьютера (например, из Ableton) на pad"}>
-      <IconMic /> Запись
+      title={on ? "Return to pad" : "Record audio from a computer input (such as Ableton) onto a pad"}>
+      <IconMic /> Record
     </button>
   );
 }

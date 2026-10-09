@@ -70,7 +70,7 @@ export function App() {
         {n && (
           <div class={`notice notice-${n.kind} glass`} role={n.kind === "error" ? "alert" : "status"}>
             <span>{n.text}</span>
-            <button class="icon-btn" onClick={() => (notice.value = null)} aria-label="Закрыть"><IconX /></button>
+            <button class="icon-btn" onClick={() => (notice.value = null)} aria-label="Close"><IconX /></button>
           </div>
         )}
         <main class={`layout ${ptn ? "layout-ptn" : ""} ${solo ? "layout-solo" : ""} ${switching ? "switching" : ""}`}>

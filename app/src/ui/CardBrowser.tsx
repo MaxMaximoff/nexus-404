@@ -83,7 +83,7 @@ export function CardBrowser() {
   const editInput = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (!edit) return;
-    setEditText(edit.kind === "rename" ? edit.name : "Новая папка");
+    setEditText(edit.kind === "rename" ? edit.name : "New folder");
     setTimeout(() => editInput.current?.select(), 0);
   }, [edit]);
   useEffect(() => { cardEdit.value = null; }, [key]);
@@ -95,8 +95,8 @@ export function CardBrowser() {
   };
   const editField = (
     <span class="card-edit">
-      <input ref={editInput} value={editText} spellcheck={false} class={editError ? "invalid" : ""} aria-label={edit?.kind === "new" ? "Имя новой папки" : "Новое имя"}
-        title={editError ?? "Enter — сохранить, Esc — отменить"}
+      <input ref={editInput} value={editText} spellcheck={false} class={editError ? "invalid" : ""} aria-label={edit?.kind === "new" ? "New folder name" : "New name"}
+        title={editError ?? "Enter to save, Esc to cancel"}
         onInput={(e) => setEditText((e.target as HTMLInputElement).value)}
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
@@ -117,8 +117,8 @@ export function CardBrowser() {
         void uploadToCard([...(e.dataTransfer?.files ?? [])]);
       }}>
       <div class="card-path">
-        <nav aria-label="Путь на карте">
-          <button class="crumb" disabled={!dir.length || !!busy} onClick={() => openCardDir([])}>Карта</button>
+        <nav aria-label="Card path">
+          <button class="crumb" disabled={!dir.length || !!busy} onClick={() => openCardDir([])}>Card</button>
           {dir.map((d, i) => (
             <span key={i}>
               <span class="sep">/</span>
@@ -129,39 +129,39 @@ export function CardBrowser() {
         </nav>
         {pickedFiles.length > 0 && (
           <button class="icon-btn" disabled={!ready || !!busy} onClick={() => void downloadCardFiles(pickedFiles)}
-            title={`Скачать на компьютер: ${pickedFiles.join(", ")}`} aria-label="Скачать выбранные файлы"><IconDownload /></button>
+            title={`Download to computer: ${pickedFiles.join(", ")}`} aria-label="Download selected files"><IconDownload /></button>
         )}
         {upload && sel.size > 0 && (
           <button class="btn insp-delete card-delete" disabled={!ready || !!busy} onClick={() => (cardConfirm.value = true)}
-            title={`Удалить с карты выбранное (${sel.size}) — Delete`} aria-label="Удалить с карты"><IconTrash /></button>
+            title={`Delete selected items from card (${sel.size}) — Delete`} aria-label="Delete from card"><IconTrash /></button>
         )}
         {upload && sel.size === 1 && (
           <button class="icon-btn" disabled={!ready || !!busy} onClick={() => (cardEdit.value = { kind: "rename", name: [...sel][0] })}
-            title="Переименовать (F2)" aria-label="Переименовать"><IconPencil /></button>
+            title="Rename (F2)" aria-label="Rename"><IconPencil /></button>
         )}
         {upload && (
           <button class="icon-btn" disabled={!ready || !!busy} onClick={() => (cardEdit.value = { kind: "new" })}
-            title="Новая папка" aria-label="Новая папка"><IconFolderPlus /></button>
+            title="New folder" aria-label="New folder"><IconFolderPlus /></button>
         )}
         {upload && (
           <button class="btn card-upload" disabled={!ready || !!busy} onClick={() => picker.current?.click()}
-            title="Скопировать аудио с компьютера в эту папку на карте — потом его видно в IMPORT на самом SP">
-            <IconUpload /> С компьютера…
+            title="Copy audio from the computer to this card folder — it will appear in IMPORT on SP">
+            <IconUpload /> From computer…
           </button>
         )}
         <input ref={picker} type="file" multiple accept="audio/*,.wav,.aif,.aiff,.flac,.mp3" hidden
           onChange={(e) => { const f = (e.target as HTMLInputElement).files; if (f) void uploadToCard([...f]); (e.target as HTMLInputElement).value = ""; }} />
-        <button class="icon-btn" disabled={!ready || !!busy} onClick={() => openCardDir(dir)} title="Перечитать папку" aria-label="Перечитать"><IconRefresh /></button>
+        <button class="icon-btn" disabled={!ready || !!busy} onClick={() => openCardDir(dir)} title="Refresh folder" aria-label="Refresh"><IconRefresh /></button>
       </div>
       {cardConfirm.value && upload && sel.size > 0 && (
-        <div class="confirm-delete card-confirm" role="alertdialog" aria-label="Подтверждение удаления"
+        <div class="confirm-delete card-confirm" role="alertdialog" aria-label="Confirm deletion"
           onKeyDown={(e) => { if (e.key === "Escape") cardConfirm.value = false; }}>
-          <span class="confirm-text">Удалить с карты {sel.size === 1 ? "это" : `${sel.size} шт.`}? Вернуть будет нельзя.</span>
+          <span class="confirm-text">Delete from card {sel.size === 1 ? "this item" : `${sel.size} items`}? This cannot be undone.</span>
           <span class="group-names">
-            {all.filter((e) => sel.has(e.name)).map((e) => (e.dir ? `${e.name}/ (папка со всем содержимым)` : e.name)).join(", ")}
+            {all.filter((e) => sel.has(e.name)).map((e) => (e.dir ? `${e.name}/ (folder and all its contents)` : e.name)).join(", ")}
           </span>
-          <button ref={yes} class="btn btn-danger" onClick={() => void deleteCardSelection()}><IconTrash /> Удалить</button>
-          <button class="btn" onClick={() => (cardConfirm.value = false)}>Отмена</button>
+          <button ref={yes} class="btn btn-danger" onClick={() => void deleteCardSelection()}><IconTrash /> Delete</button>
+          <button class="btn" onClick={() => (cardConfirm.value = false)}>Cancel</button>
         </div>
       )}
       {busy && (
@@ -171,7 +171,7 @@ export function CardBrowser() {
         </div>
       )}
       {cardError.value && <span class="err">{cardError.value}</span>}
-      {!ready ? <p class="muted">Подключите SP, чтобы открыть карту.</p> : (
+      {!ready ? <p class="muted">Connect SP to open the card.</p> : (
         <div class="insp-scroll">
           <ul class="card-list">
             {dir.length > 0 && (
@@ -191,41 +191,41 @@ export function CardBrowser() {
                   onDragStart={(ev) => dragStart(ev, e)} onDragEnd={() => { cardMoving.value = null; setMoveOver(null); }}
                   onClick={(ev) => !busy && click(ev, e)}
                   {...(e.dir ? moveTarget(`dir:${e.name}`, [...dir, e.name]) : {})}
-                  title={e.dir ? "Открыть папку" : au ? "Перетащите на пустой pad; Ctrl/Shift — несколько файлов" : "Не аудио"}>
+                  title={e.dir ? "Open folder" : au ? "Drag onto an empty pad; Ctrl/Shift to select multiple files" : "Not audio"}>
                   {e.dir ? <IconFolder /> : <IconFile />}
                   {edit?.kind === "rename" && edit.name === e.name ? editField : <span class="card-name">{e.name}</span>}
                   {e.dir && upload ? (
                     // Folders open with a click, so they get their own rename / delete (they are hard to pick).
                     <>
-                      <button class="icon-btn card-row-act" disabled={!!busy} aria-label={`Переименовать ${e.name}`} title="Переименовать папку"
+                      <button class="icon-btn card-row-act" disabled={!!busy} aria-label={`Rename ${e.name}`} title="Rename folder"
                         onClick={(ev) => { ev.stopPropagation(); cardEdit.value = { kind: "rename", name: e.name }; }}><IconPencil /></button>
-                      <button class="icon-btn card-row-act danger" disabled={!!busy} aria-label={`Удалить ${e.name}`} title="Удалить папку со всем содержимым"
+                      <button class="icon-btn card-row-act danger" disabled={!!busy} aria-label={`Delete ${e.name}`} title="Delete folder and all its contents"
                         onClick={(ev) => { ev.stopPropagation(); cardSel.value = new Set([e.name]); cardConfirm.value = true; }}><IconTrash /></button>
                     </>
                   ) : (
                     <>
                       <span class="card-size">{fmtSize(e.size)}</span>
                       {!e.dir ? (
-                        <button class="icon-btn card-row-act" disabled={!!busy} aria-label={`Скачать ${e.name}`} title="Скачать на компьютер"
+                        <button class="icon-btn card-row-act" disabled={!!busy} aria-label={`Download ${e.name}`} title="Download to computer"
                           onClick={(ev) => { ev.stopPropagation(); void downloadCardFiles([e.name]); }}><IconDownload /></button>
                       ) : <span />}
                     </>
                   )}
                   {au && (
-                    <button class={`icon-btn card-play ${playing ? "on" : ""}`} disabled={!!busy && !playing} aria-label={playing ? "Стоп" : "Прослушать"}
-                      title={playing ? "Остановить" : "Прослушать на компьютере"} onClick={(ev) => { ev.stopPropagation(); void previewCardFile(e.name); }}>
+                    <button class={`icon-btn card-play ${playing ? "on" : ""}`} disabled={!!busy && !playing} aria-label={playing ? "Stop" : "Preview"}
+                      title={playing ? "Stop" : "Preview on computer"} onClick={(ev) => { ev.stopPropagation(); void previewCardFile(e.name); }}>
                       {playing ? <IconStop /> : <IconPlay />}
                     </button>
                   )}
                 </li>
               );
             })}
-            {entries && !entries.length && <li class="muted card-empty">{dir.length ? "Папка пуста" : "Пусто. Вставлена ли карта в SP?"}</li>}
+            {entries && !entries.length && <li class="muted card-empty">{dir.length ? "Folder is empty" : "Empty. Is a card inserted in SP?"}</li>}
           </ul>
         </div>
       )}
-      <p class="hint">Перетащите аудио на пустой pad — файлы займут его и следующие пустые pad'ы банка. Ctrl/Shift-клик — несколько файлов. ▶ — прослушать на компьютере.
-        {upload ? " Файлы с компьютера можно бросить сюда — они лягут в эту папку (существующие не заменяются). Ctrl-клик по папке выбирает её; перетащите выбранное на папку, «..» или путь сверху — перенос; F2 — переименовать; Delete — удалить." : " Файлы с компьютера кладутся в папку IMPORT; удалять можно тоже только там."}</p>
+      <p class="hint">Drag audio onto an empty pad — files fill that pad and the next empty pads in the bank. Ctrl/Shift-click to select multiple files. ▶ previews audio on the computer.
+        {upload ? " Drop files from the computer here to upload them to this folder (existing files are kept). Ctrl-click to select a folder; drag selected items onto a folder, ‘..’ or the path above to move them. F2 to rename; Delete to delete." : " Files from the computer go into IMPORT; deletion is also limited to that folder."}</p>
     </aside>
   );
 }

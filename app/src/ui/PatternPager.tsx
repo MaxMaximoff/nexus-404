@@ -55,19 +55,19 @@ export function Pager({ page, pages, barsPerPage, totalBars, onPage }: { page: n
     return a === b ? `${a}` : `${a}–${b}`;
   };
   return (
-    <div class="ptn-pager" role="group" aria-label="Страницы паттерна">
-      <button class="icon-btn" disabled={page === 0} onClick={() => onPage(page - 1)} title="Предыдущие такты" aria-label="Предыдущие такты"><IconChevronLeft /></button>
+    <div class="ptn-pager" role="group" aria-label="Pattern pages">
+      <button class="icon-btn" disabled={page === 0} onClick={() => onPage(page - 1)} title="Previous bars" aria-label="Previous bars"><IconChevronLeft /></button>
       {pages <= 8 ? (
         <div class="segmented">
           {Array.from({ length: pages }, (_, i) => (
-            <button key={i} class={i === page ? "on" : ""} aria-pressed={i === page} onClick={() => onPage(i)} title={`Такты ${range(i)}`}>{range(i)}</button>
+            <button key={i} class={i === page ? "on" : ""} aria-pressed={i === page} onClick={() => onPage(i)} title={`Bars ${range(i)}`}>{range(i)}</button>
           ))}
         </div>
       ) : (
-        <span class="ptn-pager-label">такты {range(page)} <span class="muted">из {totalBars}</span></span>
+        <span class="ptn-pager-label">bars {range(page)} <span class="muted">of {totalBars}</span></span>
       )}
-      <button class="icon-btn" disabled={page === pages - 1} onClick={() => onPage(page + 1)} title="Следующие такты" aria-label="Следующие такты"><IconChevronRight /></button>
-      {pages <= 8 && <span class="muted small">такты, всего {totalBars}</span>}
+      <button class="icon-btn" disabled={page === pages - 1} onClick={() => onPage(page + 1)} title="Next bars" aria-label="Next bars"><IconChevronRight /></button>
+      {pages <= 8 && <span class="muted small">bars, total {totalBars}</span>}
     </div>
   );
 }

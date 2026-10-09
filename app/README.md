@@ -1,6 +1,7 @@
 # Nexus-404
 
 Browser-only sample uploader for the Roland SP-404MKII: Chrome or Edge on a desktop, no install.
+The interface, tooltips, confirmations and operation messages are in English.
 It talks to the unit over Web Serial (its CDC-ACM port, USB `0582:02E7`). Protocol notes and
 hardware test results: `../SP404MKII-browser-feasibility.md`.
 

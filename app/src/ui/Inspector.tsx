@@ -17,8 +17,8 @@ import { emptyPadsOf, groupPlan, linkedPads, resampleGroup, resamplePad, rsBusy,
 import { midiPort, midiState } from "./midi";
 import { mainView, openPattern, shownSlot } from "./Patterns";
 
-const MIDI_NOTE = { off: "MIDI подключится при ресэмпле", asking: "жду разрешения на MIDI…", ready: "MIDI готов", nodevice: "MIDI-порт SP не найден",
-  denied: "доступ к MIDI запрещён", unsupported: "браузер без Web MIDI" } as const;
+const MIDI_NOTE = { off: "MIDI connects when resampling starts", asking: "Waiting for MIDI permission…", ready: "MIDI ready", nodevice: "SP MIDI port not found",
+  denied: "MIDI access denied", unsupported: "This browser does not support Web MIDI" } as const;
 import type { Waveform as Wave } from "./store";
 import { ValueField, intIn, signed, type Parse } from "./ValueField";
 import { IconCheck, IconDownload, IconPlay, IconStop, IconTrash, IconUpload, IconWave } from "./icons";
@@ -39,10 +39,10 @@ export function Inspector() {
       {p?.size && confirmDelete.value === pad ? <ConfirmDelete pad={pad} /> : (
         <div class="insp-head">
           <span class="chip chip-accent">{padName(pad)}</span>
-          <span class="insp-name" title={p?.name}>{p?.size ? p.name || "без имени" : "Пустой pad"}</span>
+          <span class="insp-name" title={p?.name}>{p?.size ? p.name || "untitled" : "Empty pad"}</span>
           {!!p?.size && (
             <button class="btn insp-delete" disabled={!!writeBlockReason.value} onClick={() => (confirmDelete.value = pad)}
-              title={writeBlockReason.value ?? `Удалить ${padName(pad)} с SP (Delete)`} aria-label="Удалить pad">
+              title={writeBlockReason.value ?? `Delete ${padName(pad)} from SP (Delete)`} aria-label="Delete pad">
               <IconTrash />
             </button>
           )}
@@ -59,12 +59,12 @@ function ConfirmDelete({ pad }: { pad: number }) {
   const yes = useRef<HTMLButtonElement>(null);
   useEffect(() => yes.current?.focus(), [pad]); // so Delete then Enter deletes, like a y/n prompt
   return (
-    <div class="insp-head confirm-delete" role="alertdialog" aria-label="Подтверждение удаления"
+    <div class="insp-head confirm-delete" role="alertdialog" aria-label="Confirm deletion"
       onKeyDown={(e) => { if (e.key === "Escape") confirmDelete.value = null; }}>
-      <span class="confirm-text">Удалить <b>{padName(pad)}</b> «{p.name || "без имени"}» с SP? Вернуть будет нельзя.
-        {patternsOf(pad).length > 0 && <> Он звучит в паттернах {patternsOf(pad).map(padName).join(", ")} — там станет тишина.</>}</span>
-      <button ref={yes} class="btn btn-danger" onClick={() => deletePad(pad)}><IconTrash /> Удалить</button>
-      <button class="btn" onClick={() => (confirmDelete.value = null)}>Отмена</button>
+      <span class="confirm-text">Delete <b>{padName(pad)}</b> “{p.name || "untitled"}” from SP? This cannot be undone.
+        {patternsOf(pad).length > 0 && <> It plays in patterns {patternsOf(pad).map(padName).join(", ")} — those notes will become silent.</>}</span>
+      <button ref={yes} class="btn btn-danger" onClick={() => deletePad(pad)}><IconTrash /> Delete</button>
+      <button class="btn" onClick={() => (confirmDelete.value = null)}>Cancel</button>
     </div>
   );
 }
@@ -83,7 +83,7 @@ function FilledPad({ pad, ready }: { pad: number; ready: boolean }) {
       <div class="insp-facts">
         <span>{facts}</span>
         <button class="icon-btn insp-dl" disabled={!ready && !wave?.samples} onClick={() => void downloadPadWav(pad)}
-          title="Скачать весь сэмпл на компьютер как WAV 48 kHz / 16 bit (BPM — в имени файла)" aria-label="Скачать WAV"><IconDownload /> WAV</button>
+          title="Download the entire sample as a 48 kHz / 16-bit WAV (BPM in the filename)" aria-label="Download WAV"><IconDownload /> WAV</button>
       </div>
       <PadChips pad={pad} />
       <PadPatterns pad={pad} />
@@ -96,20 +96,20 @@ function FilledPad({ pad, ready }: { pad: number; ready: boolean }) {
                 <div class="wave-placeholder">
                   {loading ? (
                     <>
-                      <span>Читаю сэмпл с SP… {Math.round(loading.progress * 100)} %</span>
+                      <span>Reading sample from SP… {Math.round(loading.progress * 100)} %</span>
                       <span class="bar"><span style={{ width: `${loading.progress * 100}%` }} /></span>
                     </>
                   ) : (
                     <button class="btn" disabled={!ready} onClick={() => loadWaveform(pad)}>
-                      <IconWave /> Показать волну ({(p.size / 1048576).toFixed(1)} MB)
+                      <IconWave /> Show waveform ({(p.size / 1048576).toFixed(1)} MB)
                     </button>
                   )}
                 </div>
               </div>
             )}
-            {channels ? <RangeEditor pad={pad} channels={channels} wave={wave} /> : <div class="range-editor muted">Start/End: читаю заголовок сэмпла…</div>}
+            {channels ? <RangeEditor pad={pad} channels={channels} wave={wave} /> : <div class="range-editor muted">Start/End: reading sample header…</div>}
           </Card>
-          <Card title="Темп и высота">
+          <Card title="Tempo &amp; pitch">
             <BpmEditor pad={pad} />
             <TempoPitch pad={pad} />
           </Card>
@@ -120,36 +120,36 @@ function FilledPad({ pad, ready }: { pad: number; ready: boolean }) {
             <Slider pad={pad} label="Level" value={p.level} min={0} max={LEVEL_MAX} commit={(v) => setLevel(pad, v)} />
             <Slider pad={pad} label="Balance" value={p.balance} min={13} max={115} show={fmtBalance} centre={BALANCE_CENTRE}
               commit={(v) => setPadParam(pad, PARAM_BALANCE, v, `Balance ${fmtBalance(v)}`)}
-              hint="Баланс стерео: громкость левого и правого канала (L51 … C … R51); двойной клик — в центр. На моно-сэмпл не действует (проверено на SP)" />
-            {channels === 1 && <span class="note slider-note">Моно-сэмпл: Balance на него не действует</span>}
+              hint="Stereo balance: left and right channel levels (L51 … C … R51). Double-click to center. Has no effect on mono samples (verified on SP)" />
+            {channels === 1 && <span class="note slider-note">Mono sample: Balance has no effect</span>}
             <div class="toggles">
               <Toggle label="Gate" on={p.gate} onChange={(on) => setGate(pad, on)} />
               <Toggle label="Loop" on={p.loop} onChange={(on) => setLoop(pad, on)} />
               <Toggle label="One Shot" on={p.oneShot} onChange={(on) => setOneShot(pad, on)}
-                hint="Как в официальном App: при включении One Shot выключаются Gate и Loop" />
+                hint="As in the official App: enabling One Shot disables Gate and Loop" />
               <Toggle label="Fixed Velocity" on={p.fixedVelocity} onChange={(on) => setFixedVelocity(pad, on)}
-                hint="Громкость не зависит от силы удара по pad'у" />
+                hint="Volume does not depend on how hard you hit the pad" />
             </div>
             <Choice label="Play" value={p.playMode} options={PLAY_MODES.map((n, i) => [i, n])} kind="segmented"
-              pick={(v) => setPadParam(pad, PARAM_PLAY_MODE, v, `Play Mode ${PLAY_MODES[v]}`)} hint="Направление воспроизведения" />
+              pick={(v) => setPadParam(pad, PARAM_PLAY_MODE, v, `Play Mode ${PLAY_MODES[v]}`)} hint="Playback direction" />
           </Card>
-          <Card title="Огибающая">
-            <Slider pad={pad} label="Attack" value={p.attack} min={0} max={127} commit={(v) => setPadParam(pad, PARAM_ATTACK, v, `Attack ${v}`)} hint="Нарастание в начале" />
-            <Slider pad={pad} label="Hold" value={p.hold} min={1} max={100} commit={(v) => setPadParam(pad, PARAM_HOLD, v, `Hold ${v}`)} hint="Сколько держится полная громкость" />
-            <Slider pad={pad} label="Release" value={p.release} min={0} max={127} commit={(v) => setPadParam(pad, PARAM_RELEASE, v, `Release ${v}`)} hint="Затухание в конце" />
+          <Card title="Envelope">
+            <Slider pad={pad} label="Attack" value={p.attack} min={0} max={127} commit={(v) => setPadParam(pad, PARAM_ATTACK, v, `Attack ${v}`)} hint="Fade-in at the start" />
+            <Slider pad={pad} label="Hold" value={p.hold} min={1} max={100} commit={(v) => setPadParam(pad, PARAM_HOLD, v, `Hold ${v}`)} hint="How long full volume is held" />
+            <Slider pad={pad} label="Release" value={p.release} min={0} max={127} commit={(v) => setPadParam(pad, PARAM_RELEASE, v, `Release ${v}`)} hint="Fade-out at the end" />
           </Card>
         </TabPanel>
 
         <TabPanel id="mix">
           <Card>
             <Choice label="Mute Group" value={p.muteGroup} options={OFF_A_J} kind="segmented" pick={(v) => setPadParam(pad, PARAM_MUTE_GROUP, v, `Mute Group ${OFF_A_J[v][1]}`)}
-              hint="Pad'ы одной группы глушат друг друга" />
+              hint="Pads in the same group mute each other" />
             <Choice label="PAD Link" value={p.padLink} options={OFF_A_J} kind="segmented" pick={(v) => setPadParam(pad, PARAM_PAD_LINK, v, `PAD Link ${OFF_A_J[v][1]}`)}
-              hint="Pad'ы одной группы звучат вместе" />
+              hint="Pads in the same group play together" />
             <Choice label="BUS FX" value={p.busFx} options={BUS_FX.map((n, i) => [i, n])} kind="segmented"
-              pick={(v) => setPadParam(pad, PARAM_BUS_FX, v, `BUS FX ${BUS_FX[v]}`)} hint="Через какую шину эффектов идёт pad" />
+              pick={(v) => setPadParam(pad, PARAM_BUS_FX, v, `BUS FX ${BUS_FX[v]}`)} hint="The effects bus used by this pad" />
             <Choice label="Roll" value={p.roll} options={ROLL.map((n, i) => [i, n])} pick={(v) => setPadParam(pad, PARAM_ROLL, v, `Roll ${ROLL[v]}`)}
-              hint="Шаг повтора при Roll" />
+              hint="Repeat interval for Roll" />
           </Card>
         </TabPanel>
 
@@ -164,18 +164,18 @@ function FilledPad({ pad, ready }: { pad: number; ready: boolean }) {
           onPointerDown={() => preview(pad, true)}
           onPointerUp={() => preview(pad, false)}
           onPointerLeave={(e) => e.buttons && preview(pad, false)}
-          title="Держите, чтобы SP играл pad"
+          title="Hold to play the pad on SP"
         >
-          <IconPlay /> Прослушать на SP (удерживайте)
+          <IconPlay /> Play on SP (hold)
         </button>
         <button
           class="btn btn-stop"
           disabled={!ready || playing.value === null}
           onClick={stopPlaying}
-          title={playing.value === null ? "Нечего останавливать" : `Остановить ${padName(playing.value)}: на миг включает Gate, нажимает pad и выключает Gate`}
-          aria-label="Стоп"
+          title={playing.value === null ? "Nothing to stop" : `Stop ${padName(playing.value)}: briefly enables Gate, triggers and releases the pad, then restores Gate`}
+          aria-label="Stop"
         >
-          <IconStop /> Стоп
+          <IconStop /> Stop
         </button>
       </div>
     </>
@@ -186,7 +186,7 @@ function FilledPad({ pad, ready }: { pad: number; ready: boolean }) {
 
 type Tab = "sample" | "pad" | "mix" | "resample";
 const TAB_KEY = "nexus404.inspector.tab";
-const TABS: [Tab, string][] = [["sample", "Сэмпл"], ["pad", "Pad"], ["mix", "Микс"]];
+const TABS: [Tab, string][] = [["sample", "Sample"], ["pad", "Pad"], ["mix", "Mix"]];
 
 function loadTab(): Tab {
   try {
@@ -212,12 +212,12 @@ function Tabs() {
   const tab = inspTab.value;
   useEffect(() => { if (tab !== "resample" && recState.value !== "recording") disarm(); }, [tab]);
   return (
-    <div class="insp-tabs" role="tablist" aria-label="Режим инспектора">
+    <div class="insp-tabs" role="tablist" aria-label="Inspector mode">
       {TABS.map(([id, label]) => (
         <button key={id} type="button" role="tab" aria-selected={tab === id} class={`insp-tab ${tab === id ? "on" : ""}`} onClick={() => showTab(id)}>{label}</button>
       ))}
       <button type="button" role="tab" aria-selected={tab === "resample"} class={`insp-tab insp-tab-op ${tab === "resample" ? "on" : ""}`}
-        onClick={() => showTab("resample")} title="Операция над звуком: сыграть pad через эффекты SP и записать">⚡ Ресэмпл</button>
+        onClick={() => showTab("resample")} title="Play the pad through SP effects and record the result">⚡ Resample</button>
     </div>
   );
 }
@@ -246,7 +246,7 @@ function PadChips({ pad }: { pad: number }) {
   const speed = speedOf(pad);
   const chips: [string, Tab, string?][] = [
     [`${formatBpm(p.bpmX100)} BPM`, "sample"],
-    ...(p.bpmSync ? [["Sync", "sample", speed ? `скорость ×${speed.ratio.toFixed(2)}` : undefined] as [string, Tab, string?]] : []),
+    ...(p.bpmSync ? [["Sync", "sample", speed ? `speed ×${speed.ratio.toFixed(2)}` : undefined] as [string, Tab, string?]] : []),
     ...(p.vinyl ? [["Vinyl", "sample"] as [string, Tab]] : p.vari > 0 ? [[VARI_MODES[p.vari], "sample", "VARI MODE"] as [string, Tab, string]] : []),
     ...(p.timeStretchX100 !== 10000 ? [[`Stretch ${formatStretch(p.timeStretchX100)} %`, "sample"] as [string, Tab]] : []),
     ...(!p.vinyl && (p.pitchCoarse || p.pitchFine) ? [[`Pitch ${signed(p.pitchCoarse)}${p.pitchFine ? ` ${signed(p.pitchFine)} ct` : " st"}`, "sample"] as [string, Tab]] : []),
@@ -260,12 +260,12 @@ function PadChips({ pad }: { pad: number }) {
     ...(p.attack || p.release || p.hold !== 100 ? [[`AHR ${p.attack}/${p.hold}/${p.release}`, "pad"] as [string, Tab]] : []),
     ...(p.muteGroup ? [[`M ${OFF_A_J[p.muteGroup]?.[1] ?? p.muteGroup}`, "mix", "Mute Group"] as [string, Tab, string]] : []),
     ...(p.padLink ? [[`L ${OFF_A_J[p.padLink]?.[1] ?? p.padLink}`, "mix", "PAD Link"] as [string, Tab, string]] : []),
-    ...(p.busFx !== 1 ? [[BUS_FX[p.busFx] === "Off" ? "без BUS FX" : BUS_FX[p.busFx] ?? `BUS ${p.busFx}`, "mix"] as [string, Tab]] : []),
+    ...(p.busFx !== 1 ? [[BUS_FX[p.busFx] === "Off" ? "BUS FX off" : BUS_FX[p.busFx] ?? `BUS ${p.busFx}`, "mix"] as [string, Tab]] : []),
   ];
   return (
     <div class="pad-chips">
       {chips.map(([label, tab, hint]) => (
-        <button key={label} type="button" class={`pchip ${inspTab.value === tab ? "cur" : ""}`} onClick={() => showTab(tab)} title={hint ?? `Открыть «${TABS.find(([t]) => t === tab)?.[1] ?? "Ресэмпл"}»`}>{label}</button>
+        <button key={label} type="button" class={`pchip ${inspTab.value === tab ? "cur" : ""}`} onClick={() => showTab(tab)} title={hint ?? `Open “${TABS.find(([t]) => t === tab)?.[1] ?? "Resample"}”`}>{label}</button>
       ))}
     </div>
   );
@@ -277,10 +277,10 @@ function PadPatterns({ pad }: { pad: number }) {
   const shown = mainView.value === "patterns" ? shownSlot.value : null;
   return (
     <div class="pad-chips pad-ptns">
-      <span class="muted small">В паттернах:</span>
+      <span class="muted small">In patterns:</span>
       {slots.length ? slots.map((s) => (
-        <button key={s} type="button" class={`pchip ${s === shown ? "cur" : ""}`} onClick={() => openPattern(s)} title={`Показать паттерн ${padName(s)}`}>{padName(s)}</button>
-      )) : <span class="muted small">{patterns.value ? "ни в одном" : "—"}</span>}
+        <button key={s} type="button" class={`pchip ${s === shown ? "cur" : ""}`} onClick={() => openPattern(s)} title={`Show pattern ${padName(s)}`}>{padName(s)}</button>
+      )) : <span class="muted small">{patterns.value ? "none" : "—"}</span>}
     </div>
   );
 }
@@ -292,7 +292,7 @@ function speedOf(pad: number) {
   const bank = ps.banks[pad >> 4];
   const useProject = ps.useProjectTempo || !bank;
   const tempo = useProject ? ps.projectTempoX100 : bank.tempoX100;
-  return { ...padSpeed(p, tempo), tempo, tempoOf: useProject ? "проекта" : `банка ${bank.letter}` };
+  return { ...padSpeed(p, tempo), tempo, tempoOf: useProject ? "project" : `bank ${bank.letter}` };
 }
 
 /** A switch that writes to the SP and then shows the state the device reports back. */
@@ -358,7 +358,7 @@ function Slider({ pad, label, value: saved, min, max, show = String, centre, hin
         onInput={(e) => { setTouched(true); setValue(+(e.target as HTMLInputElement).value); }}
         onChange={(e) => write(+(e.target as HTMLInputElement).value)}
         onDblClick={() => centre !== undefined && write(centre)} />
-      <output for={id}>{mixed && !touched ? "разн." : show(value)}</output>
+      <output for={id}>{mixed && !touched ? "mixed" : show(value)}</output>
     </div>
   );
 }
@@ -388,13 +388,13 @@ function Choice({ label, value, options, kind = "select", hint, mixed, disabled,
         </span>
       ) : (
         <select value={mixed ? -1 : value} disabled={!!blocked || busy} aria-label={label} onChange={(e) => run(+(e.target as HTMLSelectElement).value)}>
-          {mixed && <option value={-1}>разные</option>}
+          {mixed && <option value={-1}>mixed</option>}
           {!known && <option value={value}>{value} ?</option>}
           {options.map(([v, name]) => <option key={v} value={v}>{name}</option>)}
         </select>
       )}
-      {!known && kind === "segmented" && <span class="note">неизвестное значение {value}</span>}
-      {mixed && kind === "segmented" && <span class="note">у pad'ов разные</span>}
+      {!known && kind === "segmented" && <span class="note">Unknown value {value}</span>}
+      {mixed && kind === "segmented" && <span class="note">Values differ between pads</span>}
     </div>
   );
 }
@@ -412,29 +412,29 @@ function parseSec(text: string, total: number): number | null {
 const parseStretch: Parse = (text) => {
   const t = text.trim().replace(",", ".").replace(/%$/, "").trim();
   if (!t) return null;
-  if (!/^\d{1,3}(\.\d{1,2})?$/.test(t)) return { error: "проценты, например 100 или 97.5" };
+  if (!/^\d{1,3}(\.\d{1,2})?$/.test(t)) return { error: "A percentage such as 100 or 97.5" };
   const x100 = Math.round(parseFloat(t) * 100);
-  return x100 < STRETCH_MIN_X100 || x100 > STRETCH_MAX_X100 ? { error: "от 50 до 150 %" } : { value: x100 };
+  return x100 < STRETCH_MIN_X100 || x100 > STRETCH_MAX_X100 ? { error: "50 to 150 %" } : { value: x100 };
 };
 const formatStretch = (x100: number) => (x100 / 100).toFixed(2).replace(/\.?0+$/, "");
 
-const fmtSt = (st: number) => (Math.abs(st) < 0.05 ? "без изменений" : `${st > 0 ? "+" : "−"}${Math.abs(st).toFixed(1)} st`);
+const fmtSt = (st: number) => (Math.abs(st) < 0.05 ? "unchanged" : `${st > 0 ? "+" : "−"}${Math.abs(st).toFixed(1)} st`);
 
 /** The speed and pitch the SP plays the pad at, with the tempo playing now. */
 function SpeedLine({ pad }: { pad: number }) {
   const s = speedOf(pad);
   if (!s) return null;
   const why = s.source === "stretch"
-    ? "по Stretch, BPM Sync выключен"
-    : `${formatBpm(s.tempo)} BPM ${s.tempoOf} / ${formatBpm(s.syncedBpmX100)} BPM pad'а`;
-  const fold = s.fold > 0 ? `темп pad'а ×${2 ** s.fold}, чтобы уложиться в 150 %`
-    : s.fold < 0 ? `темп pad'а ÷${2 ** -s.fold}, чтобы уложиться в 50 %` : null;
+    ? "Stretch value, BPM Sync off"
+    : `${formatBpm(s.tempo)} BPM ${s.tempoOf} / ${formatBpm(s.syncedBpmX100)} pad BPM`;
+  const fold = s.fold > 0 ? `pad tempo ×${2 ** s.fold} to stay within 150 %`
+    : s.fold < 0 ? `pad tempo ÷${2 ** -s.fold} to stay within 50 %` : null;
   return (
-    <div class={`speed ${s.fold ? "folded" : ""}`} title="Расчёт по правилам, проверенным на SP: BPM Sync держит скорость в 50–150 %">
+    <div class={`speed ${s.fold ? "folded" : ""}`} title="Calculated using rules verified on SP: BPM Sync keeps speed within 50–150 %">
       <b>×{s.ratio.toFixed(2)}</b>
       <span>{why}</span>
       {fold && <span class="fold">{fold}</span>}
-      <span class="pitch">высота {fmtSt(s.pitchSt)}</span>
+      <span class="pitch">pitch {fmtSt(s.pitchSt)}</span>
     </div>
   );
 }
@@ -442,25 +442,25 @@ function SpeedLine({ pad }: { pad: number }) {
 /** How the pad follows tempo changes, and its pitch (Pitch is greyed out with Vinyl on, as in the official app). */
 function TempoPitch({ pad }: { pad: number }) {
   const p = pads.value[pad]!;
-  const pitchOff = p.vinyl ? "Pitch меняется при выключенном Vinyl" : null;
+  const pitchOff = p.vinyl ? "Pitch can be changed when Vinyl is off" : null;
   return (
     <div class="tempo-pitch">
       <div class="toggles">
-        <Toggle label="BPM Sync" on={p.bpmSync} onChange={(on) => setBpmSync(pad, on)} hint="Сэмпл следует темпу банка или проекта" />
-        <Toggle label="Vinyl" on={p.vinyl} onChange={(on) => setVinyl(pad, on)} hint="Смена темпа меняет и высоту, как у пластинки; без Vinyl высота сохраняется" />
+        <Toggle label="BPM Sync" on={p.bpmSync} onChange={(on) => setBpmSync(pad, on)} hint="Sample follows the bank or project tempo" />
+        <Toggle label="Vinyl" on={p.vinyl} onChange={(on) => setVinyl(pad, on)} hint="Tempo changes also change pitch, as on vinyl; with Vinyl off, pitch is preserved" />
       </div>
       <SpeedLine pad={pad} />
       <VariControl pad={pad} />
       <div class="tp-row">
-        <span title="Скорость, 50–150 %, по умолчанию 100">Stretch</span>
+        <span title="Speed, 50–150 %, default 100">Stretch</span>
         <ValueField value={p.timeStretchX100} format={formatStretch} parse={parseStretch} label="Time Stretch, 50–150 %" width={64}
           onSave={(v) => setTimeStretch(pad, v)} />
         <span class="unit">%</span>
         <span class="tp-next">Pitch</span>
-        <ValueField value={p.pitchCoarse} format={signed} parse={intIn(-PITCH_COARSE_MAX, PITCH_COARSE_MAX)} label="Pitch, полутоны" width={52}
+        <ValueField value={p.pitchCoarse} format={signed} parse={intIn(-PITCH_COARSE_MAX, PITCH_COARSE_MAX)} label="Pitch, semitones" width={52}
           disabled={pitchOff} dim={p.vinyl} onSave={(v) => setPitch(pad, v, p.pitchFine)} />
         <span class="unit">st</span>
-        <ValueField value={p.pitchFine} format={signed} parse={intIn(-PITCH_FINE_MAX, PITCH_FINE_MAX)} label="Pitch, центы" width={58}
+        <ValueField value={p.pitchFine} format={signed} parse={intIn(-PITCH_FINE_MAX, PITCH_FINE_MAX)} label="Pitch, cents" width={58}
           disabled={pitchOff} dim={p.vinyl} onSave={(v) => setPitch(pad, p.pitchCoarse, v)} />
         <span class="unit">ct</span>
         {pitchOff && <span class="note">{pitchOff}</span>}
@@ -470,13 +470,13 @@ function TempoPitch({ pad }: { pad: number }) {
 }
 
 /** What each VARI MODE suits, after the Roland manual: Roland's names alone say little. */
-const VARI_HINTS = ["Обычный алгоритм; на сильном растяжении больше артефактов", "Drums / rhythmic: звуки с атакой и затуханием", "Sustained / tonal: пэды, струнные, хор"];
+const VARI_HINTS = ["Standard algorithm; more artifacts at extreme stretch settings", "Drums / rhythmic: sounds with attack and decay", "Sustained / tonal: pads, strings, choir"];
 
 /** Time-stretch algorithm; the SP offers it only with Vinyl off. */
 function VariControl({ pad }: { pad: number }) {
   const p = pads.value[pad]!;
   const [busy, setBusy] = useState(false);
-  const blocked = writeBlockReason.value ?? (p.vinyl ? "VARI MODE работает при выключенном Vinyl" : null);
+  const blocked = writeBlockReason.value ?? (p.vinyl ? "VARI MODE works when Vinyl is off" : null);
   const pick = async (mode: number) => {
     if (mode === p.vari || busy) return;
     setBusy(true);
@@ -486,13 +486,13 @@ function VariControl({ pad }: { pad: number }) {
   return (
     <div class="tp-row">
       <span>VARI</span>
-      <span class={`segmented${p.vinyl ? " muted" : ""}`} role="group" aria-label="VARI MODE" title={blocked ?? "Алгоритм time-stretch (VARI MODE)"}>
+      <span class={`segmented${p.vinyl ? " muted" : ""}`} role="group" aria-label="VARI MODE" title={blocked ?? "Time-stretch algorithm (VARI MODE)"}>
         {VARI_MODES.map((name, i) => (
           <button key={name} type="button" aria-pressed={p.vari === i} class={p.vari === i ? "on" : ""} title={VARI_HINTS[i]}
             disabled={!!blocked || busy} onClick={() => pick(i)}>{name}</button>
         ))}
       </span>
-      <span class="note">{p.vinyl ? "работает при выключенном Vinyl" : VARI_HINTS[p.vari] ?? `неизвестное значение ${p.vari}`}</span>
+      <span class="note">{p.vinyl ? "Works when Vinyl is off" : VARI_HINTS[p.vari] ?? `Unknown value ${p.vari}`}</span>
     </div>
   );
 }
@@ -517,9 +517,9 @@ function RangeEditor({ pad, channels, wave }: { pad: number; channels: number; w
   // An untouched field keeps its exact frame (the text is rounded to 1 ms).
   const s1 = startText === fmtSec(s0) ? s0 : parseSec(startText, total);
   const e1 = endText === fmtSec(e0) ? e0 : parseSec(endText, total);
-  const error = s1 === null || e1 === null ? "Введите секунды, например 1.25"
-    : !(s1 < e1) ? "Start должен быть меньше End"
-    : e1 > total ? `End не дальше конца сэмпла (${fmtSec(total)} s)` : null;
+  const error = s1 === null || e1 === null ? "Enter seconds, such as 1.25"
+    : !(s1 < e1) ? "Start must be before End"
+    : e1 > total ? `End cannot exceed the sample length (${fmtSec(total)} s)` : null;
   const dirty = s1 !== s0 || e1 !== e0;
   const whole = s0 === 0 && e0 === total;
 
@@ -531,9 +531,9 @@ function RangeEditor({ pad, channels, wave }: { pad: number; channels: number; w
   };
   // Silence trim over the whole sample (not just the current Start–End), so the result depends only on the threshold.
   const sound = wave ? findSound(wave.envelope, total, trimDb.value) : undefined;
-  const trimNote = !wave ? "Чтобы убрать тишину, загрузите волну"
-    : sound === null ? `Весь сэмпл тише ${trimDb.value} dB`
-    : sound && sound.start === s0 && sound.end === e0 ? "Тишины по краям нет" : null;
+  const trimNote = !wave ? "Load the waveform to trim silence"
+    : sound === null ? `The entire sample is quieter than ${trimDb.value} dB`
+    : sound && sound.start === s0 && sound.end === e0 ? "No silence at the edges" : null;
 
   const keys = (reset: () => void) => (e: KeyboardEvent) => {
     if (e.key === "Enter" && dirty && !error && s1 !== null && e1 !== null) save(s1, e1);
@@ -543,7 +543,7 @@ function RangeEditor({ pad, channels, wave }: { pad: number; channels: number; w
     <label>
       <span>{label}</span>
       <input type="text" inputMode="decimal" autoComplete="off" spellcheck={false} value={text} disabled={!!blocked}
-        title={`${saved} кадров`} class={bad ? "invalid" : ""}
+        title={`${saved} frames`} class={bad ? "invalid" : ""}
         onInput={(e) => set((e.target as HTMLInputElement).value)} onKeyDown={keys(() => set(fmtSec(saved)))}
         onFocus={(e) => (e.target as HTMLInputElement).select()} />
       <i>s</i>
@@ -556,24 +556,24 @@ function RangeEditor({ pad, channels, wave }: { pad: number; channels: number; w
       {field("End", endText, setEndText, e0, e1 === null)}
       <div class="range-actions">
         <button class="btn btn-primary" disabled={!dirty || !!error || !!blocked || busy} onClick={() => s1 !== null && e1 !== null && save(s1, e1)}>
-          {busy ? "…" : "Применить"}
+          {busy ? "…" : "Apply"}
         </button>
-        <button class="btn" disabled={whole || !!blocked || busy} onClick={() => save(0, total)} title="Start = 0, End = конец сэмпла">Весь сэмпл</button>
+        <button class="btn" disabled={whole || !!blocked || busy} onClick={() => save(0, total)} title="Start = 0, End = sample end">Full sample</button>
       </div>
       <div class="trim">
-        <button class="btn" disabled={!sound || !!trimNote || !!blocked || busy} title={trimNote ?? "Поставить Start/End на первый и последний звук громче порога"}
+        <button class="btn" disabled={!sound || !!trimNote || !!blocked || busy} title={trimNote ?? "Set Start/End to the first and last sound above the threshold"}
           onClick={() => sound && save(sound.start, sound.end)}>
-          Убрать тишину
+          Trim silence
         </button>
         <label>
-          <span>порог</span>
+          <span>threshold</span>
           <select value={trimDb.value} onChange={(e) => (trimDb.value = +(e.target as HTMLSelectElement).value)}>
             {TRIM_THRESHOLDS.map((db) => <option value={db}>{db} dB</option>)}
           </select>
         </label>
         {trimNote && <span class="muted">{trimNote}</span>}
         <span class={`bpm-note ${dirty && error ? "err" : ""}`}>
-          {(dirty && error) || blocked || (dirty ? "Enter — применить, Esc — отменить" : `Звучит ${fmtSec(e0 - s0)} s из ${fmtSec(total)} s`)}
+          {(dirty && error) || blocked || (dirty ? "Enter to apply, Esc to cancel" : `Playing ${fmtSec(e0 - s0)} s of ${fmtSec(total)} s`)}
         </span>
       </div>
     </div>
@@ -596,29 +596,27 @@ function Resample({ pad }: { pad: number }) {
   return (
     <div class="resample">
       <p class="note">
-        Включите эффект на SP. Приложение нажмёт {padName(pad)} MIDI-нотой, запишет выход SP вместе с хвостом эффекта и предложит дубль.
-        Тишину в начале потом можно убрать кнопкой «Убрать тишину» в секции «Сэмпл».
-        Вход — линия SP по USB или выходы SP в звуковую карту. Во время ресэмпла ничего не играйте на SP: записывается весь его выход.
+        Enable an effect on SP. The app will trigger {padName(pad)} with a MIDI note, record SP's output including the effects tail, and offer a take. Trim leading silence afterward with ‘Trim silence’ in the ‘Sample’ tab. Select SP's USB audio input or connect SP's outputs to your audio interface. Do not play anything else on SP while resampling: its entire output is recorded.
       </p>
       <InputPicker />
       <RecMeter />
       <div class="resample-opts">
-        <label>хвост
+        <label>tail
           <select value={rsTail.value} onChange={(e) => (rsTail.value = +(e.target as HTMLSelectElement).value)}>
             {TAILS.map((t) => <option key={t} value={t}>{t} s</option>)}
           </select>
         </label>
-        <label title="Пик дубля на −0.3 dB; усиление считается до перевода в 16 бит"><input type="checkbox" checked={rsNormalize.value} onChange={(e) => (rsNormalize.value = (e.target as HTMLInputElement).checked)} /> нормализовать</label>
-        <span class="note" title="Pad нажимается MIDI-нотой, как рукой: PAD Link играет слоями">{MIDI_NOTE[midiState.value]}{midiPort.value ? `: ${midiPort.value}` : ""}</span>
+        <label title="Set the take's peak to −0.3 dB; gain is applied before conversion to 16-bit"><input type="checkbox" checked={rsNormalize.value} onChange={(e) => (rsNormalize.value = (e.target as HTMLInputElement).checked)} /> Normalize</label>
+        <span class="note" title="The pad is triggered with a MIDI note, as by hand: PAD Link plays all layers">{MIDI_NOTE[midiState.value]}{midiPort.value ? `: ${midiPort.value}` : ""}</span>
       </div>
       <div class="row">
         <button class="btn btn-primary" disabled={!ready || !!busy || recState.value === "recording"} onClick={() => void resamplePad(pad)}>
-          {busy ?? `Ресэмпл ${padName(pad)}`}
+          {busy ?? `Resample ${padName(pad)}`}
         </button>
-        {target !== null && <span class="note">дубль можно положить на {padName(target)}</span>}
+        {target !== null && <span class="note">the take can go to {padName(target)}</span>}
       </div>
       {linked.length > 1 && (
-        <p class="note">PAD Link {BANKS[pads.value[pad]!.padLink - 1]}: {linked.map(padName).join(", ")} звучат вместе — запись длится до конца самого длинного из них.</p>
+        <p class="note">PAD Link {BANKS[pads.value[pad]!.padLink - 1]}: {linked.map(padName).join(", ")} play together — recording lasts until the longest sample ends.</p>
       )}
       <TakeCard />
     </div>
@@ -641,7 +639,7 @@ function GroupInspector() {
   const toggle = (label: string, get: (b: PadBlock) => boolean, set: (d: Dev, p1: number, pad: number, on: boolean) => Promise<PadBlock>, hint?: string) => {
     const v = same(get);
     return <Toggle label={label} on={v === true} mixed={v === null} hint={hint}
-      onChange={(on) => editGroup(`${label} ${on ? "вкл" : "выкл"}`, (d, p1, pad) => set(d, p1, pad, on), (b) => get(b) === on)} />;
+      onChange={(on) => editGroup(`${label} ${on ? "on" : "off"}`, (d, p1, pad) => set(d, p1, pad, on), (b) => get(b) === on)} />;
   };
   const param = (id: number, what: (v: number) => string, get: (b: PadBlock) => number) => (v: number) =>
     editGroup(what(v), (d, p1, pad) => d.setPadParam(p1, pad, id, v), (b) => get(b) === v);
@@ -652,49 +650,49 @@ function GroupInspector() {
     <aside class="inspector glass">
       <div class="insp-head">
         <span class="chip chip-accent">{list.length}</span>
-        <span class="insp-name" title={list.map(padName).join(", ")}>Выбрано: {list.map(padName).join(", ")}</span>
+        <span class="insp-name" title={list.map(padName).join(", ")}>Selected: {list.map(padName).join(", ")}</span>
       </div>
-      <div class="insp-facts">Изменения записываются во все выбранные pad'ы</div>
+      <div class="insp-facts">Changes are written to all selected pads</div>
       <Tabs />
       <div class="insp-scroll">
         <TabPanel id="sample">
-          <Card title="Темп и высота">
+          <Card title="Tempo &amp; pitch">
             <div class="tempo-pitch">
               <div class="tp-row">
                 <span>BPM</span>
-                <ValueField value={num((b) => b.bpmX100)} format={formatBpm} parse={parseBpmField} label="BPM" width={84} placeholder="разные"
+                <ValueField value={num((b) => b.bpmX100)} format={formatBpm} parse={parseBpmField} label="BPM" width={84} placeholder="mixed"
                   onSave={(v) => editGroup(`BPM ${formatBpm(v)}`, (d, p1, pad) => d.setBpm(p1, pad, v), (b) => b.bpmX100 === v)} />
-                <span class="note">40–200, Enter — записать во все</span>
+                <span class="note">40–200, Enter to write to all selected pads</span>
               </div>
               <GroupBpm list={list} />
               <div class="toggles">
-                {toggle("BPM Sync", (b) => b.bpmSync, (d, p1, pad, on) => d.setBpmSync(p1, pad, on), "Сэмплы следуют темпу банка или проекта")}
-                {toggle("Vinyl", (b) => b.vinyl, (d, p1, pad, on) => d.setVinyl(p1, pad, on), "Смена темпа меняет и высоту, как у пластинки")}
+                {toggle("BPM Sync", (b) => b.bpmSync, (d, p1, pad, on) => d.setBpmSync(p1, pad, on), "Samples follow the bank or project tempo")}
+                {toggle("Vinyl", (b) => b.vinyl, (d, p1, pad, on) => d.setVinyl(p1, pad, on), "Tempo changes also change pitch, as on vinyl")}
               </div>
               <Choice label="VARI" value={vari ?? -1} mixed={vari === null} kind="segmented" options={VARI_MODES.map((n, i) => [i, n])}
-                disabled={anyVinyl ? "VARI MODE работает при выключенном Vinyl — у части pad'ов Vinyl включён" : null}
+                disabled={anyVinyl ? "VARI MODE works with Vinyl off — some selected pads have Vinyl on" : null}
                 pick={(v) => editGroup(`VARI MODE ${VARI_MODES[v]}`, (d, p1, pad) => d.setVari(p1, pad, v), (b) => b.vari === v)} />
               <div class="tp-row">
                 <span>Stretch</span>
-                <ValueField value={num((b) => b.timeStretchX100)} format={formatStretch} parse={parseStretch} label="Time Stretch" width={64} placeholder="разн."
+                <ValueField value={num((b) => b.timeStretchX100)} format={formatStretch} parse={parseStretch} label="Time Stretch" width={64} placeholder="mixed"
                   onSave={(v) => editGroup(`Time Stretch ${formatStretch(v)} %`, (d, p1, pad) => d.setTimeStretch(p1, pad, v), (b) => b.timeStretchX100 === v)} />
                 <span class="unit">%</span>
               </div>
               <div class="tp-row">
                 <span>Pitch</span>
-                <ValueField value={num((b) => b.pitchCoarse)} format={signed} parse={intIn(-PITCH_COARSE_MAX, PITCH_COARSE_MAX)} label="Pitch, полутоны" width={52} placeholder="разн."
-                  disabled={anyVinyl ? "Pitch меняется при выключенном Vinyl" : null}
+                <ValueField value={num((b) => b.pitchCoarse)} format={signed} parse={intIn(-PITCH_COARSE_MAX, PITCH_COARSE_MAX)} label="Pitch, semitones" width={52} placeholder="mixed"
+                  disabled={anyVinyl ? "Pitch can be changed when Vinyl is off" : null}
                   onSave={(v) => editGroup(`Pitch ${signed(v)} st`, (d, p1, pad) => d.setPitch(p1, pad, v, pads.value[pad]!.pitchFine), (b) => b.pitchCoarse === v)} />
                 <span class="unit">st</span>
-                <ValueField value={num((b) => b.pitchFine)} format={signed} parse={intIn(-PITCH_FINE_MAX, PITCH_FINE_MAX)} label="Pitch, центы" width={58} placeholder="разн."
-                  disabled={anyVinyl ? "Pitch меняется при выключенном Vinyl" : null}
+                <ValueField value={num((b) => b.pitchFine)} format={signed} parse={intIn(-PITCH_FINE_MAX, PITCH_FINE_MAX)} label="Pitch, cents" width={58} placeholder="mixed"
+                  disabled={anyVinyl ? "Pitch can be changed when Vinyl is off" : null}
                   onSave={(v) => editGroup(`Pitch ${signed(v)} ct`, (d, p1, pad) => d.setPitch(p1, pad, pads.value[pad]!.pitchCoarse, v), (b) => b.pitchFine === v)} />
                 <span class="unit">ct</span>
-                {anyVinyl && <span class="note">при выключенном Vinyl</span>}
+                {anyVinyl && <span class="note">with Vinyl off</span>}
               </div>
             </div>
           </Card>
-          <p class="group-note">Start/End, волна и имя — по одному pad'у: снимите выделение (Esc).</p>
+          <p class="group-note">Start/End, waveform and name apply to one pad at a time: clear the selection (Esc).</p>
         </TabPanel>
 
         <TabPanel id="pad">
@@ -702,18 +700,18 @@ function GroupInspector() {
             <Slider pad={anchor} label="Level" value={same((b) => b.level) ?? blocks[0].level} mixed={same((b) => b.level) === null} min={0} max={LEVEL_MAX}
               commit={(v) => editGroup(`Level ${v}`, (d, p1, pad) => d.setLevel(p1, pad, v), (b) => b.level === v)} />
             <Slider pad={anchor} label="Balance" value={same((b) => b.balance) ?? BALANCE_CENTRE} mixed={same((b) => b.balance) === null} min={13} max={115}
-              show={fmtBalance} centre={BALANCE_CENTRE} hint="Баланс стерео; на моно-сэмплы не действует"
+              show={fmtBalance} centre={BALANCE_CENTRE} hint="Stereo balance; has no effect on mono samples"
               commit={param(PARAM_BALANCE, (v) => `Balance ${fmtBalance(v)}`, (b) => b.balance)} />
             <div class="toggles">
               {toggle("Gate", (b) => b.gate, (d, p1, pad, on) => d.setGate(p1, pad, on))}
               {toggle("Loop", (b) => b.loop, (d, p1, pad, on) => d.setLoop(p1, pad, on))}
-              {toggle("One Shot", (b) => b.oneShot, (d, p1, pad, on) => d.setOneShot(p1, pad, on), "При включении One Shot выключаются Gate и Loop")}
+              {toggle("One Shot", (b) => b.oneShot, (d, p1, pad, on) => d.setOneShot(p1, pad, on), "Enabling One Shot disables Gate and Loop")}
               {toggle("Fixed Velocity", (b) => b.fixedVelocity, (d, p1, pad, on) => d.setFixedVelocity(p1, pad, on))}
             </div>
             <Choice label="Play" value={playMode ?? -1} mixed={playMode === null} options={PLAY_MODES.map((n, i) => [i, n])} kind="segmented"
               pick={param(PARAM_PLAY_MODE, (v) => `Play Mode ${PLAY_MODES[v]}`, (b) => b.playMode)} />
           </Card>
-          <Card title="Огибающая">
+          <Card title="Envelope">
             {([["Attack", PARAM_ATTACK, 0, 127, (b: PadBlock) => b.attack], ["Hold", PARAM_HOLD, 1, 100, (b: PadBlock) => b.hold],
               ["Release", PARAM_RELEASE, 0, 127, (b: PadBlock) => b.release]] as const).map(([label, id, min, max, get]) => (
               <Slider key={label} pad={anchor} label={label} value={same(get) ?? get(blocks[0])} mixed={same(get) === null} min={min} max={max}
@@ -758,37 +756,36 @@ function GroupResample({ list }: { list: number[] }) {
   return (
     <div class="resample">
       <p class="note">
-        Включите эффект на SP. Приложение по очереди нажмёт выбранные pad'ы MIDI-нотой, запишет каждый вместе с хвостом эффекта
-        и разложит дубли по пустым pad'ам банка одним импортом. Во время ресэмпла ничего не играйте на SP.
+        Enable an effect on SP. The app will trigger each selected pad with a MIDI note, record each one including its effects tail, and import the takes into empty pads in the bank. Do not play anything else on SP while resampling.
       </p>
       <InputPicker />
       <RecMeter />
       <div class="resample-opts">
-        <label>хвост
+        <label>tail
           <select value={rsTail.value} onChange={(e) => (rsTail.value = +(e.target as HTMLSelectElement).value)}>
             {TAILS.map((t) => <option key={t} value={t}>{t} s</option>)}
           </select>
         </label>
-        <label title="Пик каждого дубля на −0.3 dB; усиление считается до перевода в 16 бит"><input type="checkbox" checked={rsNormalize.value} onChange={(e) => (rsNormalize.value = (e.target as HTMLInputElement).checked)} /> нормализовать</label>
-        <label>в банк
+        <label title="Set each take's peak to −0.3 dB; gain is applied before conversion to 16-bit"><input type="checkbox" checked={rsNormalize.value} onChange={(e) => (rsNormalize.value = (e.target as HTMLInputElement).checked)} /> Normalize</label>
+        <label>to bank
           <select value={bank} onChange={(e) => setBank(+(e.target as HTMLSelectElement).value)} disabled={!!busy}>
-            {[...BANKS].map((l, b) => <option key={l} value={b}>{l} ({16 - pads.value.slice(b * 16, b * 16 + 16).filter((x) => x?.size).length} своб.)</option>)}
+            {[...BANKS].map((l, b) => <option key={l} value={b}>{l} ({16 - pads.value.slice(b * 16, b * 16 + 16).filter((x) => x?.size).length} free)</option>)}
           </select>
         </label>
       </div>
       <p class="note rs-plan">
-        {targets ? sources.map((s, i) => `${padName(s)} → ${padName(targets[i])}`).join(", ") : `В банке ${BANKS[bank]} меньше ${sources.length} пустых pad'ов`}
-        {skipped.length > 0 && ` · ${skipped.map(padName).join(", ")} — слой PAD Link, без отдельного прохода`}
+        {targets ? sources.map((s, i) => `${padName(s)} → ${padName(targets[i])}`).join(", ") : `Bank ${BANKS[bank]} has fewer than ${sources.length} empty pads`}
+        {skipped.length > 0 && ` · ${skipped.map(padName).join(", ")} — PAD Link layer, no separate pass`}
       </p>
       <div class="row">
         {busy ? (
           <>
-            <button class="btn btn-danger" disabled={rsCancel.value} onClick={() => (rsCancel.value = true)}>{rsCancel.value ? "Остановлю после этого pad'а…" : "Стоп"}</button>
+            <button class="btn btn-danger" disabled={rsCancel.value} onClick={() => (rsCancel.value = true)}>{rsCancel.value ? "Stopping after this pad…" : "Stop"}</button>
             <span class="note">{busy}</span>
           </>
         ) : (
           <button class="btn btn-primary" disabled={!ready || !targets || recState.value === "recording"} onClick={() => void resampleGroup(bank)}>
-            Ресэмпл {sources.length} {sources.length === 1 ? "pad'а" : "pad'ов"}
+            Resample {sources.length} {sources.length === 1 ? "pad" : "pads"}
           </button>
         )}
       </div>
@@ -808,20 +805,20 @@ function GroupBpm({ list }: { list: number[] }) {
     setBusy(false);
   };
   const changes = plan?.filter((p) => p.x100 !== null && p.x100 !== p.from).length ?? 0;
-  const blocked = conn.value !== "ready" ? "SP не подключён" : null;
+  const blocked = conn.value !== "ready" ? "SP is not connected" : null;
   return (
     <>
       <div class="trim">
         <button class="btn" disabled={busy || !!blocked} onClick={() => run("detect")}
-          title={blocked ?? "Определить темп каждого pad'а по звуку между Start и End; сначала покажу список, запись — отдельной кнопкой"}>
-          Определить для каждого
+          title={blocked ?? "Detect each pad's tempo from audio between Start and End; review the results before writing them with a separate button"}>
+          Detect for each pad
         </button>
         <button class="btn" disabled={busy || !!blocked} onClick={() => run("range")}
-          title={blocked ?? "Для каждого pad'а BPM, при котором между Start и End целое число долей (как Set BPM by St/End)"}>
-          По Start/End для каждого
+          title={blocked ?? "For each pad, calculate BPM for a whole number of beats between Start and End (as with Set BPM by St/End)"}>
+          From Start/End for each pad
         </button>
-        <label title="Темп сворачивается в этот диапазон, как на SP">
-          <span>диапазон</span>
+        <label title="Fold the tempo into this range, as on SP">
+          <span>range</span>
           <select value={bpmRange.value} onChange={(e) => (bpmRange.value = +(e.target as HTMLSelectElement).value)}>
             {BPM_RANGES.map(([a, b], i) => <option value={i}>{a}–{b}</option>)}
           </select>
@@ -836,7 +833,7 @@ function GroupBpm({ list }: { list: number[] }) {
                   <th>{padName(p.pad)}</th>
                   <td>{formatBpm(p.from)}</td>
                   <td>{p.x100 === null ? "—" : `→ ${formatBpm(p.x100)}`}</td>
-                  <td class="muted">{p.x100 !== null && p.x100 === p.from ? "без изменений" : p.note}</td>
+                  <td class="muted">{p.x100 !== null && p.x100 === p.from ? "unchanged" : p.note}</td>
                 </tr>
               ))}
             </tbody>
@@ -844,9 +841,9 @@ function GroupBpm({ list }: { list: number[] }) {
           <div class="row">
             <button class="btn btn-primary" disabled={!changes || !!writeBlockReason.value}
               onClick={async () => { if (await applyGroupBpm(plan)) setPlan(null); }}>
-              Записать {changes}
+              Write {changes}
             </button>
-            <button class="btn" onClick={() => setPlan(null)}>Отмена</button>
+            <button class="btn" onClick={() => setPlan(null)}>Cancel</button>
           </div>
         </div>
       )}
@@ -878,11 +875,11 @@ function BpmEditor({ pad }: { pad: number }) {
     if (!ch) return;
     const frames = byteToFrame(p.endByte, ch) - byteToFrame(p.startByte, ch);
     const r = bpmFromLength(frames, p.bpmX100);
-    if (!r) return setDetect({ busy: false, note: "Слишком короткий участок" });
+    if (!r) return setDetect({ busy: false, note: "The selected region is too short" });
     const beats = r.beats >= 1 ? String(r.beats) : `1/${1 / r.beats}`;
-    if (r.x100 < BPM_MIN_X100 || r.x100 > BPM_MAX_X100) return setDetect({ busy: false, note: `Выходит ${formatBpm(r.x100)} (${beats} долей) — вне 40–200` });
+    if (r.x100 < BPM_MIN_X100 || r.x100 > BPM_MAX_X100) return setDetect({ busy: false, note: `Result: ${formatBpm(r.x100)} (${beats} beats) — outside 40–200` });
     setText(formatBpm(r.x100));
-    setDetect({ busy: false, note: `Start–End = ${beats} долей при ${formatBpm(r.x100)} BPM` });
+    setDetect({ busy: false, note: `Start–End = ${beats} beats at ${formatBpm(r.x100)} BPM` });
   };
 
   const runDetect = async () => {
@@ -892,9 +889,9 @@ function BpmEditor({ pad }: { pad: number }) {
     if (r) setText(formatBpm(r.x100));
     setDetect({
       busy: false,
-      note: r === undefined ? "Не удалось прочитать сэмпл"
-        : r === null ? "Чёткого ритма не нашлось — задайте BPM вручную"
-        : `Найдено ${formatBpm(r.x100)}${r.beats ? ` · луп ровно ${r.beats} долей` : ""}${r.clarity < 0.4 ? " · ритм нечёткий, проверьте на слух" : ""}`,
+      note: r === undefined ? "Could not read the sample"
+        : r === null ? "No clear rhythm found — set BPM manually"
+        : `Detected ${formatBpm(r.x100)}${r.beats ? ` · loop: exactly ${r.beats} beats` : ""}${r.clarity < 0.4 ? " · unclear rhythm; check by ear" : ""}`,
     });
   };
 
@@ -931,21 +928,21 @@ function BpmEditor({ pad }: { pad: number }) {
         onFocus={(e) => (e.target as HTMLInputElement).select()}
       />
       <button class="btn btn-primary" disabled={!dirty || !!error || !!blocked || state === "saving"} onClick={save}>
-        {state === "saving" ? "…" : state === "saved" ? <><IconCheck /> Сохранено</> : "Сохранить"}
+        {state === "saving" ? "…" : state === "saved" ? <><IconCheck /> Saved</> : "Save"}
       </button>
-      <span class={`bpm-note ${error ? "err" : ""}`}>{error ?? blocked ?? (dirty ? "Enter — сохранить, Esc — отменить" : "40–200, например 93.25")}</span>
+      <span class={`bpm-note ${error ? "err" : ""}`}>{error ?? blocked ?? (dirty ? "Enter to save, Esc to cancel" : "40–200, such as 93.25")}</span>
       <div class="trim">
         <button class="btn" disabled={detect.busy || !canDetect} onClick={runDetect}
-          title="Определить темп по звуку между Start и End, как BPM SET AUTO на SP; результат попадёт в поле, записывается кнопкой «Сохранить»">
-          {detect.busy ? "Анализ…" : "Определить"}
+          title="Detect tempo from audio between Start and End, as with BPM SET AUTO on SP; the result fills the field and is written with ‘Save’">
+          {detect.busy ? "Analyzing…" : "Detect"}
         </button>
         <button class="btn" disabled={!ch} onClick={byRange}
-          title={ch ? "BPM, при котором между Start и End целое число долей (ближайшее к текущему BPM), как «Set BPM by St/End» в App; записывается кнопкой «Сохранить»"
-            : "Нужен заголовок сэмпла: откройте секцию «Сэмпл»"}>
-          По Start/End
+          title={ch ? "BPM for a whole number of beats between Start and End, closest to the current BPM, as with ‘Set BPM by St/End’ in the App; written with ‘Save’"
+            : "Sample header required: open the ‘Sample’ tab"}>
+          From Start/End
         </button>
-        <label title="Темп сворачивается в этот диапазон удвоением или делением, как на SP">
-          <span>диапазон</span>
+        <label title="Fold the tempo into this range by doubling or halving, as on SP">
+          <span>range</span>
           <select value={bpmRange.value} onChange={(e) => (bpmRange.value = +(e.target as HTMLSelectElement).value)}>
             {BPM_RANGES.map(([a, b], i) => <option value={i}>{a}–{b}</option>)}
           </select>
@@ -959,7 +956,7 @@ function BpmEditor({ pad }: { pad: number }) {
 function EmptyPad({ pad, ready, protectedBank }: { pad: number; ready: boolean; protectedBank: boolean }) {
   const input = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
-  const blocked = protectedBank ? "Банк защищён (BANK Protect)" : writeBlockReason.value;
+  const blocked = protectedBank ? "Bank is protected (BANK Protect)" : writeBlockReason.value;
   return (
     <div
       class={`dropzone ${over ? "drop" : ""}`}
@@ -968,11 +965,11 @@ function EmptyPad({ pad, ready, protectedBank }: { pad: number; ready: boolean; 
       onDrop={(e) => { e.preventDefault(); setOver(false); importFiles([...(e.dataTransfer?.files ?? [])], pad); }}
     >
       <IconUpload />
-      <b>Перетащите сюда аудио</b>
-      <span class="muted">WAV, AIFF, FLAC, MP3 — будет сконвертировано в 48 kHz / 16 bit.<br />Несколько файлов займут {padName(pad)} и следующие пустые pad'ы.</span>
+      <b>Drop audio here</b>
+      <span class="muted">WAV, AIFF, FLAC, MP3 — converted to 48 kHz / 16-bit.<br />Multiple files fill {padName(pad)} and the next empty pads.</span>
       <input ref={input} type="file" multiple accept="audio/*,.wav,.aif,.aiff,.flac,.mp3" hidden
         onChange={(e) => { const f = (e.target as HTMLInputElement).files; if (f) importFiles([...f], pad); (e.target as HTMLInputElement).value = ""; }} />
-      <button class="btn btn-primary" disabled={!ready || !!blocked} onClick={() => input.current?.click()}>Выбрать файлы…</button>
+      <button class="btn btn-primary" disabled={!ready || !!blocked} onClick={() => input.current?.click()}>Choose files…</button>
       {ready && blocked && <span class="err">{blocked}</span>}
     </div>
   );

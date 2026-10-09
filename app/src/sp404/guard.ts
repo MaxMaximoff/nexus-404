@@ -128,6 +128,6 @@ export function makeGuard(policy: WritePolicy): Guard {
         if ((r.op === Op.Write || r.op === Op.Seek) && policy.writableHandles.has(r.first.i32)) return;
       }
     }
-    throw new GuardError(`заблокировано защитой: ch${channel} ${hex(p, 12)}`);
+    throw new GuardError(`Blocked by safety guard: ch${channel} ${hex(p, 12)}`);
   };
 }

@@ -365,8 +365,8 @@ button, input, select { font: inherit; color: inherit; }
 /* Dropping a pad onto an occupied one swaps them: say so on the target. */
 .pad.drop-swap { border-color: var(--warn) !important; box-shadow: 0 0 0 1px var(--warn), 0 0 10px rgba(229, 163, 71, 0.28) !important; }
 .pad-grid .pad.full.drop-swap::before { opacity: 0; }
-.pad.drop-copy::after { content: "+ копия"; position: absolute; right: 10px; top: 8px; font-size: 11px; font-weight: 800; color: var(--accent); }
-.pad.drop-swap::after { content: "⇄ обмен"; position: absolute; right: 10px; top: 8px; font-size: 11px; font-weight: 800; color: var(--warn); }
+.pad.drop-copy::after { content: "+ copy"; position: absolute; right: 10px; top: 8px; font-size: 11px; font-weight: 800; color: var(--accent); }
+.pad.drop-swap::after { content: "⇄ swap"; position: absolute; right: 10px; top: 8px; font-size: 11px; font-weight: 800; color: var(--warn); }
 .pad.drop-copy::after, .pad.drop-swap::after { pointer-events: none; }
 .pad.full[draggable="true"] { cursor: grab; }
 .pad-tags { position: absolute; top: 9px; right: 11px; display: flex; gap: 3px; }

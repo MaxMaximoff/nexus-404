@@ -27,16 +27,16 @@ export function PadGrid() {
           <span class="bank-big">{BANKS[b]}</span>
           {bank && (
             <span class="tempo-group">
-              <TempoField value={bank.tempoX100} label={`Темп банка ${BANKS[b]}`} onSave={(x) => setBankTempo(b, x)} dim={project.value?.useProjectTempo}
-                hint={project.value?.useProjectTempo ? "Сейчас действует темп проекта" : undefined} />
+              <TempoField value={bank.tempoX100} label={`Bank tempo ${BANKS[b]}`} onSave={(x) => setBankTempo(b, x)} dim={project.value?.useProjectTempo}
+                hint={project.value?.useProjectTempo ? "Project tempo is currently active" : undefined} />
               <span class="muted">BPM ·</span>
             </span>
           )}
-          <span class="muted">{filled} / 16 занято</span>
+          <span class="muted">{filled} / 16 occupied</span>
           <DragSpeed />
-          {bank?.protected && <span class="chip chip-warn"><IconLock /> защищён</span>}
+          {bank?.protected && <span class="chip chip-warn"><IconLock /> protected</span>}
         </div>
-        {c === "ready" && <button class="btn btn-ghost" onClick={reload} title="Перечитать проект с SP"><IconRefresh /> Обновить</button>}
+        {c === "ready" && <button class="btn btn-ghost" onClick={reload} title="Read the project from SP again"><IconRefresh /> Refresh</button>}
       </div>
 
       <GroupBar />
@@ -44,12 +44,12 @@ export function PadGrid() {
         {Array.from({ length: 16 }, (_, i) => <PadCard key={i} index={b * 16 + i} />)}
         {c !== "ready" && c !== "loading" && <ConnectOverlay />}
       </div>
-      <p class="hint">Ctrl-клик, Shift-клик или Ctrl+A выделяют pad'ы для группового удаления. Перетащите файлы на пустой pad — они займут его и следующие пустые pad'ы банка. Pad на pad: на пустой — перенос, на занятый — обмен; на плитку банка — на его первый пустой pad; с Ctrl — копия на пустой pad; задержите над банком, чтобы перейти в него.</p>
+      <p class="hint">Ctrl-click, Shift-click or Ctrl+A to select pads for group deletion. Drop files onto an empty pad to fill it and the next empty pads in the bank. Drag a pad onto an empty pad to move it, or an occupied pad to swap them. Drop onto a bank tile to use its first empty pad; hold Ctrl to copy to an empty pad. Hover over a bank to switch to it.</p>
     </section>
   );
 }
 
-const padsWord = (n: number) => (n % 10 === 1 && n % 100 !== 11 ? "pad" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? "pad'а" : "pad'ов");
+const padsWord = (n: number) => (n % 10 === 1 && n % 100 !== 11 ? "pad" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? "pads" : "pads");
 
 /** Picked pads: what is picked and the group delete, with one confirmation listing every pad. */
 function GroupBar() {
@@ -60,23 +60,23 @@ function GroupBar() {
   if (prog) {
     return (
       <div class="group-bar">
-        <span>{prog.verb} {Math.min(prog.done + 1, prog.total)} из {prog.total}…</span>
+        <span>{prog.verb} {Math.min(prog.done + 1, prog.total)} of {prog.total}…</span>
         <span class="bar"><span style={{ width: `${(prog.done / prog.total) * 100}%` }} /></span>
       </div>
     );
   }
   if (!list.length) return null;
-  const names = list.map((i) => `${padName(i)} «${pads.value[i]!.name || "без имени"}»`);
+  const names = list.map((i) => `${padName(i)} “${pads.value[i]!.name || "untitled"}”`);
   const inPatterns = [...new Set(list.flatMap(patternsOf))].sort((a, b) => a - b);
   if (confirming) {
     return (
-      <div class="group-bar confirm-delete" role="alertdialog" aria-label="Подтверждение удаления"
+      <div class="group-bar confirm-delete" role="alertdialog" aria-label="Confirm deletion"
         onKeyDown={(e) => { if (e.key === "Escape") confirmGroupDelete.value = false; }}>
-        <span class="confirm-text">Удалить {list.length} {padsWord(list.length)} с SP? Вернуть будет нельзя.</span>
+        <span class="confirm-text">Delete {list.length} {padsWord(list.length)} from SP? This cannot be undone.</span>
         <span class="group-names">{names.join(", ")}</span>
-        {inPatterns.length > 0 && <span class="confirm-ptn">Они звучат в паттернах {inPatterns.map(padName).join(", ")} — там станет тишина.</span>}
-        <button ref={yes} class="btn btn-danger" onClick={deletePicked}><IconTrash /> Удалить {list.length}</button>
-        <button class="btn" onClick={() => (confirmGroupDelete.value = false)}>Отмена</button>
+        {inPatterns.length > 0 && <span class="confirm-ptn">They play in patterns {inPatterns.map(padName).join(", ")} — those notes will become silent.</span>}
+        <button ref={yes} class="btn btn-danger" onClick={deletePicked}><IconTrash /> Delete {list.length}</button>
+        <button class="btn" onClick={() => (confirmGroupDelete.value = false)}>Cancel</button>
       </div>
     );
   }
@@ -84,11 +84,11 @@ function GroupBar() {
   if (draggedPad.value !== null) return null;
   return (
     <div class="group-bar">
-      <span class="group-count">Выбрано {list.length}</span>
+      <span class="group-count">Selected {list.length}</span>
       <span class="group-names muted" title={names.join(", ")}>{list.map(padName).join(", ")}</span>
       <button class="btn insp-delete" disabled={!!writeBlockReason.value} onClick={() => (confirmGroupDelete.value = true)}
-        title={writeBlockReason.value ?? `Удалить выбранные (${list.length}) с SP (Delete)`} aria-label="Удалить выбранные"><IconTrash /></button>
-      <button class="btn" onClick={clearPicked} title="Esc">Снять выделение</button>
+        title={writeBlockReason.value ?? `Delete selected pads (${list.length}) from SP (Delete)`} aria-label="Delete selected pads"><IconTrash /></button>
+      <button class="btn" onClick={clearPicked} title="Esc">Clear selection</button>
     </div>
   );
 }
@@ -101,7 +101,7 @@ function DragSpeed() {
   return (
     <>
       {s && <span class="chip chip-warn drag-speed">{s.text}</span>}
-      {inPatterns.length > 0 && <span class="chip drag-speed" title="После переноса паттерны перечитаются, и в журнале будет видно, перевёл ли SP их ноты">{padName(src!)} в паттернах {inPatterns.map(padName).join(", ")}</span>}
+      {inPatterns.length > 0 && <span class="chip drag-speed" title="Patterns are read again after a move; the log shows whether SP updated their notes">{padName(src!)} in patterns {inPatterns.map(padName).join(", ")}</span>}
     </>
   );
 }
@@ -109,15 +109,15 @@ function DragSpeed() {
 function ConnectOverlay() {
   const c = conn.value;
   if (c === "unsupported")
-    return <div class="overlay"><b>Нужен Chrome или Edge на компьютере</b><span>Web Serial недоступен в этом браузере или странице нужен https://.</span></div>;
+    return <div class="overlay"><b>Use Chrome or Edge on a computer</b><span>Web Serial is unavailable in this browser, or the page needs HTTPS.</span></div>;
   return (
     <div class="overlay">
-      <b>{c === "lost" ? "SP отключился" : "Подключите SP-404MKII по USB"}</b>
-      <span>{c === "lost" ? "Как только он появится снова, переподключусь сам." : "Закройте официальное приложение Roland: порт может открыть только одна программа."}</span>
+      <b>{c === "lost" ? "SP disconnected" : "Connect SP-404MKII via USB"}</b>
+      <span>{c === "lost" ? "Reconnection is automatic when SP becomes available again." : "Close the official Roland App: only one application can open the port."}</span>
       {c !== "lost" && (
         <div class="row">
-          {hasGrant.value && <button class="btn" onClick={() => reconnect()}>Переподключить</button>}
-          <button class="btn" onClick={startDemo} disabled={c === "connecting"} title="Выдуманный проект без SP — чтобы посмотреть интерфейс">Демо</button>
+          {hasGrant.value && <button class="btn" onClick={() => reconnect()}>Reconnect</button>}
+          <button class="btn" onClick={startDemo} disabled={c === "connecting"} title="Explore a sample project without connecting SP">Demo</button>
           <button class="btn btn-primary" onClick={connect} disabled={c === "connecting"}>Connect SP-404MKII</button>
         </div>
       )}
@@ -144,7 +144,7 @@ function PadCard({ index }: { index: number }) {
       class={cls}
       data-pad={padName(index)}
       draggable={canMove}
-      title={canMove ? "Перетащите на другой pad: на пустой — перенос, на занятый — обмен местами; с Ctrl — копия на пустой" : undefined}
+      title={canMove ? "Drag onto another pad: move to an empty pad, swap with an occupied pad; hold Ctrl to copy to an empty pad" : undefined}
       onClick={(e) => {
         if (e.ctrlKey || e.metaKey) return pickPad(index, "toggle");
         if (e.shiftKey) return pickPad(index, "range");
@@ -199,16 +199,16 @@ function PadCard({ index }: { index: number }) {
       }}
     >
       <span class="pad-label">
-        {padName(index)}{onDevice && <span class="here" title="Выбран на SP" />}
+        {padName(index)}{onDevice && <span class="here" title="Selected on SP" />}
       </span>
       <span class="pad-tags">
-        {!!p?.size && p.muteGroup > 0 && <span class="pad-tag tag-mute" title={`Mute Group ${BANKS[p.muteGroup - 1]}: pad'ы группы глушат друг друга`}>M {BANKS[p.muteGroup - 1] ?? p.muteGroup}</span>}
-        {!!p?.size && patternsOf(index).length > 0 && <span class="pad-tag tag-ptn" title={`Звучит в паттернах ${patternsOf(index).map(padName).join(", ")}`}>P {patternsOf(index).length}</span>}
-        {!!p?.size && p.padLink > 0 && <span class="pad-tag tag-link" title={`PAD Link ${BANKS[p.padLink - 1]}: pad'ы группы звучат вместе`}>L {BANKS[p.padLink - 1] ?? p.padLink}</span>}
+        {!!p?.size && p.muteGroup > 0 && <span class="pad-tag tag-mute" title={`Mute Group ${BANKS[p.muteGroup - 1]}: pads in the group mute each other`}>M {BANKS[p.muteGroup - 1] ?? p.muteGroup}</span>}
+        {!!p?.size && patternsOf(index).length > 0 && <span class="pad-tag tag-ptn" title={`Plays in patterns ${patternsOf(index).map(padName).join(", ")}`}>P {patternsOf(index).length}</span>}
+        {!!p?.size && p.padLink > 0 && <span class="pad-tag tag-link" title={`PAD Link ${BANKS[p.padLink - 1]}: pads in the group play together`}>L {BANKS[p.padLink - 1] ?? p.padLink}</span>}
       </span>
       {p?.size ? (
         <>
-          <span class="pad-name">{p.name || "без имени"}</span>
+          <span class="pad-name">{p.name || "untitled"}</span>
           <span class="pad-meta">
             <span>{formatBpm(p.bpmX100)}</span>
             <span>{secs !== null ? `${secs < 10 ? secs.toFixed(2) : secs.toFixed(1)} s` : `${(p.size / 1048576).toFixed(1)} MB`}</span>
@@ -220,13 +220,13 @@ function PadCard({ index }: { index: number }) {
       {copyHere && (
         <span class="pad-progress">
           <span style={{ width: `${Math.round(copyHere.progress * 100)}%` }} />
-          <em>копия {Math.round(copyHere.progress * 100)} %</em>
+          <em>copy {Math.round(copyHere.progress * 100)} %</em>
         </span>
       )}
       {job && (
         <span class="pad-progress">
           <span style={{ width: `${Math.round(job.progress * 100)}%` }} />
-          <em>{job.state === "decoding" ? "декодирование" : job.state === "queued" ? "в очереди" : `${Math.round(job.progress * 100)} %`}</em>
+          <em>{job.state === "decoding" ? "decoding" : job.state === "queued" ? "Queued" : `${Math.round(job.progress * 100)} %`}</em>
         </span>
       )}
     </button>

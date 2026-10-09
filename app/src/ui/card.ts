@@ -61,7 +61,7 @@ const collator = new Intl.Collator("ru", { numeric: true, sensitivity: "base" })
 /** List a folder: folders first, then files, in natural order; sizes from stat. */
 export async function openCardDir(dir: string[]): Promise<void> {
   if (cardBusy.value) return;
-  cardBusy.value = { text: "Читаю папку…", progress: null };
+  cardBusy.value = { text: "Reading folder…", progress: null };
   cardError.value = null;
   try {
     const path = cardPath(dir);
@@ -94,7 +94,7 @@ async function readCardFile(path: string, what: string): Promise<Uint8Array> {
   const hit = cache.get(path);
   if (hit) return hit;
   const data = await withDevice((d) => d.readFile(path, Infinity, (a, b) => (cardBusy.value = { text: what, progress: a / b })));
-  if (!data) throw new Error(`на карте нет ${path}`);
+  if (!data) throw new Error(`Not found on the card: ${path}`);
   cache.set(path, data);
   let total = 0;
   for (const [k, v] of [...cache].reverse()) if ((total += v.length) > CACHE_BYTES && k !== path) cache.delete(k);
@@ -117,8 +117,8 @@ export async function previewCardFile(name: string): Promise<void> {
   stopCardPreview();
   if (cardBusy.value) return;
   try {
-    cardBusy.value = { text: `Читаю ${name}…`, progress: 0 };
-    const data = await readCardFile(path, `Читаю ${name}…`);
+    cardBusy.value = { text: `Reading ${name}…`, progress: 0 };
+    const data = await readCardFile(path, `Reading ${name}…`);
     cardBusy.value = null;
     ctx ??= new AudioContext();
     const buf = await ctx.decodeAudioData(data.slice().buffer);
@@ -131,7 +131,7 @@ export async function previewCardFile(name: string): Promise<void> {
     s.start();
   } catch (e) {
     cardBusy.value = null;
-    notice.value = { kind: "error", text: `Не удалось прослушать ${name}: ${(e as Error).message}` };
+    notice.value = { kind: "error", text: `Could not preview ${name}: ${(e as Error).message}` };
   }
 }
 
@@ -143,8 +143,8 @@ export const canUploadHere = computed(() => cardDir.value[0]?.toUpperCase() === 
  * already in the folder are skipped: nothing on the card is replaced.
  */
 export async function uploadToCard(files: File[]): Promise<void> {
-  if (!canUploadHere.value) return void (notice.value = { kind: "error", text: "Файлы с компьютера кладутся только в папку IMPORT (и её подпапки)" });
-  if (cardBusy.value) return void (notice.value = { kind: "error", text: "Карта занята — дождитесь конца" });
+  if (!canUploadHere.value) return void (notice.value = { kind: "error", text: "Files from the computer can only be uploaded to IMPORT and its subfolders" });
+  if (cardBusy.value) return void (notice.value = { kind: "error", text: "Card is busy — wait for the operation to finish" });
   const dir = cardDir.value;
   const audio = files.filter((f) => AUDIO_RE.test(f.name));
   const have = new Set((cardEntries.value ?? []).map((e) => e.name.toLowerCase()));
@@ -154,20 +154,20 @@ export async function uploadToCard(files: File[]): Promise<void> {
   let done = 0;
   try {
     for (const [i, f] of todo.entries()) {
-      const what = `Записываю на карту${todo.length > 1 ? ` ${i + 1} из ${todo.length}` : ""}: ${f.name}`;
+      const what = `Writing to card${todo.length > 1 ? ` ${i + 1} of ${todo.length}` : ""}: ${f.name}`;
       cardBusy.value = { text: what, progress: 0 };
       const data = new Uint8Array(await f.arrayBuffer());
       await withDevice((d) => d.writeCardFile(cardPath(dir, f.name), data, (a, b) => (cardBusy.value = { text: what, progress: a / b })));
       done++;
     }
   } catch (e) {
-    notice.value = { kind: "error", text: `Запись на карту: ${(e as Error).message}` };
+    notice.value = { kind: "error", text: `Write to card: ${(e as Error).message}` };
   } finally {
     cardBusy.value = null;
   }
-  if (done) log("info", `На карту в ${cardPath(dir).slice(CARD.length)}: ${todo.slice(0, done).map((f) => f.name).join(", ")}`);
-  const notes = [skipped.length && `уже есть на карте: ${skipped.join(", ")}`, notAudio && `не аудио: ${notAudio}`].filter(Boolean);
-  if (notes.length && !notice.value) notice.value = { kind: "info", text: `Пропущено — ${notes.join("; ")}` };
+  if (done) log("info", `Uploaded to card folder ${cardPath(dir).slice(CARD.length)}: ${todo.slice(0, done).map((f) => f.name).join(", ")}`);
+  const notes = [skipped.length && `already on card: ${skipped.join(", ")}`, notAudio && `not audio: ${notAudio}`].filter(Boolean);
+  if (notes.length && !notice.value) notice.value = { kind: "info", text: `Skipped — ${notes.join("; ")}` };
   await openCardDir(dir);
 }
 
@@ -184,19 +184,19 @@ export async function deleteCardSelection(): Promise<void> {
   let n = 0;
   try {
     for (const name of names) {
-      cardBusy.value = { text: `Удаляю ${name}…`, progress: null };
+      cardBusy.value = { text: `Deleting ${name}…`, progress: null };
       n += await withDevice((d) => d.deleteCardPath(cardPath(dir, name), (wire) => {
         cache.delete(CARD + wire);
         if (cardPlaying.value === CARD + wire) stopCardPreview();
-        cardBusy.value = { text: `Удаляю ${wire}`, progress: null };
+        cardBusy.value = { text: `Deleting ${wire}`, progress: null };
       }));
     }
   } catch (e) {
-    notice.value = { kind: "error", text: `Удаление с карты: ${(e as Error).message}` };
+    notice.value = { kind: "error", text: `Delete from card: ${(e as Error).message}` };
   } finally {
     cardBusy.value = null;
   }
-  if (n) log("info", `С карты удалено (${n}): ${names.map((x) => `${cardPath(dir, x).slice(CARD.length)}`).join(", ")}`);
+  if (n) log("info", `Deleted from card (${n}): ${names.map((x) => `${cardPath(dir, x).slice(CARD.length)}`).join(", ")}`);
   cardSel.value = new Set();
   await openCardDir(dir);
 }
@@ -206,9 +206,9 @@ export const inImport = (dir: string[]) => dir[0]?.toUpperCase() === "IMPORT";
 /** Why the card would not take this file or folder name (FAT rules), or null. */
 export function cardNameError(name: string): string | null {
   const n = name.trim();
-  if (!n) return "пустое имя";
-  if (n === "." || n === ".." || n.endsWith(".")) return "имя не может быть «.», «..» или кончаться точкой";
-  if (/[\\/:*?"<>|\u0000-\u001f]/.test(n)) return "нельзя символы \\ / : * ? \" < > |";
+  if (!n) return "Name is empty";
+  if (n === "." || n === ".." || n.endsWith(".")) return "Name cannot be ‘.’, ‘..’ or end with a period";
+  if (/[\\/:*?"<>|\u0000-\u001f]/.test(n)) return "These characters are not allowed: \\ / : * ? \" < > |";
   return null;
 }
 
@@ -222,14 +222,14 @@ async function refreshPicking(dir: string[], names: string[]): Promise<void> {
 /** New folder in the open IMPORT/ folder. */
 export async function createCardFolder(name: string): Promise<boolean> {
   const n = name.trim(), dir = cardDir.value, err = cardNameError(n);
-  if (err) { notice.value = { kind: "error", text: `Имя папки: ${err}` }; return false; }
+  if (err) { notice.value = { kind: "error", text: `Folder name: ${err}` }; return false; }
   if (!inImport(dir) || cardBusy.value) return false;
-  cardBusy.value = { text: `Создаю папку ${n}…`, progress: null };
+  cardBusy.value = { text: `Creating folder ${n}…`, progress: null };
   try {
     await withDevice((d) => d.mkdirCard(cardPath(dir, n)));
-    log("info", `Папка на карте: ${cardPath(dir, n).slice(CARD.length)}`);
+    log("info", `Card folder: ${cardPath(dir, n).slice(CARD.length)}`);
   } catch (e) {
-    notice.value = { kind: "error", text: `Новая папка: ${(e as Error).message}` };
+    notice.value = { kind: "error", text: `New folder: ${(e as Error).message}` };
     return false;
   } finally {
     cardBusy.value = null;
@@ -242,15 +242,15 @@ export async function createCardFolder(name: string): Promise<boolean> {
 export async function renameCardEntry(old: string, name: string): Promise<boolean> {
   const n = name.trim(), dir = cardDir.value, err = cardNameError(n);
   if (n === old) return true;
-  if (err) { notice.value = { kind: "error", text: `Новое имя: ${err}` }; return false; }
+  if (err) { notice.value = { kind: "error", text: `New name: ${err}` }; return false; }
   if (!inImport(dir) || cardBusy.value) return false;
   if (cardPlaying.value === cardPath(dir, old)) stopCardPreview();
-  cardBusy.value = { text: `Переименовываю ${old}…`, progress: null };
+  cardBusy.value = { text: `Renaming ${old}…`, progress: null };
   try {
     await withDevice((d) => d.renameCard(cardPath(dir, old), cardPath(dir, n)));
-    log("info", `На карте: ${old} → ${n}`);
+    log("info", `On card: ${old} → ${n}`);
   } catch (e) {
-    notice.value = { kind: "error", text: `Переименование: ${(e as Error).message}` };
+    notice.value = { kind: "error", text: `Rename: ${(e as Error).message}` };
     return false;
   } finally {
     cardBusy.value = null;
@@ -271,23 +271,23 @@ export async function moveCardEntries(names: string[], target: string[]): Promis
   const moved: string[] = [], skipped: string[] = [];
   try {
     for (const [i, name] of names.entries()) {
-      cardBusy.value = { text: `Переношу${names.length > 1 ? ` ${i + 1} из ${names.length}` : ""}: ${name}`, progress: null };
+      cardBusy.value = { text: `Moving${names.length > 1 ? ` ${i + 1} of ${names.length}` : ""}: ${name}`, progress: null };
       try {
         await withDevice((d) => d.renameCard(cardPath(dir, name), cardPath(target, name)));
         moved.push(name);
       } catch (e) {
-        if (!/уже есть/.test((e as Error).message)) throw e;
+        if (!/[Aa]lready exists/.test((e as Error).message)) throw e;
         skipped.push(name);
       }
     }
   } catch (e) {
-    notice.value = { kind: "error", text: `Перенос: ${(e as Error).message}` };
+    notice.value = { kind: "error", text: `Move: ${(e as Error).message}` };
   } finally {
     cardBusy.value = null;
   }
   const to = cardPath(target).slice(CARD.length);
-  if (moved.length) log("info", `На карте в ${to}: ${moved.join(", ")}`);
-  if (skipped.length && !notice.value) notice.value = { kind: "info", text: `В ${to} уже есть: ${skipped.join(", ")} — эти не перенесены` };
+  if (moved.length) log("info", `Moved to card folder ${to}: ${moved.join(", ")}`);
+  if (skipped.length && !notice.value) notice.value = { kind: "info", text: `Already in ${to}: ${skipped.join(", ")} — these were not moved` };
   await refreshPicking(dir, []);
 }
 
@@ -297,13 +297,13 @@ export async function downloadCardFiles(names: string[]): Promise<void> {
   const dir = cardDir.value;
   try {
     for (const [i, name] of names.entries()) {
-      const what = `Скачиваю${names.length > 1 ? ` ${i + 1} из ${names.length}` : ""}: ${name}`;
+      const what = `Downloading${names.length > 1 ? ` ${i + 1} of ${names.length}` : ""}: ${name}`;
       cardBusy.value = { text: what, progress: 0 };
       saveFile(name, (await readCardFile(cardPath(dir, name), what)).slice(), MIME[name.split(".").pop()!.toLowerCase()] ?? "application/octet-stream");
     }
-    log("info", `С карты на компьютер: ${names.join(", ")}`);
+    log("info", `Card to computer: ${names.join(", ")}`);
   } catch (e) {
-    notice.value = { kind: "error", text: `Скачивание с карты: ${(e as Error).message}` };
+    notice.value = { kind: "error", text: `Download from card: ${(e as Error).message}` };
   } finally {
     cardBusy.value = null;
   }
@@ -317,25 +317,25 @@ const MIME: Record<string, string> = { wav: "audio/wav", aif: "audio/aiff", aiff
  */
 export async function importFromCard(paths: string[], startPad: number): Promise<void> {
   const blocked = writeBlockReason.value
-    ?? (project.value?.banks[startPad >> 4]?.protected ? "Банк защищён (BANK Protect на SP)" : null)
-    ?? (pads.value[startPad]?.size ? `${padName(startPad)} занят. Перетащите на пустой pad` : null)
-    ?? (cardBusy.value ? "Карта занята — дождитесь конца" : null);
+    ?? (project.value?.banks[startPad >> 4]?.protected ? "Bank is protected (BANK Protect on SP)" : null)
+    ?? (pads.value[startPad]?.size ? `${padName(startPad)} is occupied. Drop onto an empty pad` : null)
+    ?? (cardBusy.value ? "Card is busy — wait for the operation to finish" : null);
   if (blocked) return void (notice.value = { kind: "error", text: blocked });
   const files: File[] = [];
   try {
     for (const [i, path] of paths.entries()) {
       const name = path.slice(path.lastIndexOf("/") + 1);
-      const what = paths.length > 1 ? `Читаю с карты ${i + 1} из ${paths.length}: ${name}` : `Читаю с карты ${name}`;
+      const what = paths.length > 1 ? `Reading from card ${i + 1} of ${paths.length}: ${name}` : `Reading from card ${name}`;
       cardBusy.value = { text: what, progress: 0 };
       const data = await readCardFile(path, what);
       files.push(new File([data.slice()], name, { type: MIME[name.split(".").pop()!.toLowerCase()] ?? "" }));
     }
   } catch (e) {
-    notice.value = { kind: "error", text: `Чтение с карты: ${(e as Error).message}` };
+    notice.value = { kind: "error", text: `Read from card: ${(e as Error).message}` };
     return;
   } finally {
     cardBusy.value = null;
   }
-  log("info", `С карты: ${files.map((f) => f.name).join(", ")} → ${padName(startPad)}`);
+  log("info", `From card: ${files.map((f) => f.name).join(", ")} → ${padName(startPad)}`);
   importFiles(files, startPad);
 }

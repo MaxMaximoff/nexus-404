@@ -94,14 +94,14 @@ export async function togglePattern(slot: number): Promise<void> {
   if (!demo.value && midiState.value !== "ready" && !(await connectMidi())) {
     notice.value = {
       kind: "error",
-      text: midiState.value === "denied" ? "Доступ к MIDI запрещён — разрешите его для этой страницы (значок в адресной строке) и нажмите «Играть» ещё раз"
-        : midiState.value === "unsupported" ? "Этот браузер не умеет MIDI: паттерн играется через SP по USB-MIDI (нужен Chrome или Edge)"
-        : "MIDI-порт SP не найден: паттерн играется через SP по USB-MIDI. Проверьте, что SP подключён по USB",
+      text: midiState.value === "denied" ? "MIDI access denied — allow it for this page using the address bar icon, then click ‘Play’ again"
+        : midiState.value === "unsupported" ? "This browser does not support MIDI: patterns play through SP over USB MIDI (Chrome or Edge required)"
+        : "SP MIDI port not found: patterns play through SP over USB MIDI. Check that SP is connected via USB",
     };
     return;
   }
   playPattern(slot);
-  if (playingSlot.value === slot && midiPort.value) log("info", `Играет паттерн ${padName(slot)} через ${midiPort.value}`);
+  if (playingSlot.value === slot && midiPort.value) log("info", `Playing pattern ${padName(slot)} through ${midiPort.value}`);
 }
 
 /** Schedule the notes that fall before now + LOOKAHEAD_MS, looping over the pattern. */
@@ -134,7 +134,7 @@ function pump(): void {
       a = end;
     }
   } catch (e) {
-    log("warn", `Проигрывание ${padName(s.slot)}: ${(e as Error).message}`);
+    log("warn", `Playback ${padName(s.slot)}: ${(e as Error).message}`);
     stopPattern();
     return;
   }

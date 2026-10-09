@@ -36,7 +36,7 @@ export function ValueField({ value, format, parse, label, dim, hint, disabled, w
       autoComplete="off"
       spellcheck={false}
       aria-label={label}
-      title={blocked ?? error ?? `${label}: Enter — сохранить на SP, Esc — отменить${hint ? `. ${hint}` : ""}`}
+      title={blocked ?? error ?? `${label}: Enter to save to SP, Esc to cancel${hint ? `. ${hint}` : ""}`}
       disabled={!!blocked || busy}
       value={text}
       placeholder={placeholder}
@@ -55,9 +55,9 @@ export function ValueField({ value, format, parse, label, dim, hint, disabled, w
 export const intIn = (min: number, max: number): Parse => (text) => {
   const t = text.trim().replace("−", "-").replace(/^\+/, "");
   if (!t) return null;
-  if (!/^-?\d+$/.test(t)) return { error: "целое число" };
+  if (!/^-?\d+$/.test(t)) return { error: "A whole number" };
   const v = parseInt(t, 10);
-  return v < min || v > max ? { error: `от ${min} до ${max}` } : { value: v };
+  return v < min || v > max ? { error: `From ${min} to ${max}` } : { value: v };
 };
 
 /** Signed display: "+3", "0", "−12". */

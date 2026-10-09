@@ -29,7 +29,7 @@ const gridTicks = signal(STEP);
 const snapOn = signal(true);
 /** Velocity of new notes (clicks, painting, fills): TR-REC's 90 to begin with. */
 const newVelocity = signal(DEFAULT_VELOCITY);
-const VELOCITY_PRESETS: [number, string][] = [[50, "тихо"], [DEFAULT_VELOCITY, "обычно"], [127, "акцент"]];
+const VELOCITY_PRESETS: [number, string][] = [[50, "soft"], [DEFAULT_VELOCITY, "normal"], [127, "accent"]];
 const GRIDS: [number, string][] = [[PPQ / 2, "1/8"], [STEP, "1/16"], [PPQ / 8, "1/32"]];
 /** An open menu: a row's (by pad) or a bar's (0-based), and where on screen it opens (under its button). */
 type Menu = ({ kind: "row"; pad: number } | { kind: "bar"; bar: number }) & { x: number; y: number };
@@ -43,7 +43,7 @@ const openMenu = (e: MouseEvent, m: { kind: "row"; pad: number } | { kind: "bar"
 const signed = (v: number) => (v > 0 ? `+${v}` : v < 0 ? `−${-v}` : "0");
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 /** A length in ticks as a note value: 120 → "1/16". */
-const noteValue = (t: number) => (Number.isInteger(1920 / t) ? `1/${1920 / t}` : `${t} т.`);
+const noteValue = (t: number) => (Number.isInteger(1920 / t) ? `1/${1920 / t}` : `${t} bars`);
 
 /** A drag in progress, kept outside the signals: it changes on every pointer move. */
 type Gesture =
@@ -277,7 +277,7 @@ export function PatternEditor({ slot }: { slot: number }) {
               return (
                 <span key={i} class="ptn-bar-cell" style={{ gridColumn: `span ${Math.min(pg.barSteps, pg.steps - i * pg.barSteps)}` }}>
                   <button class={`ptn-menu-btn ptn-bar-btn ${open ? "on" : ""}`} onClick={(e) => (open ? (menu.value = null) : openMenu(e, { kind: "bar", bar }))}
-                    title={`Такт ${bar + 1}: повторить, очистить`} aria-expanded={open}>{bar + 1} ▾</button>
+                    title={`Bar ${bar + 1}: repeat, clear`} aria-expanded={open}>{bar + 1} ▾</button>
                   {open && <BarMenu slot={slot} p={p} bar={bar} at={m!} />}
                 </span>
               );
@@ -287,16 +287,16 @@ export function PatternEditor({ slot }: { slot: number }) {
             const b = pads.value[pad], mine = p.notes.filter((n) => n.pad === pad), empty = mine.length === 0, open = m?.kind === "row" && m.pad === pad;
             return [
               <div key={`h${pad}`} class="ptn-row-cell">
-                <button class="ptn-row-pad" onClick={() => openPad(pad)} title={`Открыть ${padName(pad)} на экране pad'ов — править сэмпл (черновик паттерна сохранится)`}>{padName(pad)}</button>
+                <button class="ptn-row-pad" onClick={() => openPad(pad)} title={`Open ${padName(pad)} in the pad view to edit the sample (pattern draft is kept)`}>{padName(pad)}</button>
                 <button class={`ptn-row-head ${pad === active ? "act" : ""} ${b?.size ? "" : "missing"}`}
                   onClick={() => { selectPad(pad); pick(slot, { active: pad }); auditionPad(pad); }}
-                  title={b?.size ? `${padName(pad)} «${b.name}» — послушать и выбрать` : `${padName(pad)} пуст: ноты играют тишину`}>
-                  <span>{b?.size ? b.name || "без имени" : "пусто"}</span>
+                  title={b?.size ? `${padName(pad)} “${b.name}” — preview and select` : `${padName(pad)} is empty: notes will be silent`}>
+                  <span>{b?.size ? b.name || "untitled" : "empty"}</span>
                 </button>
                 <RowSound pad={pad} />
                 <button class={`icon-btn ptn-menu-btn ptn-row-more ${open ? "on" : ""}`} onClick={(e) => (open ? (menu.value = null) : openMenu(e, { kind: "row", pad }))}
-                  title="Заполнить, сдвинуть, очистить строку" aria-label={`Строка ${padName(pad)}: действия`} aria-expanded={open}>⋯</button>
-                {empty && <button class="icon-btn ptn-row-x" onClick={() => dropRow(pad)} title="Убрать пустую строку" aria-label={`Убрать строку ${padName(pad)}`}><IconMinus /></button>}
+                  title="Fill, shift or clear the row" aria-label={`Row ${padName(pad)}: actions`} aria-expanded={open}>⋯</button>
+                {empty && <button class="icon-btn ptn-row-x" onClick={() => dropRow(pad)} title="Remove empty row" aria-label={`Remove row ${padName(pad)}`}><IconMinus /></button>}
                 {open && <RowMenu slot={slot} p={p} pad={pad} grid={g} at={m!} />}
               </div>,
               <div key={`l${pad}`} class={`ptn-lane ptn-lane-edit ${pad === selectedPad.value ? "cur" : ""} ${pg.used < 100 ? "short" : ""} ${silentClass(pad)}`} data-pad={pad} style={{ "--used": `${pg.used}%` }}
@@ -360,21 +360,21 @@ function RowMenu({ slot, p, pad, grid, at }: { slot: number; p: Pattern; pad: nu
   const fill = (every: number, offset: number) => { edit(slot, fillPad(p, pad, every, offset, gateFor(Math.min(grid, every)), newVelocity.value)); menu.value = null; };
   const has = p.notes.some((n) => n.pad === pad);
   return (
-    <div class="ptn-menu" role="menu" aria-label={`Строка ${padName(pad)}`} style={{ left: `${at.x}px`, top: `${at.y}px` }}>
-      <div class="ptn-menu-title">заполнить строку (заменит её ноты)</div>
+    <div class="ptn-menu" role="menu" aria-label={`Row ${padName(pad)}`} style={{ left: `${at.x}px`, top: `${at.y}px` }}>
+      <div class="ptn-menu-title">fill row (replaces its notes)</div>
       <div class="ptn-menu-row">
-        {steps.map((t) => <button key={t} class="btn ptn-mini" role="menuitem" onClick={() => fill(t, 0)} title={`Нота каждую ${noteValue(t)}`}>{noteValue(t)}</button>)}
+        {steps.map((t) => <button key={t} class="btn ptn-mini" role="menuitem" onClick={() => fill(t, 0)} title={`Note every ${noteValue(t)}`}>{noteValue(t)}</button>)}
       </div>
       <div class="ptn-menu-row">
         {steps.filter((t) => t >= 2 * grid).map((t) => (
-          <button key={t} class="btn ptn-mini" role="menuitem" onClick={() => fill(t, t / 2)} title={`Нота каждую ${noteValue(t)}, между долями`}>{noteValue(t)} ↷</button>
+          <button key={t} class="btn ptn-mini" role="menuitem" onClick={() => fill(t, t / 2)} title={`Note every ${noteValue(t)}, between beats`}>{noteValue(t)} ↷</button>
         ))}
-        <span class="muted small">со сдвигом на половину</span>
+        <span class="muted small">offset by half a step</span>
       </div>
       <div class="ptn-menu-row">
-        <button class="btn ptn-mini" role="menuitem" disabled={!has} onClick={() => edit(slot, shiftPad(p, pad, -grid))} title={`Сдвинуть всю строку на ${noteValue(grid)} раньше (по кругу)`}>← сдвиг</button>
-        <button class="btn ptn-mini" role="menuitem" disabled={!has} onClick={() => edit(slot, shiftPad(p, pad, grid))} title={`Сдвинуть всю строку на ${noteValue(grid)} позже (по кругу)`}>сдвиг →</button>
-        <button class="btn ptn-mini" role="menuitem" disabled={!has} onClick={() => { edit(slot, clearPad(p, pad), { sel: null, group: [] }); menu.value = null; }}>очистить</button>
+        <button class="btn ptn-mini" role="menuitem" disabled={!has} onClick={() => edit(slot, shiftPad(p, pad, -grid))} title={`Shift the entire row by ${noteValue(grid)} earlier (wrap around)`}>← shift</button>
+        <button class="btn ptn-mini" role="menuitem" disabled={!has} onClick={() => edit(slot, shiftPad(p, pad, grid))} title={`Shift the entire row by ${noteValue(grid)} later (wrap around)`}>shift →</button>
+        <button class="btn ptn-mini" role="menuitem" disabled={!has} onClick={() => { edit(slot, clearPad(p, pad), { sel: null, group: [] }); menu.value = null; }}>clear</button>
       </div>
     </div>
   );
@@ -390,10 +390,10 @@ function BarMenu({ slot, p, bar, at }: { slot: number; p: Pattern; bar: number; 
     menu.value = null;
   };
   return (
-    <div class="ptn-menu ptn-bar-menu" role="menu" aria-label={`Такт ${bar + 1}`} style={{ left: `${at.x}px`, top: `${at.y}px` }}>
+    <div class="ptn-menu ptn-bar-menu" role="menu" aria-label={`Bar ${bar + 1}`} style={{ left: `${at.x}px`, top: `${at.y}px` }}>
       <button class="btn ptn-mini" role="menuitem" disabled={last && bars >= MAX_BARS} onClick={repeat}
-        title={last ? "Добавить такт в конце и скопировать в него этот" : `Скопировать этот такт поверх такта ${bar + 2}`}>повторить в такте {bar + 2}{last ? " (новом)" : ""}</button>
-      <button class="btn ptn-mini" role="menuitem" onClick={() => { edit(slot, clearBar(p, bar), { sel: null, group: [] }); menu.value = null; }}>очистить такт</button>
+        title={last ? "Add a bar at the end and copy this bar into it" : `Copy this bar over bar ${bar + 2}`}>repeat in bar {bar + 2}{last ? " (new)" : ""}</button>
+      <button class="btn ptn-mini" role="menuitem" onClick={() => { edit(slot, clearBar(p, bar), { sel: null, group: [] }); menu.value = null; }}>clear bar</button>
     </div>
   );
 }
@@ -412,26 +412,26 @@ function GroupStrip({ slot, d }: { slot: number; d: Draft }) {
     if (r.seqs.length) edit(slot, r.pattern, { group: r.seqs, sel: null });
   };
   return (
-    <div class="ptn-readout ptn-notestrip" role="group" aria-label="Выбранные ноты">
-      <b class="ptn-readout-pad">{mine.length} нот</b>
-      <label class="ptn-vel" title="Сила удара всех выбранных нот">
-        <span class="ptn-vel-label">сила</span>
+    <div class="ptn-readout ptn-notestrip" role="group" aria-label="Selected notes">
+      <b class="ptn-readout-pad">{mine.length} notes</b>
+      <label class="ptn-vel" title="Velocity of all selected notes">
+        <span class="ptn-vel-label">velocity</span>
         <input type="range" min={1} max={127} value={avg}
           onInput={(e) => { held ??= draftOf(slot)!.p; preview(slot, setVelocities(held, d.group, +(e.currentTarget as HTMLInputElement).value)); }}
           onChange={() => { if (held) settle(slot, held); held = null; }} />
         <b>{avg}</b>
       </label>
-      <span class="ptn-strip-group" title="Высота всех выбранных нот, на полутон">
-        <span class="ptn-vel-label">высота</span>
-        <button class="icon-btn" onClick={() => transpose(-1)} aria-label="Ниже на полутон"><IconMinus /></button>
-        <button class="icon-btn" onClick={() => transpose(1)} aria-label="Выше на полутон"><IconPlus /></button>
+      <span class="ptn-strip-group" title="Pitch of all selected notes, by one semitone">
+        <span class="ptn-vel-label">pitch</span>
+        <button class="icon-btn" onClick={() => transpose(-1)} aria-label="One semitone down"><IconMinus /></button>
+        <button class="icon-btn" onClick={() => transpose(1)} aria-label="One semitone up"><IconPlus /></button>
       </span>
       <span class="ptn-strip-group">
-        <button class="btn ptn-mini" onClick={() => { clip = copyNotes(p, d.group); }} title="Копировать (Ctrl+C); вставка — Ctrl+V в клетку, по которой кликнули">копировать</button>
-        <button class="btn ptn-mini" onClick={dup} title="Повторить сразу после выбранного (Ctrl+D)">дублировать</button>
+        <button class="btn ptn-mini" onClick={() => { clip = copyNotes(p, d.group); }} title="Copy (Ctrl+C); Ctrl+V pastes into the cell you clicked">copy</button>
+        <button class="btn ptn-mini" onClick={dup} title="Repeat immediately after the selection (Ctrl+D)">duplicate</button>
       </span>
-      <span class="muted small">←/→ сдвиг · ↑/↓ строка · Alt+↑/↓ сила</span>
-      <button class="icon-btn insp-delete ptn-strip-del" onClick={() => edit(slot, removeNotes(p, d.group), { group: [], sel: null })} title="Убрать выбранные (Delete)" aria-label="Убрать выбранные"><IconTrash /></button>
+      <span class="muted small">←/→ shift · ↑/↓ row · Alt+↑/↓ velocity</span>
+      <button class="icon-btn insp-delete ptn-strip-del" onClick={() => edit(slot, removeNotes(p, d.group), { group: [], sel: null })} title="Remove selection (Delete)" aria-label="Remove selection"><IconTrash /></button>
     </div>
   );
 }
@@ -478,8 +478,8 @@ function VelocityLane({ slot, d, pad, from, pageTicks }: { slot: number; d: Draf
   };
   const end = () => { if (held) settle(slot, held); held = null; velLock = null; };
   return [
-    <div key="vh" class="ptn-vel-head" title="Сила удара строки: тяните столбик вверх-вниз, или ведите вбок — задать силу всем по пути">сила <b>{padName(pad)}</b></div>,
-    <div key="vl" class="ptn-vellane" role="group" aria-label={`Сила удара ${padName(pad)}`}
+    <div key="vh" class="ptn-vel-head" title="Row velocity: drag a bar up or down, or drag sideways to set velocity along the row">velocity <b>{padName(pad)}</b></div>,
+    <div key="vl" class="ptn-vellane" role="group" aria-label={`Velocity ${padName(pad)}`}
       onPointerDown={start} onPointerMove={(e) => { if (held) setAt(e); }} onPointerUp={end} onPointerCancel={end}>
       {mine.map((n) => (
         <i key={n.seq} class={d.sel === n.seq ? "picked" : ""}
@@ -499,52 +499,52 @@ function EditBar({ slot, d, rows, onAddPads }: { slot: number; d: Draft; rows: n
   return (
     <div class="ptn-editbar">
       <div class="ptn-editbar-group">
-        <button class="icon-btn" disabled={!d.undo.length} onClick={() => undo(slot)} title="Отменить (Ctrl+Z)" aria-label="Отменить"><IconUndo /></button>
-        <button class="icon-btn" disabled={!d.redo.length} onClick={() => redo(slot)} title="Вернуть (Ctrl+Y)" aria-label="Вернуть"><IconRedo /></button>
+        <button class="icon-btn" disabled={!d.undo.length} onClick={() => undo(slot)} title="Undo (Ctrl+Z)" aria-label="Undo"><IconUndo /></button>
+        <button class="icon-btn" disabled={!d.redo.length} onClick={() => redo(slot)} title="Redo (Ctrl+Y)" aria-label="Redo"><IconRedo /></button>
       </div>
       <div class="ptn-editbar-group">
-        <span class="muted small">сетка</span>
-        <div class="segmented" role="group" aria-label="Шаг сетки">
+        <span class="muted small">grid</span>
+        <div class="segmented" role="group" aria-label="Grid step">
           {GRIDS.map(([t, label]) => <button key={t} class={t === g ? "on" : ""} aria-pressed={t === g} onClick={() => (gridTicks.value = t)}>{label}</button>)}
         </div>
         <div class="segmented">
           <button class={snapOn.value ? "on" : ""} aria-pressed={snapOn.value} onClick={() => (snapOn.value = !snapOn.value)}
-            title="Привязка к сетке. Выключите, чтобы ставить и двигать ноты между шагами">привязка</button>
+            title="Snap to grid. Turn off to place and move notes between grid steps">snap</button>
         </div>
       </div>
-      <div class="ptn-editbar-group" title="Сила удара новых нот: клик, протяжка, заполнение строки">
-        <span class="muted small">сила</span>
-        <div class="segmented" role="group" aria-label="Сила новых нот">
+      <div class="ptn-editbar-group" title="Velocity for new notes: click, drag or row fill">
+        <span class="muted small">velocity</span>
+        <div class="segmented" role="group" aria-label="New note velocity">
           {VELOCITY_PRESETS.map(([v, label]) => (
             <button key={v} class={newVelocity.value === v ? "on" : ""} aria-pressed={newVelocity.value === v} onClick={() => (newVelocity.value = v)} title={`${label}: ${v}`}>{label}</button>
           ))}
         </div>
-        <input class="value-field ptn-vel-field" type="number" min={1} max={127} value={newVelocity.value} aria-label="Сила новых нот, 1–127"
+        <input class="value-field ptn-vel-field" type="number" min={1} max={127} value={newVelocity.value} aria-label="New note velocity, 1–127"
           onChange={(e) => { const v = Math.round(+(e.currentTarget as HTMLInputElement).value); if (v >= 1 && v <= 127) newVelocity.value = v; else (e.currentTarget as HTMLInputElement).value = String(newVelocity.value); }} />
       </div>
       <div class="ptn-editbar-group">
-        <span class="muted small">такты</span>
-        <button class="icon-btn" disabled={bars <= 1} onClick={() => edit(slot, setBars(p, bars - 1))} title="Короче на такт: ноты за концом пропадут" aria-label="Короче на такт"><IconMinus /></button>
+        <span class="muted small">bars</span>
+        <button class="icon-btn" disabled={bars <= 1} onClick={() => edit(slot, setBars(p, bars - 1))} title="Shorten by one bar: notes past the new end are removed" aria-label="Shorten by one bar"><IconMinus /></button>
         <b class="ptn-bars">{bars}</b>
-        <button class="icon-btn" disabled={bars >= MAX_BARS} onClick={() => edit(slot, setBars(p, bars + 1))} title="Длиннее на такт" aria-label="Длиннее на такт"><IconPlus /></button>
-        <button class="btn ptn-mini" disabled={doublePattern(p) === p} onClick={() => edit(slot, doublePattern(p))} title="Удвоить: паттерн вдвое длиннее, вторая половина — копия первой">×2</button>
+        <button class="icon-btn" disabled={bars >= MAX_BARS} onClick={() => edit(slot, setBars(p, bars + 1))} title="Lengthen by one bar" aria-label="Lengthen by one bar"><IconPlus /></button>
+        <button class="btn ptn-mini" disabled={doublePattern(p) === p} onClick={() => edit(slot, doublePattern(p))} title="Double: extend the pattern to twice its length and copy the first half into the second">×2</button>
       </div>
-      <select class="project-select ptn-addpad" value="" aria-label="Добавить строку" onChange={(e) => {
+      <select class="project-select ptn-addpad" value="" aria-label="Add row" onChange={(e) => {
         const v = (e.currentTarget as HTMLSelectElement).value;
         (e.currentTarget as HTMLSelectElement).value = "";
         if (v.startsWith("bank")) onAddPads(byBank.get(+v.slice(4)) ?? []);
         else if (v) onAddPads([+v]);
       }} disabled={!options.length}>
-        <option value="">+ строка…</option>
+        <option value="">+ row…</option>
         {[...byBank].map(([bank, list]) => (
-          <optgroup key={bank} label={`Банк ${"ABCDEFGHIJ"[bank]}`}>
-            {list.length > 1 && <option value={`bank${bank}`}>все пады банка {"ABCDEFGHIJ"[bank]} ({list.length})</option>}
-            {list.map((i) => <option key={i} value={i}>{padName(i)} {pads.value[i]?.name || "без имени"}</option>)}
+          <optgroup key={bank} label={`Bank ${"ABCDEFGHIJ"[bank]}`}>
+            {list.length > 1 && <option value={`bank${bank}`}>all pads in bank {"ABCDEFGHIJ"[bank]} ({list.length})</option>}
+            {list.map((i) => <option key={i} value={i}>{padName(i)} {pads.value[i]?.name || "untitled"}</option>)}
           </optgroup>
         ))}
       </select>
-      {isDirty(d) && <button class="btn btn-ghost ptn-revert" onClick={() => revert(slot)} title="Вернуть паттерн таким, как он на SP (можно отменить)">сбросить правки</button>}
-      {midiState.value !== "ready" && <span class="muted small" title="Шаги слышны через SP по USB-MIDI. Откройте страницу в Chrome и подключите SP">звук: нет MIDI-порта SP</span>}
+      {isDirty(d) && <button class="btn btn-ghost ptn-revert" onClick={() => revert(slot)} title="Restore the pattern as it is on SP (can be undone)">reset edits</button>}
+      {midiState.value !== "ready" && <span class="muted small" title="Steps play through SP over USB MIDI. Open the page in Chrome and connect SP">audio: no SP MIDI port</span>}
       <span class="ptn-save-slot"><SaveControl slot={slot} /></span>
     </div>
   );
@@ -553,41 +553,41 @@ function EditBar({ slot, d, rows, onAddPads }: { slot: number; d: Draft; rows: n
 /** Pitch, length and rolls of the picked note; velocity too, as a number. */
 function NoteStrip({ slot, d, grid }: { slot: number; d: Draft; grid: number }) {
   const n = d.sel !== null ? findNote(d.p, d.sel) : undefined;
-  if (!n) return <div class="ptn-readout idle">Пустая клетка — нота, протяните — ряд нот. Клик по ноте выбирает её, второй клик или правая кнопка убирает (с протяжкой правой — несколько; Delete). Alt+протяжка по ноте вверх-вниз — сила. Тяните ноту — сдвиг, за край — длина. Shift+протяжка — рамка, Shift+клик — добавить к выбору, Ctrl+A — все. Ctrl+C / Ctrl+V / Ctrl+D, стрелки — сдвиг выбранного; без выбора стрелки водят курсор, Enter ставит или убирает ноту. ⋯ у строки и номер такта — их действия.</div>;
+  if (!n) return <div class="ptn-readout idle">Click an empty cell to add a note; drag to add a series. Click a note to select it; click again or right-click to remove it (right-drag removes several; Delete also removes). Alt-drag a note vertically to change velocity. Drag a note to move it, or its edge to change length. Shift-drag a selection box, Shift-click to add to the selection, Ctrl+A to select all. Ctrl+C / Ctrl+V / Ctrl+D; arrow keys move selected notes. With no selection, arrows move the cursor; Enter adds or removes a note. Use ⋯ by a row or the bar number for their actions.</div>;
   const p = d.p, bt = barTicks(p), inBar = n.tick % bt, off = inBar % STEP, st = semitonesOf(n);
   const lenSteps = (n.gate + 1) / STEP;
   const b = pads.value[n.pad];
   const roll = (k: number) => { const r = rollNote(p, n.seq, k, Math.max(grid, STEP)); if (r.seqs.length) edit(slot, r.pattern, { sel: r.seqs[0] }); };
   return (
-    <div class="ptn-readout ptn-notestrip" role="group" aria-label="Выбранная нота">
+    <div class="ptn-readout ptn-notestrip" role="group" aria-label="Selected note">
       <b class="ptn-readout-pad">{padName(n.pad)}</b>
-      <span class="ptn-readout-name">{b?.size ? b.name || "без имени" : "пусто"}</span>
-      <span>такт {Math.floor(n.tick / bt) + 1}, шаг {Math.floor(inBar / STEP) + 1}{off ? ` +${off}` : ""}</span>
-      <label class="ptn-vel" title="Сила удара, 1–127">
-        <span class="ptn-vel-label">сила</span>
+      <span class="ptn-readout-name">{b?.size ? b.name || "untitled" : "empty"}</span>
+      <span>bar {Math.floor(n.tick / bt) + 1}, step {Math.floor(inBar / STEP) + 1}{off ? ` +${off}` : ""}</span>
+      <label class="ptn-vel" title="Velocity, 1–127">
+        <span class="ptn-vel-label">velocity</span>
         <input type="range" min={1} max={127} value={n.velocity}
           onInput={(e) => { held ??= draftOf(slot)!.p; preview(slot, setVelocity(draftOf(slot)!.p, n.seq, +(e.currentTarget as HTMLInputElement).value)); }}
           onChange={() => { if (held) settle(slot, held); held = null; }} />
         <b>{n.velocity}</b>
       </label>
-      <span class="ptn-strip-group" title="Высота в полутонах, как пишет TR-REC">
-        <span class="ptn-vel-label">высота</span>
-        <button class="icon-btn" disabled={(st ?? 0) <= -MAX_SEMITONES} onClick={() => { edit(slot, setSemitones(p, n.seq, (st ?? 0) - 1)); auditionPad(n.pad, n.velocity); }} aria-label="Ниже на полутон"><IconMinus /></button>
+      <span class="ptn-strip-group" title="Pitch in semitones, as recorded by TR-REC">
+        <span class="ptn-vel-label">pitch</span>
+        <button class="icon-btn" disabled={(st ?? 0) <= -MAX_SEMITONES} onClick={() => { edit(slot, setSemitones(p, n.seq, (st ?? 0) - 1)); auditionPad(n.pad, n.velocity); }} aria-label="One semitone down"><IconMinus /></button>
         <b>{st === null ? "—" : signed(st)}</b>
-        <button class="icon-btn" disabled={(st ?? 0) >= MAX_SEMITONES} onClick={() => { edit(slot, setSemitones(p, n.seq, (st ?? 0) + 1)); auditionPad(n.pad, n.velocity); }} aria-label="Выше на полутон"><IconPlus /></button>
+        <button class="icon-btn" disabled={(st ?? 0) >= MAX_SEMITONES} onClick={() => { edit(slot, setSemitones(p, n.seq, (st ?? 0) + 1)); auditionPad(n.pad, n.velocity); }} aria-label="One semitone up"><IconPlus /></button>
       </span>
       <span class="ptn-strip-group">
-        <span class="ptn-vel-label">длина</span>
+        <span class="ptn-vel-label">length</span>
         {[[0.5, "½"], [1, "1"], [2, "2"], [4, "4"]].map(([s, label]) => (
           <button key={s} class={`btn ptn-mini ${Math.abs(lenSteps - +s) < 0.02 ? "on" : ""}`} onClick={() => edit(slot, resizeNote(p, n.seq, +s * STEP - 1))}>{label}</button>
         ))}
-        <span class="muted small">шага</span>
+        <span class="muted small">steps</span>
       </span>
-      <span class="ptn-strip-group" title="Разбить ноту на части внутри шага, как sub-step в TR-REC">
-        <span class="ptn-vel-label">ролл</span>
+      <span class="ptn-strip-group" title="Split the note into parts within a step, as with sub-step in TR-REC">
+        <span class="ptn-vel-label">roll</span>
         {[2, 3, 4].map((k) => <button key={k} class="btn ptn-mini" disabled={!rollNote(p, n.seq, k, Math.max(grid, STEP)).seqs.length} onClick={() => roll(k)}>×{k}</button>)}
       </span>
-      <button class="icon-btn insp-delete ptn-strip-del" onClick={() => edit(slot, removeNote(p, n.seq), { sel: null })} title="Убрать ноту (Delete)" aria-label="Убрать ноту"><IconTrash /></button>
+      <button class="icon-btn insp-delete ptn-strip-del" onClick={() => edit(slot, removeNote(p, n.seq), { sel: null })} title="Remove note (Delete)" aria-label="Remove note"><IconTrash /></button>
     </div>
   );
 }
@@ -596,17 +596,17 @@ function NoteStrip({ slot, d, grid }: { slot: number; d: Draft; grid: number }) 
 export function SaveControl({ slot }: { slot: number }) {
   const why = saveBlockReason(slot), busy = patternWriting.value;
   if (saveConfirm.value === slot) return (
-    <span class="ptn-save-ask" role="alertdialog" aria-label="Сохранить паттерн на SP">
-      Записать {padName(slot)} на SP в проект {project1.value}? SP на несколько секунд уйдёт в проект {reloadVia()} и вернётся, чтобы перечитать паттерны.
-      <button class="btn btn-primary ptn-mini" onClick={() => confirmSave(true)}>Записать</button>
-      <button class="btn ptn-mini" onClick={() => confirmSave(false)}>Отмена</button>
+    <span class="ptn-save-ask" role="alertdialog" aria-label="Save pattern to SP">
+      Write {padName(slot)} to SP project {project1.value}? SP will briefly switch to project {reloadVia()} and return to reload patterns.
+      <button class="btn btn-primary ptn-mini" onClick={() => confirmSave(true)}>Write</button>
+      <button class="btn ptn-mini" onClick={() => confirmSave(false)}>Cancel</button>
     </span>
   );
   if (busy) return <span class="muted small ptn-save-busy">{busy}…</span>;
   return (
     <button class="btn btn-primary ptn-save" disabled={!!why} onClick={() => requestSave(slot)}
-      title={why ?? "Записать паттерн на SP (Ctrl+S). SP на несколько секунд уйдёт в другой проект и вернётся, чтобы перечитать паттерны"}>
-      <IconUpload /> Сохранить на SP
+      title={why ?? "Write the pattern to SP (Ctrl+S). SP briefly switches to another project and returns to reload patterns"}>
+      <IconUpload /> Save to SP
     </button>
   );
 }

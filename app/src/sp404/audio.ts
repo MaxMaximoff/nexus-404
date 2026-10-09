@@ -39,14 +39,14 @@ export async function decodeAudio(file: Blob & { name?: string }): Promise<Decod
     const samples = new Int16Array(n);
     const dv = new DataView(buf, wav.offset, n * 2);
     for (let i = 0; i < n; i++) samples[i] = dv.getInt16(i * 2, true);
-    return { samples, channels: wav.channels, frames: n / wav.channels, note: "WAV 48k/16, без перекодирования" };
+    return { samples, channels: wav.channels, frames: n / wav.channels, note: "WAV 48k/16, no conversion" };
   }
   const ctx = new OfflineAudioContext(1, 1, 48000);
   let audio: AudioBuffer;
   try {
     audio = await ctx.decodeAudioData(buf.slice(0)); // resampled to the context's 48 kHz
   } catch {
-    throw new Error("браузер не смог декодировать файл (поддерживаются WAV, MP3, FLAC, OGG, AAC/M4A)");
+    throw new Error("The browser could not decode this file (supported formats: WAV, MP3, FLAC, OGG, AAC/M4A)");
   }
   const channels = (Math.min(2, audio.numberOfChannels) as 1 | 2);
   const frames = audio.length;
@@ -58,7 +58,7 @@ export async function decodeAudio(file: Blob & { name?: string }): Promise<Decod
       samples[i * channels + c] = Math.round(x < 0 ? x * 32768 : x * 32767);
     }
   const src = wav ? `WAV ${wav.rate} Hz/${wav.bits} bit/${wav.channels} ch` : file.type || "audio";
-  const extra = audio.numberOfChannels > 2 ? `, взяты 2 из ${audio.numberOfChannels} каналов` : "";
+  const extra = audio.numberOfChannels > 2 ? `, using 2 of ${audio.numberOfChannels} channels` : "";
   return { samples, channels, frames, note: `${src} → 48k/16/${channels} ch${extra}` };
 }
 
@@ -126,9 +126,9 @@ export function bpmFromFileName(name: string): number | null {
 export function parseBpmInput(s: string): { x100: number } | { error: string } | null {
   const t = s.trim().replace(",", ".");
   if (!t) return null;
-  if (!/^\d{1,3}(\.\d{1,2})?$/.test(t)) return { error: "число вида 120 или 93.25" };
+  if (!/^\d{1,3}(\.\d{1,2})?$/.test(t)) return { error: "A number such as 120 or 93.25" };
   const x100 = Math.round(parseFloat(t) * 100);
-  if (x100 < 4000 || x100 > 20000) return { error: "от 40 до 200" };
+  if (x100 < 4000 || x100 > 20000) return { error: "40 to 200" };
   return { x100 };
 }
 

@@ -7,9 +7,9 @@ export function RowSound({ pad }: { pad: number }) {
   return (
     <span class="ptn-rowsound">
       <button class={`ptn-ms ${m ? "on mute" : ""}`} onClick={() => toggleMute(pad)} aria-pressed={m}
-        title="Заглушить строку при проигрывании (только прослушивание, в паттерн не пишется)">M</button>
+        title="Mute row during playback (preview only; not written to the pattern)">M</button>
       <button class={`ptn-ms ${s ? "on solo" : ""}`} onClick={() => toggleSolo(pad)} aria-pressed={s}
-        title="Слушать только эту строку (можно отметить несколько)">S</button>
+        title="Solo this row (multiple rows can be soloed)">S</button>
     </span>
   );
 }

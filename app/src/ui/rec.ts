@@ -70,7 +70,7 @@ registerProcessor("nexus-tap", NexusTap);
 export async function listInputs(): Promise<void> {
   try {
     const all = await navigator.mediaDevices.enumerateDevices();
-    recInputs.value = all.filter((d) => d.kind === "audioinput").map((d, i) => ({ id: d.deviceId, label: d.label || `Вход ${i + 1}` }));
+    recInputs.value = all.filter((d) => d.kind === "audioinput").map((d, i) => ({ id: d.deviceId, label: d.label || `Input ${i + 1}` }));
   } catch {
     recInputs.value = [];
   }
@@ -104,11 +104,11 @@ export async function arm(): Promise<void> {
     mute.gain.value = 0;
     src.connect(tap).connect(mute).connect(ctx.destination);
     recState.value = "armed";
-    log("info", `Вход для записи: ${track?.label || "по умолчанию"}, ${channels === 1 ? "моно" : "стерео"}`);
+    log("info", `Recording input: ${track?.label || "default"}, ${channels === 1 ? "mono" : "stereo"}`);
   } catch (e) {
     const err = e as DOMException;
-    recError.value = err.name === "NotAllowedError" ? "Доступ ко входу запрещён — разрешите микрофон для этой страницы (значок слева от адреса)"
-      : err.name === "NotFoundError" || err.name === "OverconstrainedError" ? "Вход не найден — выберите другой"
+    recError.value = err.name === "NotAllowedError" ? "Input access denied — allow microphone access for this page using the icon to the left of the address"
+      : err.name === "NotFoundError" || err.name === "OverconstrainedError" ? "Input not found — choose another one"
       : err.message;
     disarm();
   }
@@ -148,7 +148,7 @@ function onBlock(b: Float32Array[]): void {
   recSeconds.value = frames / RATE;
   if (frames >= MAX_SECONDS * RATE) {
     stop();
-    notice.value = { kind: "info", text: `Запись остановлена на ${MAX_SECONDS / 60} минутах` };
+    notice.value = { kind: "info", text: `Recording stopped at ${MAX_SECONDS / 60} minutes` };
   }
 }
 
@@ -171,7 +171,7 @@ export function stop(): void {
   if (!samples.length) return;
   const d = new Date(), p2 = (x: number) => String(x).padStart(2, "0");
   setTake(samples, channels, `rec_${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`);
-  log("info", `Записан дубль ${recTake.value!.name}: ${(recTake.value!.frames / RATE).toFixed(2)} s`);
+  log("info", `Recorded take ${recTake.value!.name}: ${(recTake.value!.frames / RATE).toFixed(2)} s`);
 }
 
 /** Make interleaved 16-bit PCM the take (with its waveform). */
@@ -197,7 +197,7 @@ export async function ensureArmed(): Promise<boolean> {
  * must be open; the meter and the time show as for a recording.
  */
 export async function capture(run: () => Promise<void>): Promise<{ chans: Float32Array[]; channels: 1 | 2 }> {
-  if (recState.value !== "armed") throw new Error("вход не открыт");
+  if (recState.value !== "armed") throw new Error("input is not open");
   blocks = [];
   frames = 0;
   recSeconds.value = 0;
@@ -270,6 +270,6 @@ export function takeToPad(pad: number): void {
   const t = recTake.value;
   if (!t) return;
   const file = new File([encodeWav(t.samples, t.channels)], `${t.name}.wav`, { type: "audio/wav" });
-  log("info", `Дубль ${t.name} → ${padName(pad)}`);
+  log("info", `Take ${t.name} → ${padName(pad)}`);
   importFiles([file], pad, t.bpmX100 ?? undefined);
 }

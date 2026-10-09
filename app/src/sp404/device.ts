@@ -69,7 +69,7 @@ export class SP404Device {
       if (!this.quiet) this.log("debug", `< ch${m.channel.toString(16).padStart(2, "0")} ${m.short ? "S" : "L"} ${hex(m.payload)}`);
       if (m.channel === CH_CONTROL && m.payload[0] === 0x32 && m.payload.length >= 5) {
         const code = new DataView(m.payload.buffer, m.payload.byteOffset).getInt32(1, true);
-        this.log("warn", `SP сообщил об ошибке: ${deviceErrorText(code)} (${code})`);
+        this.log("warn", `SP reported an error: ${deviceErrorText(code)} (${code})`);
       }
       if (this.waiter && this.waiter.pred(m)) {
         const w = this.waiter;
@@ -90,7 +90,7 @@ export class SP404Device {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.waiter = null;
-        reject(new DeviceError(`нет ответа от SP: ${what}`));
+        reject(new DeviceError(`No response from SP: ${what}`));
       }, ms);
       this.waiter = { pred, resolve, timer };
     });
@@ -130,7 +130,7 @@ export class SP404Device {
   /** Short command whose reply is `cmd status`; fails unless status is 0. */
   private async command(payload: number[], expect: number, what: string): Promise<void> {
     const p = (await this.ctl(payload, (q) => q[0] === expect, what)).payload;
-    if (p.length > 1 && p[1] !== 0) throw new DeviceError(`${what}: статус ${p[1]}`);
+    if (p.length > 1 && p[1] !== 0) throw new DeviceError(`${what}: status ${p[1]}`);
   }
 
   private fire(payload: number[]): Promise<void> {
@@ -197,7 +197,7 @@ export class SP404Device {
   async previewStart(pad: number): Promise<void> {
     await this.selectOnDevice(pad);
     const p = (await this.ctl([0x8e, pad & 0xff, pad >> 8, 0x7f, 0xff], (q) => q[0] === 0x0e && q[1] === (pad & 0xff), "preview start")).payload;
-    if (p.length > 3 && p[3] !== 0) throw new DeviceError(`прослушивание: статус ${p[3]}`);
+    if (p.length > 3 && p[3] !== 0) throw new DeviceError(`Preview: status ${p[3]}`);
   }
 
   async previewStop(pad: number): Promise<void> {
@@ -230,20 +230,20 @@ export class SP404Device {
    * occupied destination is an error instead of a swap.
    */
   async movePad(project1: number, src: number, dst: number, onlyToEmpty = false): Promise<{ src: PadBlock; dst: PadBlock; swapped: boolean }> {
-    for (const p of [src, dst]) if (!(Number.isInteger(p) && p >= 0 && p < PAD_COUNT)) throw new DeviceError(`нет pad'а ${p}`);
-    if (src === dst) throw new DeviceError("pad переносится сам на себя");
+    for (const p of [src, dst]) if (!(Number.isInteger(p) && p >= 0 && p < PAD_COUNT)) throw new DeviceError(`No pad ${p}`);
+    if (src === dst) throw new DeviceError("Cannot move a pad onto itself");
     await this.requireCurrent(project1);
-    if (!(await this.padBlock(src)).size) throw new DeviceError(`${padName(src)} пуст`);
+    if (!(await this.padBlock(src)).size) throw new DeviceError(`${padName(src)} is empty`);
     const swapped = !!(await this.padBlock(dst)).size;
-    if (swapped && onlyToEmpty) throw new DeviceError(`${padName(dst)} уже занят`);
+    if (swapped && onlyToEmpty) throw new DeviceError(`${padName(dst)} is already occupied`);
     this.policy.moveToEmpty = swapped ? null : dst;
     try {
-      await this.command([0x95, src & 0xff, src >> 8, dst & 0xff, dst >> 8, swapped ? 1 : 0, 0], 0x15, "перенос pad'а");
+      await this.command([0x95, src & 0xff, src >> 8, dst & 0xff, dst >> 8, swapped ? 1 : 0, 0], 0x15, "Move pad");
     } finally {
       this.policy.moveToEmpty = null;
     }
     await this.waitFor((m) => m.channel === CH_CONTROL && m.payload[0] === 0x1a, 3000, "project update").catch(() =>
-      this.log("warn", "SP не прислал 1A после переноса, читаю блоки так"));
+      this.log("warn", "SP did not send 1A after the move; reading pad blocks anyway"));
     return { src: await this.padBlock(src), dst: await this.padBlock(dst), swapped };
   }
 
@@ -253,22 +253,22 @@ export class SP404Device {
    * `11 00` twice and then `1A proj`; the block is re-read after that and must be empty.
    */
   async deletePad(project1: number, pad: number): Promise<PadBlock> {
-    if (!(Number.isInteger(pad) && pad >= 0 && pad < PAD_COUNT)) throw new DeviceError(`нет pad'а ${pad}`);
+    if (!(Number.isInteger(pad) && pad >= 0 && pad < PAD_COUNT)) throw new DeviceError(`No pad ${pad}`);
     await this.requireCurrent(project1);
-    if (!(await this.padBlock(pad)).size) throw new DeviceError(`${padName(pad)} уже пуст`);
-    if ((await this.projectSettings(project1 - 1)).banks[pad >> 4]?.protected) throw new DeviceError(`банк ${BANKS[pad >> 4]} защищён (BANK Protect)`);
+    if (!(await this.padBlock(pad)).size) throw new DeviceError(`${padName(pad)} is already empty`);
+    if ((await this.projectSettings(project1 - 1)).banks[pad >> 4]?.protected) throw new DeviceError(`bank ${BANKS[pad >> 4]} is protected (BANK Protect)`);
     this.policy.deletePad = pad;
     try {
-      await this.command([0x91, pad & 0xff, pad >> 8, 0x00, 0x00], 0x11, "удаление pad'а");
+      await this.command([0x91, pad & 0xff, pad >> 8, 0x00, 0x00], 0x11, "Delete pad");
     } finally {
       this.policy.deletePad = null;
     }
     // The second 11 00 and the 1A may come in either order; take both so neither is mistaken for a later reply.
     const ctl = (c: number) => (m: Message) => m.channel === CH_CONTROL && m.payload[0] === c;
-    await this.waitFor(ctl(0x11), 2000, "второй ответ на удаление").catch(() => this.log("warn", "SP не прислал второй 11 00 после удаления"));
-    await this.waitFor(ctl(0x1a), 3000, "project update").catch(() => this.log("warn", "SP не прислал 1A после удаления, читаю блок так"));
+    await this.waitFor(ctl(0x11), 2000, "Second delete response").catch(() => this.log("warn", "SP did not send a second 11 00 after deletion"));
+    await this.waitFor(ctl(0x1a), 3000, "project update").catch(() => this.log("warn", "SP did not send 1A after deletion; reading the pad block anyway"));
     const block = await this.padBlock(pad);
-    if (block.size) throw new DeviceError(`${padName(pad)}: после удаления блок не пуст`);
+    if (block.size) throw new DeviceError(`${padName(pad)}: pad block is not empty after deletion`);
     return block;
   }
 
@@ -277,11 +277,11 @@ export class SP404Device {
    * blocks read empty for a while, so the caller waits before reading them (report §0).
    */
   async selectProject(project1: number): Promise<void> {
-    if (!(Number.isInteger(project1) && project1 >= 1 && project1 <= PROJECT_COUNT)) throw new DeviceError(`нет проекта ${project1}`);
+    if (!(Number.isInteger(project1) && project1 >= 1 && project1 <= PROJECT_COUNT)) throw new DeviceError(`No project ${project1}`);
     const st = await this.status();
-    if (st.workingMode !== 0) throw new DeviceError("SP показывает меню — закройте его на устройстве");
+    if (st.workingMode !== 0) throw new DeviceError("SP is showing a menu — close it on the device");
     if (st.project + 1 === project1) return;
-    await this.command([0x9a, project1 - 1, 0x00], 0x1a, "выбор проекта");
+    await this.command([0x9a, project1 - 1, 0x00], 0x1a, "Select project");
   }
 
   /** What the official app sends when it lets go of the device. No reply. */
@@ -306,7 +306,7 @@ export class SP404Device {
   private async editPad(project1: number, pad: number, fn: (block: PadBlock) => Promise<void>): Promise<PadBlock> {
     await this.requireCurrent(project1);
     const block = await this.padBlock(pad);
-    if (!block.size) throw new DeviceError(`${padName(pad)} пуст`);
+    if (!block.size) throw new DeviceError(`${padName(pad)} is empty`);
     await fn(block);
     return this.padBlock(pad);
   }
@@ -318,7 +318,7 @@ export class SP404Device {
   }
 
   async setLevel(project1: number, pad: number, level: number): Promise<PadBlock> {
-    if (!(Number.isInteger(level) && level >= 0 && level <= LEVEL_MAX)) throw new DeviceError(`Level должен быть от 0 до ${LEVEL_MAX}`);
+    if (!(Number.isInteger(level) && level >= 0 && level <= LEVEL_MAX)) throw new DeviceError(`Level must be between 0 and ${LEVEL_MAX}`);
     return this.editPad(project1, pad, () => this.setParam(pad, PARAM_LEVEL, level));
   }
 
@@ -340,14 +340,14 @@ export class SP404Device {
   }
 
   async setTimeStretch(project1: number, pad: number, x100: number): Promise<PadBlock> {
-    if (!(Number.isInteger(x100) && x100 >= STRETCH_MIN_X100 && x100 <= STRETCH_MAX_X100)) throw new DeviceError("Time Stretch должен быть от 50 до 150 %");
+    if (!(Number.isInteger(x100) && x100 >= STRETCH_MIN_X100 && x100 <= STRETCH_MAX_X100)) throw new DeviceError("Time Stretch must be between 50 and 150 %");
     return this.editPad(project1, pad, () => this.setParam(pad, PARAM_TIME_STRETCH, x100));
   }
 
   /** Pitch in semitones (±12) and cents (±100); only the changed one is sent. */
   async setPitch(project1: number, pad: number, coarse: number, fine: number): Promise<PadBlock> {
-    if (!(Number.isInteger(coarse) && Math.abs(coarse) <= PITCH_COARSE_MAX)) throw new DeviceError(`Pitch: полутоны от −${PITCH_COARSE_MAX} до ${PITCH_COARSE_MAX}`);
-    if (!(Number.isInteger(fine) && Math.abs(fine) <= PITCH_FINE_MAX)) throw new DeviceError(`Pitch: центы от −${PITCH_FINE_MAX} до ${PITCH_FINE_MAX}`);
+    if (!(Number.isInteger(coarse) && Math.abs(coarse) <= PITCH_COARSE_MAX)) throw new DeviceError(`Pitch: semitones from −${PITCH_COARSE_MAX} to ${PITCH_COARSE_MAX}`);
+    if (!(Number.isInteger(fine) && Math.abs(fine) <= PITCH_FINE_MAX)) throw new DeviceError(`Pitch: cents from −${PITCH_FINE_MAX} to ${PITCH_FINE_MAX}`);
     return this.editPad(project1, pad, async (b) => {
       if (coarse !== b.pitchCoarse) await this.setParam(pad, PARAM_PITCH_COARSE, coarse);
       if (fine !== b.pitchFine) await this.setParam(pad, PARAM_PITCH_FINE, fine);
@@ -366,8 +366,8 @@ export class SP404Device {
    */
   setPadParam(project1: number, pad: number, id: number, value: number): Promise<PadBlock> {
     const range = PLAIN_PARAMS.has(id) ? PAD_PARAM_RANGE.get(id) : undefined;
-    if (!range) throw new DeviceError(`параметр ${id.toString(16)} так не задаётся`);
-    if (!(Number.isInteger(value) && value >= range[0] && value <= range[1])) throw new DeviceError(`значение ${value} вне ${range[0]}–${range[1]}`);
+    if (!range) throw new DeviceError(`Parameter ${id.toString(16)} cannot be set this way`);
+    if (!(Number.isInteger(value) && value >= range[0] && value <= range[1])) throw new DeviceError(`Value ${value} is outside ${range[0]}–${range[1]}`);
     return this.editPad(project1, pad, () => this.setParam(pad, id, value));
   }
 
@@ -404,7 +404,7 @@ export class SP404Device {
 
   async setBankTempo(project1: number, bank: number, bpmX100: number) {
     checkBpm(bpmX100);
-    if (!(Number.isInteger(bank) && bank >= 0 && bank < 10)) throw new DeviceError(`нет банка ${bank}`);
+    if (!(Number.isInteger(bank) && bank >= 0 && bank < 10)) throw new DeviceError(`No bank ${bank}`);
     return this.editProject(project1, () => this.setParam(GLOBAL, PARAM_BANK_TEMPO + bank, bpmX100));
   }
 
@@ -416,7 +416,7 @@ export class SP404Device {
   /** Channel count from the SMP header on the card. */
   async sampleChannels(project1: number, pad: number): Promise<number> {
     const info = parseSmpHeader(await this.readFile(samplePath(project1, pad), SMP_HEADER_LEN));
-    if (!info || info.channels < 1 || info.channels > 2) throw new DeviceError(`${padName(pad)}: не удалось прочитать заголовок сэмпла`);
+    if (!info || info.channels < 1 || info.channels > 2) throw new DeviceError(`${padName(pad)}: could not read the sample header`);
     return info.channels;
   }
 
@@ -429,7 +429,7 @@ export class SP404Device {
       const ch = await this.sampleChannels(project1, pad);
       const total = byteToFrame(b.size, ch);
       if (!(Number.isInteger(start) && Number.isInteger(end) && start >= 0 && start < end && end <= total))
-        throw new DeviceError(`Start/End: нужно 0 ≤ Start < End ≤ ${total} кадров`);
+        throw new DeviceError(`Start/End: requires 0 ≤ Start < End ≤ ${total} frames`);
       const oldEnd = byteToFrame(b.endByte, ch);
       const steps: [number, number][] = [];
       if (start !== byteToFrame(b.startByte, ch)) steps.push([PARAM_START, start]);
@@ -441,8 +441,8 @@ export class SP404Device {
 
   private async requireCurrent(project1: number): Promise<DeviceStatus> {
     const st = await this.status();
-    if (st.project + 1 !== project1) throw new DeviceError(`на SP сейчас проект ${st.project + 1}, а не ${project1}`);
-    if (st.workingMode !== 0) throw new DeviceError("SP показывает меню — закройте его на устройстве");
+    if (st.project + 1 !== project1) throw new DeviceError(`SP is currently on project ${st.project + 1}, not ${project1}`);
+    if (st.workingMode !== 0) throw new DeviceError("SP is showing a menu — close it on the device");
     return st;
   }
 
@@ -455,8 +455,8 @@ export class SP404Device {
 
   private async statusCall(payload: Uint8Array, what: string, ms = TIMEOUT): Promise<number> {
     const r = await this.fileCall(payload, what, ms);
-    if (r.kind !== "status") throw new DeviceError(`${what}: неожиданные данные`);
-    if (r.result === -1) throw new DeviceError(`${what}: отказ (errno ${r.extra})`);
+    if (r.kind !== "status") throw new DeviceError(`${what}: unexpected data`);
+    if (r.result === -1) throw new DeviceError(`${what}: rejected (errno ${r.extra})`);
     return r.result;
   }
 
@@ -479,7 +479,7 @@ export class SP404Device {
     for (;;) {
       const r = parseFileReply((await next).payload);
       if (r.kind === "status") {
-        if (r.result === -1) throw new DeviceError("read: отказ");
+        if (r.result === -1) throw new DeviceError("read: rejected");
         break;
       }
       chunks.push(r.data);
@@ -518,8 +518,8 @@ export class SP404Device {
    */
   async writeCardFile(path: string, data: Uint8Array, onProgress: Progress = () => {}): Promise<void> {
     const wire = remotePath(path);
-    if (!path.startsWith(CARD) || !isCardImportFile(wire)) throw new DeviceError(`на карту можно писать только в IMPORT: ${path}`);
-    if (await this.stat(path)) throw new DeviceError(`на карте уже есть ${wire}`);
+    if (!path.startsWith(CARD) || !isCardImportFile(wire)) throw new DeviceError(`Files can only be written to IMPORT on the card: ${path}`);
+    if (await this.stat(path)) throw new DeviceError(`Already exists on the card: ${wire}`);
     this.policy.cardWrite = wire;
     try {
       const h = await this.statusCall(FileReq.open(path, O_CREAT_TRUNC_RDWR), `open ${wire}`);
@@ -537,7 +537,7 @@ export class SP404Device {
       this.policy.cardWrite = null;
     }
     const st = await this.stat(path);
-    if (!st || st.size !== data.length) throw new DeviceError(`проверка размера: на карте ${st?.size ?? "нет файла"}, ожидалось ${data.length}`);
+    if (!st || st.size !== data.length) throw new DeviceError(`Size check: on the card ${st?.size ?? "no file"}, expected ${data.length}`);
     onProgress(data.length, data.length);
   }
 
@@ -548,12 +548,12 @@ export class SP404Device {
    */
   async deleteCardPath(path: string, onItem: (wire: string) => void = () => {}): Promise<number> {
     const wire = remotePath(path);
-    if (!path.startsWith(CARD) || !isCardImportFile(wire)) throw new DeviceError(`на карте можно удалять только внутри IMPORT: ${path}`);
+    if (!path.startsWith(CARD) || !isCardImportFile(wire)) throw new DeviceError(`Card entries can only be deleted inside IMPORT: ${path}`);
     const st = await this.stat(path);
-    if (!st) throw new DeviceError(`на карте нет ${wire}`);
+    if (!st) throw new DeviceError(`Not found on the card: ${wire}`);
     let n = 0;
     const remove = async (p: string, dir: boolean, depth: number): Promise<void> => {
-      if (depth > MAX_CARD_DEPTH) throw new DeviceError(`слишком глубокая вложенность: ${remotePath(p)}`);
+      if (depth > MAX_CARD_DEPTH) throw new DeviceError(`Folder nesting is too deep: ${remotePath(p)}`);
       if (dir) for (const e of await this.listDir(p)) await remove(`${p}/${e.name}`, e.dir, depth + 1);
       this.policy.cardDelete = remotePath(p);
       try {
@@ -571,8 +571,8 @@ export class SP404Device {
   /** Create a folder inside the card's IMPORT/; an existing name is refused. */
   async mkdirCard(path: string): Promise<void> {
     const wire = remotePath(path);
-    if (!path.startsWith(CARD) || !isCardImportFile(wire)) throw new DeviceError(`папки на карте создаются только внутри IMPORT: ${path}`);
-    if (await this.stat(path)) throw new DeviceError(`на карте уже есть ${wire}`);
+    if (!path.startsWith(CARD) || !isCardImportFile(wire)) throw new DeviceError(`Card folders can only be created inside IMPORT: ${path}`);
+    if (await this.stat(path)) throw new DeviceError(`Already exists on the card: ${wire}`);
     this.policy.cardMkdir = wire;
     try {
       await this.statusCall(FileReq.mkdir(path), `mkdir ${wire}`);
@@ -588,12 +588,12 @@ export class SP404Device {
   async renameCard(from: string, to: string): Promise<void> {
     const a = remotePath(from), b = remotePath(to);
     if (![from, to].every((p) => p.startsWith(CARD)) || !isCardImportFile(a) || !isCardImportFile(b))
-      throw new DeviceError(`переносить на карте можно только внутри IMPORT: ${a} → ${b}`);
+      throw new DeviceError(`Card entries can only be moved inside IMPORT: ${a} → ${b}`);
     if (a === b) return;
-    if (b.startsWith(`${a}/`)) throw new DeviceError(`папку нельзя перенести в саму себя: ${a} → ${b}`);
-    if (!(await this.stat(from))) throw new DeviceError(`на карте нет ${a}`);
+    if (b.startsWith(`${a}/`)) throw new DeviceError(`Cannot move a folder into itself: ${a} → ${b}`);
+    if (!(await this.stat(from))) throw new DeviceError(`Not found on the card: ${a}`);
     // Only a change of case is the same entry on the card's filesystem; anything else that exists is refused.
-    if (a.toLowerCase() !== b.toLowerCase() && (await this.stat(to))) throw new DeviceError(`на карте уже есть ${b}`);
+    if (a.toLowerCase() !== b.toLowerCase() && (await this.stat(to))) throw new DeviceError(`Already exists on the card: ${b}`);
     const req = FileReq.rename(from, to); // throws on a path that does not fit, before anything is sent
     this.policy.cardRename = { from: a, to: b };
     try {
@@ -610,14 +610,14 @@ export class SP404Device {
    * `onStep` names each stage for the UI.
    */
   async writePatternAndReload(project1: number, slot: number, bytes: Uint8Array, via: number, onStep: (what: string) => void = () => {}): Promise<{ kept: boolean }> {
-    if (via === project1) throw new DeviceError("для перезагрузки нужен другой проект");
+    if (via === project1) throw new DeviceError("Reloading requires a different project");
     const st = await this.requireCurrent(project1);
-    onStep("пишу файл");
+    onStep("Writing file");
     await this.putPatternFile(st, project1, slot, bytes);
-    onStep(`переключаю SP на проект ${via}`);
+    onStep(`Switching SP to project ${via}`);
     await this.selectProject(via);
     await this.waitProject(via);
-    onStep(`возвращаю SP на проект ${project1}`);
+    onStep(`Returning SP to project ${project1}`);
     await this.selectProject(project1);
     await this.waitProject(project1);
     const after = await this.readFile(patternPath(project1, slot));
@@ -628,22 +628,22 @@ export class SP404Device {
   private async waitProject(project1: number): Promise<void> {
     const deadline = Date.now() + 15000;
     while ((await this.status()).project + 1 !== project1) {
-      if (Date.now() > deadline) throw new DeviceError(`SP не перешёл на проект ${project1}`);
+      if (Date.now() > deadline) throw new DeviceError(`SP did not switch to project ${project1}`);
       await new Promise((r) => setTimeout(r, 300));
     }
     await new Promise((r) => setTimeout(r, 2500));
   }
 
   private async putPatternFile(st: DeviceStatus, project1: number, slot: number, bytes: Uint8Array): Promise<void> {
-    if (!(Number.isInteger(project1) && project1 >= 1 && project1 <= PROJECT_COUNT)) throw new DeviceError(`нет проекта ${project1}`);
-    if (!(Number.isInteger(slot) && slot >= 0 && slot < PAD_COUNT)) throw new DeviceError(`нет слота паттерна ${slot}`);
+    if (!(Number.isInteger(project1) && project1 >= 1 && project1 <= PROJECT_COUNT)) throw new DeviceError(`No project ${project1}`);
+    if (!(Number.isInteger(slot) && slot >= 0 && slot < PAD_COUNT)) throw new DeviceError(`No pattern slot ${slot}`);
     parsePattern(bytes); // refuses anything that is not a whole pattern file
-    if (bytes.length > 0x10000) throw new DeviceError(`файл паттерна слишком велик: ${bytes.length} байт`);
-    if (st.workingMode !== 0) throw new DeviceError("SP показывает меню — закройте его на устройстве");
+    if (bytes.length > 0x10000) throw new DeviceError(`Pattern file is too large: ${bytes.length} bytes`);
+    if (st.workingMode !== 0) throw new DeviceError("SP is showing a menu — close it on the device");
     const dir = patternDir(project1), path = patternPath(project1, slot), wire = remotePath(path);
     const parent = dir.slice(0, dir.lastIndexOf("/"));
     if (!(await this.listDir(parent)).some((e) => e.dir && e.name.toUpperCase() === "PTN"))
-      throw new DeviceError(`в проекте ${project1} нет папки PTN: запишите в нём на SP любой паттерн, и папка появится`);
+      throw new DeviceError(`Project ${project1} has no PTN folder: record any pattern on SP in this project to create it`);
     this.policy.patternWrite = wire;
     try {
       await this.fire([0xfb, 0x00, 0x00]); // begin (no reply)
@@ -664,7 +664,7 @@ export class SP404Device {
     }
     const back = await this.readFile(path);
     if (!back || back.length !== bytes.length || back.some((b, i) => b !== bytes[i]))
-      throw new DeviceError(`проверка: в ${wire} записалось не то (${back?.length ?? "нет файла"} байт из ${bytes.length})`);
+      throw new DeviceError(`Verification: ${wire} contains different data (${back?.length ?? "no file"} bytes of ${bytes.length})`);
   }
 
   /** Whole file, or its first `limit` bytes. `null` when it does not exist. */
@@ -698,11 +698,11 @@ export class SP404Device {
    * written on the SP. `onProgress` gets 0..1 from the SP's progress reports.
    */
   async bouncePattern(project1: number, slot: number, onProgress: (f: number) => void = () => {}): Promise<Uint8Array> {
-    if (!(Number.isInteger(slot) && slot >= 0 && slot < PAD_COUNT)) throw new DeviceError(`нет слота паттерна ${slot}`);
+    if (!(Number.isInteger(slot) && slot >= 0 && slot < PAD_COUNT)) throw new DeviceError(`No pattern slot ${slot}`);
     await this.requireCurrent(project1);
     const id = [slot & 0xff, slot >> 8];
     const control = (op: number) => this.ctl([0xb8, ...id, op & 0xff, op >> 8, 0, 0],
-      (q) => q[0] === 0x38 && q[1] === id[0] && q[2] === id[1] && (q[3] | (q[4] << 8)) === op, `рендер ${op}`);
+      (q) => q[0] === 0x38 && q[1] === id[0] && q[2] === id[1] && (q[3] | (q[4] << 8)) === op, `Render ${op}`);
     const file = new HostFile();
     this.policy.renderPattern = slot;
     try {
@@ -712,7 +712,7 @@ export class SP404Device {
         try {
           await this.serveRender(id, RENDER_BOUNCE, file, onProgress);
         } finally {
-          await control(RENDER_END).catch((e) => this.log("warn", `конец рендера: ${(e as Error).message}`));
+          await control(RENDER_END).catch((e) => this.log("warn", `End render: ${(e as Error).message}`));
         }
       } finally {
         await this.fire([0xfc, 0x00, 0x00]); // end (no reply)
@@ -740,16 +740,16 @@ export class SP404Device {
         }
         let m: Message;
         try {
-          m = await this.waitFor((x) => !isStatus(x), RENDER_POLL, "рендер");
+          m = await this.waitFor((x) => !isStatus(x), RENDER_POLL, "Render");
         } catch {
-          if (Date.now() - heard > RENDER_IDLE) throw new DeviceError(`SP молчит ${RENDER_IDLE / 1000} s во время рендера`);
+          if (Date.now() - heard > RENDER_IDLE) throw new DeviceError(`SP has been silent for ${RENDER_IDLE / 1000} s during rendering`);
           continue;
         }
         heard = Date.now();
         const p = m.payload;
         if (m.channel === CH_FILE && !m.short) {
           const r = parseDeviceFileRequest(p);
-          if (!r) { this.log("warn", `рендер: непонятный запрос файла ${hex(p, 16)}`); continue; }
+          if (!r) { this.log("warn", `Render: unrecognized file request ${hex(p, 16)}`); continue; }
           const result = r.op === "write" ? file.write(r.data) : file.seek(r.offset);
           await this.send(CH_FILE, Uint8Array.from(HOST_ACK), true);
           await this.send(CH_FILE, hostStatus(result), false);
@@ -757,7 +757,7 @@ export class SP404Device {
         }
         if (m.channel === CH_CONTROL && p[0] === 0x39 && p.length >= 9 && p[1] === id[0] && p[2] === id[1] && (p[3] | (p[4] << 8)) === op) {
           const code = p[7] | (p[8] << 8);
-          if (code !== 0) throw new DeviceError(`SP не смог отрендерить паттерн (код ${code})`);
+          if (code !== 0) throw new DeviceError(`SP could not render the pattern (code ${code})`);
           onProgress(1);
           return;
         }
@@ -785,7 +785,7 @@ export class SP404Device {
       const ack = this.waitFor((m) => m.channel === CH_FILE && !m.short, 10000, "write ack");
       await this.t.write(concat(frames)); // one serial write per batch
       const r = parseFileReply((await ack).payload);
-      if (r.kind !== "status" || r.result !== expected) throw new DeviceError(`запись: SP принял ${r.kind === "status" ? r.result : "?"} из ${expected} байт`);
+      if (r.kind !== "status" || r.result !== expected) throw new DeviceError(`Write: SP accepted ${r.kind === "status" ? r.result : "?"} of ${expected} bytes`);
       done += expected;
       onProgress(done, data.length);
     }
@@ -802,16 +802,16 @@ export class SP404Device {
    * first half, writing the second. Returns the new block and the settings that did not come out equal.
    */
   async copyPad(project1: number, src: number, dst: number, onProgress: Progress = () => {}): Promise<{ block: PadBlock; differs: string[] }> {
-    for (const p of [src, dst]) if (!(Number.isInteger(p) && p >= 0 && p < PAD_COUNT)) throw new DeviceError(`нет pad'а ${p}`);
-    if (src === dst) throw new DeviceError("pad копируется сам на себя");
+    for (const p of [src, dst]) if (!(Number.isInteger(p) && p >= 0 && p < PAD_COUNT)) throw new DeviceError(`No pad ${p}`);
+    if (src === dst) throw new DeviceError("Cannot copy a pad onto itself");
     await this.requireCurrent(project1);
     const s = await this.padBlock(src);
-    if (!s.size) throw new DeviceError(`${padName(src)} пуст`);
-    if ((await this.padBlock(dst)).size) throw new DeviceError(`${padName(dst)} уже занят`); // before the long read
+    if (!s.size) throw new DeviceError(`${padName(src)} is empty`);
+    if ((await this.padBlock(dst)).size) throw new DeviceError(`${padName(dst)} is already occupied`); // before the long read
     const smp = await this.readFile(samplePath(project1, src), Infinity, (d, t) => onProgress(d, 2 * t));
-    if (!smp || smp.length !== s.size) throw new DeviceError(`${padName(src)}: не удалось прочитать сэмпл (${smp?.length ?? "нет файла"} из ${s.size} байт)`);
+    if (!smp || smp.length !== s.size) throw new DeviceError(`${padName(src)}: could not read the sample (${smp?.length ?? "no file"} of ${s.size} bytes)`);
     const ch = parseSmpHeader(smp)?.channels;
-    if (ch !== 1 && ch !== 2) throw new DeviceError(`${padName(src)}: не удалось прочитать заголовок сэмпла`);
+    if (ch !== 1 && ch !== 2) throw new DeviceError(`${padName(src)}: could not read the sample header`);
     const b = await this.importSmp(project1, dst, smp, s.name, (d, t) => onProgress(t + d, 2 * t));
 
     // Start, then End: the fresh pad spans the whole file, so Start < End holds at every step.
@@ -831,7 +831,7 @@ export class SP404Device {
       if (v < range[0] || v > range[1]) { skipped.push(`${id.toString(16)}=${v}`); continue; }
       await this.setParam(dst, id, v);
     }
-    if (skipped.length) this.log("warn", `${padName(dst)}: не скопировано (вне разрешённого): ${skipped.join(", ")}`);
+    if (skipped.length) this.log("warn", `${padName(dst)}: not copied (outside allowed range): ${skipped.join(", ")}`);
 
     const out = await this.padBlock(dst);
     const differs = [
@@ -844,7 +844,7 @@ export class SP404Device {
   async importSmp(project1: number, pad: number, smp: Uint8Array, name: string, onProgress: Progress = () => {}): Promise<PadBlock> {
     await this.requireCurrent(project1);
     const block = await this.padBlock(pad);
-    if (block.size !== 0) throw new DeviceError(`${padName(pad)} уже занят («${block.name}»)`);
+    if (block.size !== 0) throw new DeviceError(`${padName(pad)} is already occupied (“${block.name}”)`);
     const path = samplePath(project1, pad);
     const tmp = samplePath(project1, pad, "TMP");
     const id = [pad & 0xff, pad >> 8];
@@ -874,11 +874,11 @@ export class SP404Device {
           this.policy.writableHandles.delete(h);
         }
         const st = await this.stat(path);
-        if (!st || st.size !== smp.length) throw new DeviceError(`проверка размера: на SP ${st?.size ?? "нет файла"}, ожидалось ${smp.length}`);
+        if (!st || st.size !== smp.length) throw new DeviceError(`Size check: on SP ${st?.size ?? "no file"}, expected ${smp.length}`);
         const p = assignSampleBlock(block, smp.length, name);
         await this.ctl(p, (q) => q[0] === 0x1e && (q.length <= 2 || (q[1] === id[0] && q[2] === id[1])), "pad block write");
         const c = (await this.ctl([0x9f, ...id], (q) => q.length >= 4 && q[0] === 0x1f && q[1] === id[0] && q[2] === id[1], "commit")).payload;
-        if (c[3] !== 0) throw new DeviceError(`commit: статус ${c[3]}`);
+        if (c[3] !== 0) throw new DeviceError(`commit: status ${c[3]}`);
         onProgress(smp.length, smp.length);
       } finally {
         await this.fire([0xfc, 0x00, 0x00]); // end (no reply)
@@ -924,7 +924,7 @@ class HostFile {
 }
 
 function checkBpm(x100: number): void {
-  if (!(Number.isInteger(x100) && x100 >= BPM_MIN_X100 && x100 <= BPM_MAX_X100)) throw new DeviceError("BPM должен быть от 40 до 200");
+  if (!(Number.isInteger(x100) && x100 >= BPM_MIN_X100 && x100 <= BPM_MAX_X100)) throw new DeviceError("BPM must be between 40 and 200");
 }
 
 function concat(parts: Uint8Array[]): Uint8Array {

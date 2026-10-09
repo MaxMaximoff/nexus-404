@@ -65,7 +65,7 @@ export interface Pattern {
 export class PatternError extends Error {}
 
 export function parsePattern(bytes: Uint8Array): Pattern {
-  if (bytes.length < 2 * REC || bytes.length % REC) throw new PatternError(`файл паттерна ${bytes.length} байт — не кратно 8`);
+  if (bytes.length < 2 * REC || bytes.length % REC) throw new PatternError(`Pattern file ${bytes.length} bytes — not a multiple of 8`);
   const notes: PatternNote[] = [], controls: PatternControl[] = [];
   let tick = 0, unknown = 0, end = -1;
   for (let at = 0; at + REC <= bytes.length; at += REC) {
@@ -78,7 +78,7 @@ export function parsePattern(bytes: Uint8Array): Pattern {
     else if (type < 0x80) unknown++; // ≥ 0x80: only advances time
     tick += r[0];
   }
-  if (end < 0 || end + 2 * REC > bytes.length) throw new PatternError("в файле паттерна нет конца");
+  if (end < 0 || end + 2 * REC > bytes.length) throw new PatternError("Pattern file has no end marker");
   const trailer = bytes.subarray(end + REC, end + 2 * REC);
   const beatsPerBar = BEATS[trailer[4]] ?? 4;
   return { notes, controls, length: tick, bars: trailer[0] || Math.round(tick / (beatsPerBar * PPQ)), beatsPerBar, unknown, records: end / REC };
@@ -178,7 +178,7 @@ function splitPattern(bytes: Uint8Array): FileParts {
     recs.push({ tick, seq: at / REC, r });
     tick += r[0];
   }
-  throw new PatternError("в файле паттерна нет конца");
+  throw new PatternError("Pattern file has no end marker");
 }
 
 /** A note's record (byte 0, the delta, is set later). Over `base` it keeps that record's flag bits in byte 2. */
@@ -228,7 +228,7 @@ export function writePattern(p: Pattern, original?: Uint8Array | null, opts: { t
     out.sort((a, b) => a.tick - b.tick);
   }
   for (const n of p.notes.filter((x) => !placed.has(x.seq)).sort((a, b) => a.tick - b.tick || a.seq - b.seq)) {
-    if (n.tick < 0 || n.tick >= p.length) throw new PatternError(`нота ${n.pad} на тике ${n.tick} вне паттерна (${p.length})`);
+    if (n.tick < 0 || n.tick >= p.length) throw new PatternError(`Note ${n.pad} at tick ${n.tick} is outside the pattern (${p.length})`);
     let i = out.length;
     while (i > 0 && out[i - 1].tick > n.tick) i--;
     out.splice(i, 0, { tick: n.tick, r: noteRecord(n, bases.get(n.seq)) });

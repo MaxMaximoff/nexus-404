@@ -253,7 +253,7 @@ describe("guard", () => {
     expect(() => g2(CH_FILE, FileReq.mkdir("sd:/IMPORT"))).toThrow();
     pol.cardMkdir = null; pol.cardRename = null;
     expect(() => g2(CH_FILE, FileReq.mkdir("sd:/IMPORT/New"))).toThrow();
-    expect(() => FileReq.rename(`sd:/IMPORT/${"x".repeat(200)}`, "sd:/IMPORT/y")).toThrow(/длиннее/);
+    expect(() => FileReq.rename(`sd:/IMPORT/${"x".repeat(200)}`, "sd:/IMPORT/y")).toThrow(/exceeds/);
   });
   it("blocks import traffic when no import is running", () => {
     const idle = makeGuard({ importProject: null, importPad: null, writableHandles: new Set() });
@@ -454,7 +454,7 @@ describe("device against a scripted SP", () => {
     const dev = new SP404Device(sp.t);
     await dev.exclusive((d) => d.importSmp(4, 33, buildSmp(new Int16Array(4), 2), "a"));
     const before = sp.sent.length;
-    await expect(dev.exclusive((d) => d.importSmp(4, 33, buildSmp(new Int16Array(4), 2), "b"))).rejects.toThrow(/занят/);
+    await expect(dev.exclusive((d) => d.importSmp(4, 33, buildSmp(new Int16Array(4), 2), "b"))).rejects.toThrow(/occupied/);
     expect(sp.sent.slice(before).map((s) => s.slice(0, 4))).toEqual(["5:fe", "5:9e"]);
   });
   it("bounces a pattern: serves the SP's writes and seeks, gets its WAV byte for byte", async () => {
@@ -475,12 +475,12 @@ describe("device against a scripted SP", () => {
   it("refuses a bounce on a project that is not current, sending nothing but the status poll", async () => {
     const sp = fakeSp();
     const dev = new SP404Device(sp.t);
-    await expect(dev.exclusive((d) => d.bouncePattern(2, 0))).rejects.toThrow(/проект 4/);
+    await expect(dev.exclusive((d) => d.bouncePattern(2, 0))).rejects.toThrow(/project 4/);
     expect(sp.sent).toEqual(["5:fe6600"]);
   });
   it("refuses a project that is not current", async () => {
     const dev = new SP404Device(fakeSp().t);
-    await expect(dev.exclusive((d) => d.importSmp(1, 33, buildSmp(new Int16Array(4), 2), "a"))).rejects.toThrow(/проект 4/);
+    await expect(dev.exclusive((d) => d.importSmp(1, 33, buildSmp(new Int16Array(4), 2), "a"))).rejects.toThrow(/project 4/);
   });
   /** SP with a 1 s stereo sample (48 000 frames) imported on C2. */
   /** A 48 kHz/16-bit stereo WAV of clicks, `seconds` long. */
@@ -539,7 +539,7 @@ describe("device against a scripted SP", () => {
     b = await dev.exclusive((d) => d.setPitch(4, 33, -12, -35));
     expect(b).toMatchObject({ pitchCoarse: -12, pitchFine: -35 });
     expect(sp.params).toEqual([[0x77, 33, 1], [0x76, 33, 7550], [0x73, 33, -12], [0x74, 33, -35]]);
-    await expect(dev.exclusive((d) => d.setPitch(4, 33, 13, 0))).rejects.toThrow(/полутоны/);
+    await expect(dev.exclusive((d) => d.setPitch(4, 33, 13, 0))).rejects.toThrow(/semitones/);
     await expect(dev.exclusive((d) => d.setTimeStretch(4, 33, 16000))).rejects.toThrow(/150/);
   });
   it("turns One Shot on like the official app, keeping the other flag bits", async () => {
@@ -587,18 +587,18 @@ describe("device against a scripted SP", () => {
     expect(r).toMatchObject({ swapped: true, src: { name: "s" }, dst: { name: "b" } });
     expect(sp.sent.filter((m) => m.startsWith("5:95"))).toEqual(["5:9521002800", "5:9521002800"]);
     expect(dev.policy.moveToEmpty).toBeNull();
-    await expect(dev.exclusive((d) => d.movePad(4, 34, 41))).rejects.toThrow(/пуст/);
-    await expect(dev.exclusive((d) => d.movePad(4, 33, 33))).rejects.toThrow(/сам на себя/);
-    await expect(dev.exclusive((d) => d.movePad(4, 33, 40, true))).rejects.toThrow(/занят/);
+    await expect(dev.exclusive((d) => d.movePad(4, 34, 41))).rejects.toThrow(/empty/);
+    await expect(dev.exclusive((d) => d.movePad(4, 33, 33))).rejects.toThrow(/onto itself/);
+    await expect(dev.exclusive((d) => d.movePad(4, 33, 40, true))).rejects.toThrow(/occupied/);
     expect(sp.sent.filter((m) => m.startsWith("5:95"))).toHaveLength(2);
   });
   it("deletes a loaded pad, and refuses empty pads, protected banks and other projects", async () => {
     const { sp, dev } = await loaded(); // a sample on pad 33 (C2)
     sp.protectedBanks.add(2);
-    await expect(dev.exclusive((d) => d.deletePad(4, 33))).rejects.toThrow(/защищён/);
+    await expect(dev.exclusive((d) => d.deletePad(4, 33))).rejects.toThrow(/protected/);
     sp.protectedBanks.clear();
-    await expect(dev.exclusive((d) => d.deletePad(5, 33))).rejects.toThrow(/проект/);
-    await expect(dev.exclusive((d) => d.deletePad(4, 34))).rejects.toThrow(/пуст/);
+    await expect(dev.exclusive((d) => d.deletePad(5, 33))).rejects.toThrow(/project/);
+    await expect(dev.exclusive((d) => d.deletePad(4, 34))).rejects.toThrow(/empty/);
     expect(sp.sent.filter((m) => m.startsWith("5:91") && m.endsWith("0000"))).toEqual([]);
     expect((await dev.exclusive((d) => d.deletePad(4, 33))).size).toBe(0);
     expect(sp.sent.filter((m) => m.startsWith("5:91") && m.endsWith("0000"))).toEqual(["5:9121000000"]);
@@ -621,8 +621,8 @@ describe("device against a scripted SP", () => {
     expect(hex(sp.files.get(remotePath(samplePath(4, 50)))!)).toBe(hex(sp.files.get(remotePath(samplePath(4, 33)))!));
     expect(progress.at(-1)).toBe(1);
     expect(Math.max(...progress.filter((_, i) => i < progress.length / 2))).toBeLessThanOrEqual(0.5);
-    await expect(dev.exclusive((d) => d.copyPad(4, 33, 50))).rejects.toThrow(/занят/);
-    await expect(dev.exclusive((d) => d.copyPad(4, 34, 51))).rejects.toThrow(/пуст/);
+    await expect(dev.exclusive((d) => d.copyPad(4, 33, 50))).rejects.toThrow(/occupied/);
+    await expect(dev.exclusive((d) => d.copyPad(4, 34, 51))).rejects.toThrow(/empty/);
   });
   it("sets the plain pad parameters and Fixed Velocity, and reads them back from the block", async () => {
     const { dev } = await loaded();
@@ -636,8 +636,8 @@ describe("device against a scripted SP", () => {
     expect(await set(0x7d, 12)).toMatchObject({ attack: 12, hold: 0, release: 0 });
     expect((await set(0x7e, 55)).hold).toBe(55);
     expect((await set(0x7f, 99)).release).toBe(99);
-    await expect(set(0x78, 12)).rejects.toThrow(/вне/);
-    await expect(set(0x69, 50)).rejects.toThrow(/так не задаётся/); // Level has its own setter
+    await expect(set(0x78, 12)).rejects.toThrow(/outside/);
+    await expect(set(0x69, 50)).rejects.toThrow(/cannot be set this way/); // Level has its own setter
     await dev.exclusive((d) => d.setVari(4, 33, 1));
     const fv = await dev.exclusive((d) => d.setFixedVelocity(4, 33, true));
     expect(fv).toMatchObject({ fixedVelocity: true, vari: 1 });
@@ -674,9 +674,9 @@ describe("device against a scripted SP", () => {
     expect(hex(sp.files.get("/IMPORT/kick 90bpm.wav")!)).toBe(hex(data));
     expect(progress.at(-1)).toBe(1);
     expect(dev.policy.cardWrite).toBeNull();
-    await expect(dev.exclusive((d) => d.writeCardFile("sd:/IMPORT/kick 90bpm.wav", data))).rejects.toThrow(/уже есть/);
-    await expect(dev.exclusive((d) => d.writeCardFile("sd:/EXPORT/x.wav", data))).rejects.toThrow(/только в IMPORT/);
-    await expect(dev.exclusive((d) => d.writeCardFile("IMPORT/x.wav", data))).rejects.toThrow(/только в IMPORT/);
+    await expect(dev.exclusive((d) => d.writeCardFile("sd:/IMPORT/kick 90bpm.wav", data))).rejects.toThrow(/[Aa]lready exists/);
+    await expect(dev.exclusive((d) => d.writeCardFile("sd:/EXPORT/x.wav", data))).rejects.toThrow(/only be written to IMPORT/);
+    await expect(dev.exclusive((d) => d.writeCardFile("IMPORT/x.wav", data))).rejects.toThrow(/only be written to IMPORT/);
     expect(sp.files.has("/EXPORT/x.wav")).toBe(false);
   });
   it("deletes a card file, and a folder with everything in it, inside IMPORT/ only", async () => {
@@ -693,9 +693,9 @@ describe("device against a scripted SP", () => {
     expect(await dev.exclusive((d) => d.deleteCardPath("sd:/IMPORT/a.wav"))).toBe(1);
     expect(sp.files.size).toBe(0);
     expect(dev.policy.cardDelete).toBeNull();
-    await expect(dev.exclusive((d) => d.deleteCardPath("sd:/IMPORT"))).rejects.toThrow(/только внутри IMPORT/);
-    await expect(dev.exclusive((d) => d.deleteCardPath("sd:/EXPORT/x.wav"))).rejects.toThrow(/только внутри IMPORT/);
-    await expect(dev.exclusive((d) => d.deleteCardPath("sd:/IMPORT/nope.wav"))).rejects.toThrow(/нет/);
+    await expect(dev.exclusive((d) => d.deleteCardPath("sd:/IMPORT"))).rejects.toThrow(/only be .* inside IMPORT/);
+    await expect(dev.exclusive((d) => d.deleteCardPath("sd:/EXPORT/x.wav"))).rejects.toThrow(/only be .* inside IMPORT/);
+    await expect(dev.exclusive((d) => d.deleteCardPath("sd:/IMPORT/nope.wav"))).rejects.toThrow(/Not found/);
   });
   it("creates folders and moves / renames inside the card's IMPORT/, replacing nothing", async () => {
     const sp = fakeSp();
@@ -704,15 +704,15 @@ describe("device against a scripted SP", () => {
     sp.files.set("/IMPORT/a.wav", new Uint8Array(4));
     sp.files.set("/IMPORT/b.wav", new Uint8Array(5));
     await dev.exclusive((d) => d.mkdirCard("sd:/IMPORT/Pack"));
-    await expect(dev.exclusive((d) => d.mkdirCard("sd:/IMPORT/Pack"))).rejects.toThrow(/уже есть/);
+    await expect(dev.exclusive((d) => d.mkdirCard("sd:/IMPORT/Pack"))).rejects.toThrow(/[Aa]lready exists/);
     await dev.exclusive((d) => d.renameCard("sd:/IMPORT/a.wav", "sd:/IMPORT/Pack/a.wav"));
     expect(sp.files.has("/IMPORT/Pack/a.wav")).toBe(true);
-    await expect(dev.exclusive((d) => d.renameCard("sd:/IMPORT/b.wav", "sd:/IMPORT/Pack/a.wav"))).rejects.toThrow(/уже есть/);
+    await expect(dev.exclusive((d) => d.renameCard("sd:/IMPORT/b.wav", "sd:/IMPORT/Pack/a.wav"))).rejects.toThrow(/[Aa]lready exists/);
     await dev.exclusive((d) => d.renameCard("sd:/IMPORT/Pack", "sd:/IMPORT/Drums"));
     expect(sp.files.has("/IMPORT/Drums/a.wav")).toBe(true);
-    await expect(dev.exclusive((d) => d.renameCard("sd:/IMPORT/Drums", "sd:/IMPORT/Drums/In"))).rejects.toThrow(/в саму себя/);
-    await expect(dev.exclusive((d) => d.renameCard("sd:/IMPORT/b.wav", "sd:/EXPORT/b.wav"))).rejects.toThrow(/только внутри IMPORT/);
-    await expect(dev.exclusive((d) => d.mkdirCard("sd:/BKUP/x"))).rejects.toThrow(/только внутри IMPORT/);
+    await expect(dev.exclusive((d) => d.renameCard("sd:/IMPORT/Drums", "sd:/IMPORT/Drums/In"))).rejects.toThrow(/into itself/);
+    await expect(dev.exclusive((d) => d.renameCard("sd:/IMPORT/b.wav", "sd:/EXPORT/b.wav"))).rejects.toThrow(/only be .* inside IMPORT/);
+    await expect(dev.exclusive((d) => d.mkdirCard("sd:/BKUP/x"))).rejects.toThrow(/only be .* inside IMPORT/);
     expect(dev.policy.cardRename).toBeNull();
     expect(dev.policy.cardMkdir).toBeNull();
   });
@@ -722,7 +722,7 @@ describe("device against a scripted SP", () => {
     await dev.exclusive((d) => d.selectProject(4)); // the fake SP is on project 4
     await dev.exclusive((d) => d.selectProject(9));
     expect(sp.sent.filter((m) => m.startsWith("5:9a"))).toEqual(["5:9a0800"]);
-    await expect(dev.exclusive((d) => d.selectProject(17))).rejects.toThrow(/нет проекта/);
+    await expect(dev.exclusive((d) => d.selectProject(17))).rejects.toThrow(/No project/);
   });
   it("moves Start/End in frames, in an order that keeps Start < End", async () => {
     const { sp, dev } = await loaded();
@@ -742,16 +742,16 @@ describe("device against a scripted SP", () => {
     expect(ps.names[3]).toBe("PROJECT_4");
     expect((await dev.exclusive((d) => d.setTempoSelect(4, true))).useProjectTempo).toBe(true);
     expect(sp.sent.filter((s) => s.startsWith("5:01")).map((s) => s.slice(0, 6))).toEqual(["5:010a", "5:0123", "5:010b"]); // bank C = 21 + 2
-    await expect(dev.exclusive((d) => d.setBankTempo(4, 2, 30000))).rejects.toThrow(/40 до 200/);
-    await expect(dev.exclusive((d) => d.setProjectTempo(1, 12000))).rejects.toThrow(/проект 4/);
+    await expect(dev.exclusive((d) => d.setBankTempo(4, 2, 30000))).rejects.toThrow(/40 and 200/);
+    await expect(dev.exclusive((d) => d.setProjectTempo(1, 12000))).rejects.toThrow(/project 4/);
     expect(sp.globals.get(0x0a)).toBe(9350);
   });
   it("refuses a bad range or an empty pad without sending a parameter", async () => {
     const { sp, dev } = await loaded();
     await expect(dev.exclusive((d) => d.setRange(4, 33, 0, 48001))).rejects.toThrow(/48000/);
     await expect(dev.exclusive((d) => d.setRange(4, 33, 500, 500))).rejects.toThrow(/Start/);
-    await expect(dev.exclusive((d) => d.setGate(4, 34, true))).rejects.toThrow(/C3 пуст/);
-    await expect(dev.exclusive((d) => d.setGate(1, 33, true))).rejects.toThrow(/проект 4/);
+    await expect(dev.exclusive((d) => d.setGate(4, 34, true))).rejects.toThrow(/C3 is empty/);
+    await expect(dev.exclusive((d) => d.setGate(1, 33, true))).rejects.toThrow(/project 4/);
     expect(sp.params).toEqual([]);
   });
 });

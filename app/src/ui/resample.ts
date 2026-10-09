@@ -41,13 +41,13 @@ async function playSeconds(pad: number): Promise<number> {
 async function prepare(): Promise<boolean> {
   if (writeBlockReason.value) { notice.value = { kind: "error", text: writeBlockReason.value }; return false; }
   if (!(await ensureArmed())) {
-    notice.value = { kind: "error", text: `Вход для записи не открылся${recError.value ? `: ${recError.value}` : ""}` };
+    notice.value = { kind: "error", text: `Could not open the recording input${recError.value ? `: ${recError.value}` : ""}` };
     return false;
   }
   // The pad is hit by a MIDI note, as by a hand: the remote preview (8E) plays one pad at a time and
   // ignores PAD Link (checked on the unit), so it cannot layer.
   if (!(await connectMidi())) {
-    notice.value = { kind: "error", text: midiState.value === "denied" ? "Доступ к MIDI запрещён — разрешите его для этой страницы" : "MIDI-порт SP не найден" };
+    notice.value = { kind: "error", text: midiState.value === "denied" ? "MIDI access denied — allow it for this page" : "SP MIDI port not found" };
     return false;
   }
   return true;
@@ -72,7 +72,7 @@ async function recordPad(pad: number, label = ""): Promise<Recorded | null> {
   let pressed = false;
   const rec = await capture(async () => {
     await sleep(50); // a moment before the hit, so its start is not cut
-    rsBusy.value = `${label}Играет ${group.length > 1 ? group.map(padName).join("+") : padName(pad)}: ${play.toFixed(1)} s`;
+    rsBusy.value = `${label}Playing ${group.length > 1 ? group.map(padName).join("+") : padName(pad)}: ${play.toFixed(1)} s`;
     try {
       hitPads([pad]);
       pressed = true;
@@ -88,7 +88,7 @@ async function recordPad(pad: number, label = ""): Promise<Recorded | null> {
       }
     }
     for (let left = tail; left > 0; left -= 0.5) {
-      rsBusy.value = `${label}Хвост эффекта: ${left.toFixed(1)} s`;
+      rsBusy.value = `${label}Effects tail: ${left.toFixed(1)} s`;
       await sleep(Math.min(0.5, left) * 1000);
     }
   });
@@ -98,7 +98,7 @@ async function recordPad(pad: number, label = ""): Promise<Recorded | null> {
   if (!cut) return null;
   const bpm = Math.round(p.bpmX100 * speed);
   const seconds = cut.chans[0].length / 48000;
-  log("info", `Ресэмпл ${padName(pad)}: ${seconds.toFixed(2)} s, усиление ${(20 * Math.log10(cut.gain)).toFixed(1)} dB`);
+  log("info", `Resample ${padName(pad)}: ${seconds.toFixed(2)} s, gain ${(20 * Math.log10(cut.gain)).toFixed(1)} dB`);
   return {
     samples: floatBlocksToPcm([cut.chans], rec.channels), channels: rec.channels, seconds,
     name: `${(p.name || padName(pad)).slice(0, 19)}_rs`, bpmX100: bpm >= BPM_MIN_X100 && bpm <= BPM_MAX_X100 ? bpm : null,
@@ -108,14 +108,14 @@ async function recordPad(pad: number, label = ""): Promise<Recorded | null> {
 /** One pad: the take is offered (listen, then onto a pad). */
 export async function resamplePad(pad: number): Promise<void> {
   if (!pads.value[pad]?.size || rsBusy.value) return;
-  rsBusy.value = "Открываю вход…";
+  rsBusy.value = "Opening input…";
   try {
     if (!(await prepare())) return;
     const r = await recordPad(pad);
-    if (!r) return void (notice.value = { kind: "error", text: "В записи тишина: проверьте вход, громкость SP и что эффект/pad звучат" });
+    if (!r) return void (notice.value = { kind: "error", text: "The recording is silent: check the input, SP volume and whether the effect/pad is playing" });
     setTake(r.samples, r.channels, r.name, { bpmX100: r.bpmX100, source: pad });
   } catch (e) {
-    notice.value = { kind: "error", text: `Ресэмпл ${padName(pad)}: ${(e as Error).message}` };
+    notice.value = { kind: "error", text: `Resample ${padName(pad)}: ${(e as Error).message}` };
   } finally {
     rsBusy.value = null;
   }
@@ -151,28 +151,28 @@ export async function resampleGroup(bank: number): Promise<void> {
   if (rsBusy.value || groupProgress.value) return;
   const { sources } = groupPlan(pickedList.value);
   if (!sources.length) return;
-  if (!emptyPadsOf(bank, sources.length)) return void (notice.value = { kind: "error", text: `В банке ${"ABCDEFGHIJ"[bank]} не хватает пустых pad'ов` });
+  if (!emptyPadsOf(bank, sources.length)) return void (notice.value = { kind: "error", text: `Bank ${"ABCDEFGHIJ"[bank]} does not have enough empty pads` });
   rsCancel.value = false;
-  rsBusy.value = "Открываю вход…";
+  rsBusy.value = "Opening input…";
   const takes: Recorded[] = [];
   try {
     if (!(await prepare())) return;
     for (const [i, pad] of sources.entries()) {
       if (rsCancel.value) break;
-      groupProgress.value = { done: i, total: sources.length, verb: "Ресэмпл" };
+      groupProgress.value = { done: i, total: sources.length, verb: "Resample" };
       const r = await recordPad(pad, `${i + 1}/${sources.length} · `);
       if (r) takes.push(r);
-      else log("warn", `Ресэмпл ${padName(pad)}: в записи тишина — пропущен`);
+      else log("warn", `Resample ${padName(pad)}: silent recording — skipped`);
     }
   } catch (e) {
-    notice.value = { kind: "error", text: `Ресэмпл группы: ${(e as Error).message}` };
+    notice.value = { kind: "error", text: `Group resample: ${(e as Error).message}` };
   } finally {
     groupProgress.value = null;
     rsBusy.value = null;
   }
   if (!takes.length) return;
   const targets = emptyPadsOf(bank, takes.length);
-  if (!targets) return void (notice.value = { kind: "error", text: `Пока шла запись, в банке ${"ABCDEFGHIJ"[bank]} кончились пустые pad'ы` });
-  log("info", `Ресэмпл группы: ${takes.length} дубл. → ${targets.map(padName).join(", ")}`);
+  if (!targets) return void (notice.value = { kind: "error", text: `During recording, bank ${"ABCDEFGHIJ"[bank]} ran out of empty pads` });
+  log("info", `Group resample: ${takes.length} takes → ${targets.map(padName).join(", ")}`);
   importFiles(takes.map((t) => new File([encodeWav(t.samples, t.channels)], `${t.name}.wav`, { type: "audio/wav" })), targets[0], takes.map((t) => t.bpmX100 ?? undefined));
 }

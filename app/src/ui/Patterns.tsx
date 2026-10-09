@@ -67,20 +67,20 @@ export function PatternsPane() {
   return (
     <section class="ptn-area glass">
       <div class="ptn-head">
-        <div class="panel-title">Паттерны</div>
-        <span class="muted small">{m ? `${m.size} из 160` : ""}</span>
+        <div class="panel-title">Patterns</div>
+        <span class="muted small">{m ? `${m.size} of 160` : ""}</span>
         {c === "ready" && (
-          <button class="btn btn-ghost" onClick={() => void refreshPatterns()} disabled={patternsLoading.value} title="Перечитать паттерны с SP (после записи на SP)">
-            <IconRefresh /> {patternsLoading.value ? "Читаю…" : "Обновить"}
+          <button class="btn btn-ghost" onClick={() => void refreshPatterns()} disabled={patternsLoading.value} title="Read patterns from SP again (after recording on SP)">
+            <IconRefresh /> {patternsLoading.value ? "Reading…" : "Refresh"}
           </button>
         )}
       </div>
       {!m ? (
-        <p class="muted ptn-empty">{c === "ready" || c === "loading" ? "Читаю паттерны…" : "Подключите SP, чтобы увидеть паттерны проекта."}</p>
+        <p class="muted ptn-empty">{c === "ready" || c === "loading" ? "Reading patterns…" : "Connect SP to view project patterns."}</p>
       ) : (
         <>
           <SlotMatrix />
-          {shownSlot.value !== null ? <PatternView /> : <p class="muted ptn-empty">В проекте нет паттернов. Выберите слот выше, чтобы создать паттерн, или запишите его на SP и нажмите «Обновить».</p>}
+          {shownSlot.value !== null ? <PatternView /> : <p class="muted ptn-empty">No patterns in this project. Select a slot above to create one, or record one on SP and click ‘Refresh’.</p>}
         </>
       )}
     </section>
@@ -92,7 +92,7 @@ function SlotMatrix() {
   const m = patterns.value!, shown = shownSlot.value, sel = selectedPad.value;
   const ofSel = new Set(pads.value[sel]?.size ? patternsOf(sel) : []);
   return (
-    <div class="ptn-matrix" role="grid" aria-label="Слоты паттернов">
+    <div class="ptn-matrix" role="grid" aria-label="Pattern slots">
       {[...BANKS].map((letter, b) => (
         <div class="ptn-mrow" role="row" key={letter}>
           <span class="ptn-mbank">{letter}</span>
@@ -100,10 +100,10 @@ function SlotMatrix() {
             const slot = b * 16 + i, p = m.get(slot);
             const edited = drafts.value.get(slot);
             const cls = ["ptn-slot", p !== undefined && (typeof p === "string" ? "bad" : "on"), slot === shown && "cur", ofSel.has(slot) && "uses", edited && isDirty(edited) && "edited"].filter(Boolean).join(" ");
-            const title = p === undefined ? `${padName(slot)}: пусто`
-              : typeof p === "string" ? `${padName(slot)}: не прочитан — ${p}`
-              : `${padName(slot)}: ${p.bars} ${bars(p.bars)}, ${p.notes.length} нот${ofSel.has(slot) ? ` · играет ${padName(sel)}` : ""}${edited && isDirty(edited) ? " · есть правки" : ""}`;
-            return <button key={slot} role="gridcell" class={`${cls} ${p === undefined ? "empty" : ""}`} title={p === undefined ? `${padName(slot)}: пусто — создать паттерн` : title} aria-label={title} onClick={() => (pickedSlot.value = slot)}>{i + 1}</button>;
+            const title = p === undefined ? `${padName(slot)}: empty`
+              : typeof p === "string" ? `${padName(slot)}: not read — ${p}`
+              : `${padName(slot)}: ${p.bars} ${bars(p.bars)}, ${p.notes.length} notes${ofSel.has(slot) ? ` · playing ${padName(sel)}` : ""}${edited && isDirty(edited) ? " · edited" : ""}`;
+            return <button key={slot} role="gridcell" class={`${cls} ${p === undefined ? "empty" : ""}`} title={p === undefined ? `${padName(slot)}: empty — create a pattern` : title} aria-label={title} onClick={() => (pickedSlot.value = slot)}>{i + 1}</button>;
           })}
         </div>
       ))}
@@ -111,11 +111,11 @@ function SlotMatrix() {
   );
 }
 
-const bars = (n: number) => (n % 10 === 1 && n % 100 !== 11 ? "такт" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? "такта" : "тактов");
+const bars = (n: number) => (n === 1 ? "bar" : "bars");
 
 function PatternView() {
   const slot = shownSlot.value!, read = patterns.value!.get(slot), d = draftOf(slot);
-  if (typeof read === "string") return <p class="err ptn-empty">{padName(slot)}: файл паттерна не прочитан — {read}</p>;
+  if (typeof read === "string") return <p class="err ptn-empty">{padName(slot)}: pattern file could not be read — {read}</p>;
   if (!read && !d) return <NewPattern slot={slot} />;
   const base = read ?? d!.base, isNew = !read;
   const p = d?.p ?? base, dirty = !!d && isDirty(d), editing = editingSlot.value === slot;
@@ -147,22 +147,22 @@ function PatternView() {
       <div class="ptn-info">
         <span class="chip chip-accent">{padName(slot)}</span>
         <button class={`btn ptn-play ${playing ? "card-toggle on" : ""}`} onClick={() => void togglePattern(slot)} aria-pressed={playing}
-          title={`${playing ? "Остановить" : "Играть по кругу"} (пробел): ноты уходят на SP по MIDI${dirty ? ", с вашими правками" : ""}${midi ? "" : ". Сейчас MIDI-порта SP нет — будет идти только курсор"}. Транспонирование нот TR-REC не играется`}>
-          {playing ? <IconStop /> : <IconPlay />} {playing ? "Стоп" : "Играть"}
+          title={`${playing ? "Stop" : "Loop playback"} (Space): notes are sent to SP over MIDI${dirty ? ", including your edits" : ""}${midi ? "" : ". No SP MIDI port is available — only the cursor will move"}. TR-REC note transposition is not played`}>
+          {playing ? <IconStop /> : <IconPlay />} {playing ? "Stop" : "Play"}
         </button>
-        <span>{p.bars} {bars(p.bars)} · {p.beatsPerBar}/4 · {p.notes.length} нот · {rows.length} pad'ов{t ? ` · ${formatBpm(t.tempoX100)} BPM ${t.of}` : ""}</span>
-        {offGrid > 0 && !editing && <span class="chip" title="Ноты, сыгранные вживую мимо шагов 1/16. Показаны там, где они есть. Sub-step из TR-REC сюда не входят">вне сетки 1/16: {offGrid}</span>}
-        {isNew && <span class="chip chip-warn" title="Этого паттерна на SP ещё нет: он появится после сохранения">новый</span>}
-        {dirty && !isNew && <span class="chip chip-warn" title="Правки лежат в браузере: «Сохранить на SP» запишет их">изменён</span>}
+        <span>{p.bars} {bars(p.bars)} · {p.beatsPerBar}/4 · {p.notes.length} notes · {rows.length} pads{t ? ` · ${formatBpm(t.tempoX100)} BPM ${t.of}` : ""}</span>
+        {offGrid > 0 && !editing && <span class="chip" title="Notes recorded live between 1/16 steps, shown at their actual positions. TR-REC sub-steps are not included">off the 1/16 grid: {offGrid}</span>}
+        {isNew && <span class="chip chip-warn" title="This pattern is not on SP yet: it appears after saving">new</span>}
+        {dirty && !isNew && <span class="chip chip-warn" title="Edits are stored in the browser: ‘Save to SP’ writes them to the device">edited</span>}
         <CopyButton slot={slot} />
         <button class={`btn ptn-edit-toggle ${editing ? "card-toggle on" : ""}`} onClick={toggleEdit} aria-pressed={editing}
-          title={editing ? "Закрыть редактор: правки остаются в браузере" : "Править паттерн: правки остаются в браузере, на SP они не пишутся"}>
-          <IconPencil /> {editing ? "Готово" : "Править"}
+          title={editing ? "Close editor: edits stay in the browser" : "Edit pattern: edits stay in the browser until saved to SP"}>
+          <IconPencil /> {editing ? "Done" : "Edit"}
         </button>
         <button class="icon-btn insp-dl" onClick={() => downloadPatternMidi(slot)}
-          title={`Скачать как MIDI-файл, как экспорт SP: канал = банк, A13 = нота 36${dirty ? "; с вашими правками" : ""}${t ? `; темп ${formatBpm(t.tempoX100)} — тот, что играет сейчас` : ""}`}><IconDownload /> MIDI</button>
+          title={`Download a MIDI file, as exported by SP: channel = bank, A13 = note 36${dirty ? "; including your edits" : ""}${t ? `; tempo ${formatBpm(t.tempoX100)} — the currently active tempo` : ""}`}><IconDownload /> MIDI</button>
         {patternFiles.value.has(slot) && (
-          <button class="icon-btn insp-dl ptn-bin" title="Скачать файл паттерна, как он лежит на SP (.BIN, без правок)"
+          <button class="icon-btn insp-dl ptn-bin" title="Download the pattern file as stored on SP (.BIN, without edits)"
             onClick={() => saveFile(`Proj${project1.value}_${patternFileName(slot)}`, Uint8Array.from(patternFiles.value.get(slot)!.bytes), "application/octet-stream")}><IconDownload /> BIN</button>
         )}
       </div>
@@ -170,13 +170,13 @@ function PatternView() {
       {dirty || isNew ? (
         <div class="ptn-dirty-row">
           {!editing && <SaveControl slot={slot} />}
-          <span class="muted small">Bounce играет паттерн таким, как он на SP: правки в нём не слышны, пока не сохранены.</span>
-          {!editing && <button class="btn btn-ghost ptn-revert" onClick={() => revert(slot)}>сбросить правки</button>}
+          <span class="muted small">Bounce plays the pattern as stored on SP: edits are not heard until saved.</span>
+          {!editing && <button class="btn btn-ghost ptn-revert" onClick={() => revert(slot)}>reset edits</button>}
         </div>
       ) : (
         <Bounce slot={slot} p={base} />
       )}
-      {!editing && <p class="hint">Строки — pad'ы, которые играет паттерн; клик по номеру pad'а (A1) открывает его сэмпл, по названию — выбирает pad: в матрице выше видно, в каких ещё паттернах он играет. Столбцы — шаги 1/16, высота заливки ноты — сила удара{pitched ? ", цветные с «+1», «−2» — ноты, транспонированные в TR-REC" : ""}. «Править» открывает редактор.</p>}
+      {!editing && <p class="hint">Rows are the pads played by the pattern. Click a pad number (A1) to open its sample, or its name to select the pad: the matrix above shows its other patterns. Columns are 1/16 steps; note fill height shows velocity{pitched ? "; colored notes marked ‘+1’, ‘−2’ were transposed in TR-REC" : ""}. ‘Edit’ opens the editor.</p>}
     </div>
   );
 }
@@ -186,7 +186,7 @@ function copyHere(src: number, dst: number): boolean {
   const bytes = currentPatternFile(src), there = draftOf(dst);
   if (!bytes || src === dst) return false;
   if (there && isDirty(there)) {
-    notice.value = { kind: "error", text: `В ${padName(dst)} есть несохранённые правки: сохраните или сбросьте их, потом копируйте` };
+    notice.value = { kind: "error", text: `In ${padName(dst)} has unsaved edits: save or reset them before copying` };
     return false;
   }
   const p = parsePattern(bytes), had = patterns.value?.get(dst), f = patternFiles.value.get(dst);
@@ -194,19 +194,19 @@ function copyHere(src: number, dst: number): boolean {
   startCopy(dst, base, had && f ? fileSum(f.bytes) : NEW_SLOT, p, bytes, [...new Set(p.notes.map((n) => n.pad))].sort((a, b) => a - b));
   pickedSlot.value = dst;
   editingSlot.value = dst;
-  notice.value = { kind: "info", text: `${padName(src)} скопирован в ${padName(dst)} как черновик: правьте и сохраняйте на SP` };
+  notice.value = { kind: "info", text: `${padName(src)} copied to ${padName(dst)} as a draft: edit it and save to SP` };
   return true;
 }
 
 const copyOpen = signal<number | null>(null);
 
-/** «Копировать…»: into another slot of this project, as a draft there. */
+/** “Копировать…”: into another slot of this project, as a draft there. */
 function CopyButton({ slot }: { slot: number }) {
   const can = !!currentPatternFile(slot), open = copyOpen.value === slot;
   return (
     <span class="ptn-copy">
       <button class={`btn ptn-edit-toggle ${open ? "card-toggle on" : ""}`} disabled={!can} onClick={() => (copyOpen.value = open ? null : slot)} aria-expanded={open}
-        title={can ? "Копировать паттерн (с правками, если они есть) в другой слот" : "Копировать можно паттерн, прочитанный с SP"}>копировать…</button>
+        title={can ? "Copy the pattern, including edits, to another slot" : "Only patterns read from SP can be copied"}>copy…</button>
       {open && <CopyPanel slot={slot} />}
     </span>
   );
@@ -215,23 +215,23 @@ function CopyButton({ slot }: { slot: number }) {
 function CopyPanel({ slot }: { slot: number }) {
   const dst = copyTo.value.src === slot ? copyTo.value.dst : firstEmpty(slot), taken = patterns.value?.has(dst);
   return (
-    <div class="ptn-menu ptn-copy-panel" role="dialog" aria-label="Копировать паттерн">
-      <div class="ptn-menu-title">копировать {padName(slot)}{draftOf(slot) && isDirty(draftOf(slot)!) ? " (с правками)" : ""} в слот</div>
+    <div class="ptn-menu ptn-copy-panel" role="dialog" aria-label="Copy pattern">
+      <div class="ptn-menu-title">copy {padName(slot)}{draftOf(slot) && isDirty(draftOf(slot)!) ? " (including edits)" : ""} to slot</div>
       <div class="ptn-menu-row">
-        <select class="project-select" value={dst} onChange={(e) => (copyTo.value = { src: slot, dst: +(e.currentTarget as HTMLSelectElement).value })} aria-label="Слот">
+        <select class="project-select" value={dst} onChange={(e) => (copyTo.value = { src: slot, dst: +(e.currentTarget as HTMLSelectElement).value })} aria-label="Slot">
           {[...BANKS].map((letter, b) => (
-            <optgroup key={letter} label={`Банк ${letter}`}>
+            <optgroup key={letter} label={`Bank ${letter}`}>
               {Array.from({ length: 16 }, (_, i) => b * 16 + i).filter((s) => s !== slot).map((s) => (
-                <option key={s} value={s}>{padName(s)}{patterns.value?.has(s) ? " · занят" : " · пусто"}</option>
+                <option key={s} value={s}>{padName(s)}{patterns.value?.has(s) ? " · occupied" : " · empty"}</option>
               ))}
             </optgroup>
           ))}
         </select>
       </div>
-      <p class="muted small ptn-copy-note">Копия станет черновиком в {padName(dst)}{taken ? " поверх паттерна, что там есть" : ""}: поправьте и нажмите «Сохранить на SP».</p>
+      <p class="muted small ptn-copy-note">The copy becomes a draft in {padName(dst)}{taken ? " replacing the existing pattern" : ""}: edit it and click ‘Save to SP’.</p>
       <div class="ptn-menu-row">
-        <button class="btn btn-primary ptn-mini" onClick={() => { if (copyHere(slot, dst)) copyOpen.value = null; }}>Копировать</button>
-        <button class="btn ptn-mini" onClick={() => (copyOpen.value = null)}>Отмена</button>
+        <button class="btn btn-primary ptn-mini" onClick={() => { if (copyHere(slot, dst)) copyOpen.value = null; }}>Copy</button>
+        <button class="btn ptn-mini" onClick={() => (copyOpen.value = null)}>Cancel</button>
       </div>
     </div>
   );
@@ -259,10 +259,10 @@ function NewPattern({ slot }: { slot: number }) {
     <div class="ptn-view">
       <div class="ptn-info">
         <span class="chip chip-accent">{padName(slot)}</span>
-        <span>пусто — создать паттерн:</span>
+        <span>empty — create a pattern:</span>
         {[1, 2, 4].map((b) => <button key={b} class="btn ptn-mini" onClick={() => create(b)}>{b} {bars(b)}</button>)}
       </div>
-      <p class="hint">Новый паттерн собирается в браузере; на SP он появится после «Сохранить на SP». Размер такта берётся из паттернов этого проекта.</p>
+      <p class="hint">A new pattern is built in the browser and appears on SP after ‘Save to SP’. Its time signature comes from this project's patterns.</p>
     </div>
   );
 }
@@ -287,25 +287,25 @@ function Bounce({ slot, p }: { slot: number; p: Pattern }) {
     try {
       const a = await decodeAudio(new Blob([bytes]));
       setTake(a.samples, a.channels, `ptn_${padName(slot)}_bounce`, { bpmX100: t?.tempoX100 ?? null });
-      if (secs) log("info", `Bounce ${padName(slot)}: ${(a.frames / 48000).toFixed(2)} s при ожидаемых ${secs.toFixed(2)} s (${a.note})`);
+      if (secs) log("info", `Bounce ${padName(slot)}: ${(a.frames / 48000).toFixed(2)} s, expected ${secs.toFixed(2)} s (${a.note})`);
     } catch (e) {
-      notice.value = { kind: "error", text: `Bounce ${padName(slot)}: WAV не разобрался — ${(e as Error).message}. Его можно скачать и посмотреть` };
+      notice.value = { kind: "error", text: `Bounce ${padName(slot)}: could not parse WAV — ${(e as Error).message}. Download it to inspect it` };
     }
   };
   return (
     <div class="ptn-bounce">
       <div class="ptn-bounce-row">
         <button class="btn" disabled={!!blocked || !!b} onClick={() => void run()}
-          title={blocked ?? `SP сыграет паттерн в реальном времени${secs ? ` (~${Math.ceil(secs)} s)` : ""} и пришлёт WAV. На SP ничего не записывается`}>
-          <IconWave /> Bounce в WAV
+          title={blocked ?? `SP plays the pattern in real time${secs ? ` (~${Math.ceil(secs)} s)` : ""} and sends a WAV. Nothing is written to SP`}>
+          <IconWave /> Bounce to WAV
         </button>
         {b?.slot === slot ? (
-          <span class="ptn-bounce-prog"><span class="bar"><span style={{ width: `${Math.round(b.progress * 100)}%` }} /></span>SP играет паттерн… {Math.round(b.progress * 100)} %</span>
+          <span class="ptn-bounce-prog"><span class="bar"><span style={{ width: `${Math.round(b.progress * 100)}%` }} /></span>SP is playing the pattern… {Math.round(b.progress * 100)} %</span>
         ) : mine ? (
           <button class="icon-btn insp-dl" onClick={() => saveFile(`Proj${last.project1}_${padName(slot)}_BOUNCE.WAV`, last.wav, "audio/wav")}
-            title="Сохранить WAV, как его прислал SP"><IconDownload /> WAV</button>
+            title="Save the WAV exactly as received from SP"><IconDownload /> WAV</button>
         ) : (
-          <span class="muted small">SP сам сыграет паттерн и пришлёт звук{secs ? ` — около ${Math.ceil(secs)} s` : ""}</span>
+          <span class="muted small">SP plays the pattern and sends the audio{secs ? ` — about ${Math.ceil(secs)} s` : ""}</span>
         )}
       </div>
       {mine && take?.name === `ptn_${padName(slot)}_bounce` && <TakeCard />}
@@ -321,10 +321,10 @@ function noteFacts(n: PatternNote, p: Pattern) {
   const barTicks = p.beatsPerBar * PPQ, inBar = n.tick % barTicks, off = n.tick % STEP;
   const st = noteSemitones(n);
   return {
-    where: `такт ${Math.floor(n.tick / barTicks) + 1}, шаг ${Math.floor(inBar / STEP) + 1}${off ? ` +${off} тиков` : ""}`,
-    len: `${+(n.gate / STEP).toFixed(2)} шага`,
-    pitch: st === null ? (n.pitch ? `байт 3 = 0x${n.pitch.toString(16)}` : "") : st ? `высота ${signed(st)} пт` : "",
-    origin: st === null ? "сыграна вживую" : "из TR-REC",
+    where: `bar ${Math.floor(n.tick / barTicks) + 1}, step ${Math.floor(inBar / STEP) + 1}${off ? ` +${off} ticks` : ""}`,
+    len: `${+(n.gate / STEP).toFixed(2)} steps`,
+    pitch: st === null ? (n.pitch ? `byte 3 = 0x${n.pitch.toString(16)}` : "") : st ? `pitch ${signed(st)} st` : "",
+    origin: st === null ? "recorded live" : "from TR-REC",
   };
 }
 
@@ -350,10 +350,10 @@ function StepGrid({ slot, p, rows }: { slot: number; p: Pattern; rows: number[] 
             const b = pads.value[pad];
             return [
               <div key={`h${pad}`} class="ptn-row-cell">
-                <button class="ptn-row-pad" onClick={() => openPad(pad)} title={`Открыть ${padName(pad)} на экране pad'ов — править сэмпл`}>{padName(pad)}</button>
+                <button class="ptn-row-pad" onClick={() => openPad(pad)} title={`Open ${padName(pad)} in the pad view to edit the sample`}>{padName(pad)}</button>
                 <button class={`ptn-row-head ${pad === sel ? "cur" : ""} ${b?.size ? "" : "missing"}`} onClick={() => selectPad(pad)}
-                  title={b?.size ? `${padName(pad)} «${b.name}» — выбрать: в матрице отметятся паттерны, где он играет` : `${padName(pad)} пуст: паттерн играет тишину`}>
-                  <span>{b?.size ? b.name || "без имени" : "пусто"}</span>
+                  title={b?.size ? `${padName(pad)} “${b.name}” — select it to highlight the patterns where it plays` : `${padName(pad)} is empty: the pattern plays silence`}>
+                  <span>{b?.size ? b.name || "untitled" : "empty"}</span>
                 </button>
                 <RowSound pad={pad} />
               </div>,
@@ -372,19 +372,19 @@ function StepGrid({ slot, p, rows }: { slot: number; p: Pattern; rows: number[] 
 /** One line under the grid for the note under the pointer: velocity as a number and a meter, and the rest. A click keeps it. */
 function NoteReadout({ slot, p }: { slot: number; p: Pattern }) {
   const f = noteFocus.value, n = f?.slot === slot ? p.notes[f.idx] : undefined;
-  if (!f || !n) return <div class="ptn-readout idle">Наведите на ноту: покажу силу удара, длину и позицию. Клик закрепляет.</div>;
+  if (!f || !n) return <div class="ptn-readout idle">Hover over a note to see velocity, length and position. Click to pin the details.</div>;
   const k = noteFacts(n, p), b = pads.value[n.pad];
   return (
     <div class={`ptn-readout ${f.pinned ? "pinned" : ""}`} aria-live="polite">
       <b class="ptn-readout-pad">{padName(n.pad)}</b>
-      <span class="ptn-readout-name">{b?.size ? b.name || "без имени" : "пусто"}</span>
-      <span class="ptn-vel" title="Сила удара, 1–127">
-        <span class="ptn-vel-label">сила</span>
+      <span class="ptn-readout-name">{b?.size ? b.name || "untitled" : "empty"}</span>
+      <span class="ptn-vel" title="Velocity, 1–127">
+        <span class="ptn-vel-label">velocity</span>
         <span class="ptn-vel-meter"><span style={{ width: `${(n.velocity / 127) * 100}%` }} /></span>
         <b>{n.velocity}</b>
       </span>
       <span>{k.where}</span>
-      <span>длина {k.len}</span>
+      <span>length {k.len}</span>
       {k.pitch && <span>{k.pitch}</span>}
       <span class="muted">{k.origin}</span>
     </div>
@@ -398,7 +398,7 @@ function Note({ slot, idx, n, p, from, pageTicks }: { slot: number; idx: number;
   const pct = (t: number) => `${((t - from) / pageTicks) * 100}%`;
   const off = n.tick % STEP, st = noteSemitones(n), k = noteFacts(n, p), f = noteFocus.value;
   const here = f?.slot === slot && f.idx === idx;
-  const aria = `${padName(n.pad)} · ${k.where} · сила ${n.velocity} · длина ${k.len}${k.pitch ? ` · ${k.pitch}` : ""} · ${k.origin}`;
+  const aria = `${padName(n.pad)} · ${k.where} · velocity ${n.velocity} · length ${k.len}${k.pitch ? ` · ${k.pitch}` : ""} · ${k.origin}`;
   const hover = (on: boolean) => { if (!noteFocus.value?.pinned || noteFocus.value.slot !== slot) noteFocus.value = on ? { slot, idx, pinned: false } : null; };
   const pin = () => { noteFocus.value = here && f!.pinned ? null : { slot, idx, pinned: true }; };
   return (

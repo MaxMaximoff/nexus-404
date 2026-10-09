@@ -9,12 +9,12 @@ import { CardToggle, PatternsToggle } from "./CardToggle";
 import { IconPlug, IconUnplug } from "./icons";
 
 const LABEL: Record<string, string> = {
-  unsupported: "Браузер не поддерживает Web Serial",
-  idle: "Не подключено",
-  connecting: "Подключение…",
-  loading: "Чтение pad'ов",
-  ready: "Подключено",
-  lost: "Связь потеряна — ждём SP",
+  unsupported: "This browser does not support Web Serial",
+  idle: "Not connected",
+  connecting: "Connecting…",
+  loading: "Reading pads",
+  ready: "Connected",
+  lost: "Connection lost — waiting for SP",
 };
 
 /** Which tempo plays: the project's, or each bank's own. */
@@ -28,9 +28,9 @@ function TempoSelect({ useProject }: { useProject: boolean }) {
     setBusy(false);
   };
   return (
-    <span class="segmented" role="group" aria-label="Какой темп действует" title={blocked ?? "Какой темп действует на SP"}>
-      <button type="button" aria-pressed={useProject} class={useProject ? "on" : ""} disabled={!!blocked || busy} onClick={() => pick(true)}>Проект</button>
-      <button type="button" aria-pressed={!useProject} class={useProject ? "" : "on"} disabled={!!blocked || busy} onClick={() => pick(false)}>Банки</button>
+    <span class="segmented" role="group" aria-label="Active tempo" title={blocked ?? "Which tempo is active on SP"}>
+      <button type="button" aria-pressed={useProject} class={useProject ? "on" : ""} disabled={!!blocked || busy} onClick={() => pick(true)}>Project</button>
+      <button type="button" aria-pressed={!useProject} class={useProject ? "" : "on"} disabled={!!blocked || busy} onClick={() => pick(false)}>Banks</button>
     </span>
   );
 }
@@ -46,10 +46,10 @@ function TempoControl() {
   return (
     <span class="tempo-group">
       {ps.useProjectTempo || !bank
-        ? <TempoField key="project" value={ps.projectTempoX100} label="Темп проекта" onSave={setProjectTempo} />
+        ? <TempoField key="project" value={ps.projectTempoX100} label="Project tempo" onSave={setProjectTempo} />
         : <>
-          <span class="muted">банк {bank.letter}</span>
-          <TempoField key={`bank-${b}`} value={bank.tempoX100} label={`Темп банка ${bank.letter}`} onSave={(x) => setBankTempo(b, x)} />
+          <span class="muted">bank {bank.letter}</span>
+          <TempoField key={`bank-${b}`} value={bank.tempoX100} label={`Bank tempo ${bank.letter}`} onSave={(x) => setBankTempo(b, x)} />
         </>}
       <span class="muted">BPM</span>
       <TempoSelect useProject={ps.useProjectTempo} />
@@ -60,12 +60,12 @@ function TempoControl() {
 /** The project on the SP; choosing another one switches the unit to it. */
 function ProjectSelect() {
   const ps = project.value!, st = status.value!;
-  const blocked = conn.value === "loading" ? "Читаю проект…" : writeBlockReason.value ?? (importing.value ? "Идёт импорт — дождитесь конца" : null);
+  const blocked = conn.value === "loading" ? "Reading project…" : writeBlockReason.value ?? (importing.value ? "Import in progress — wait for it to finish" : null);
   const name = (i: number) => (i === st.project ? ps.name : "") || ps.names[i] || "";
   return (
-    <select class="project-select" value={st.project} disabled={!!blocked} title={blocked ?? "Проект на SP: выберите другой, чтобы переключить"}
-      aria-label="Проект" onChange={(e) => selectProject(+(e.target as HTMLSelectElement).value + 1)}>
-      {Array.from({ length: PROJECT_COUNT }, (_, i) => <option value={i}>Проект {i + 1}{name(i) ? ` · ${name(i)}` : ""}</option>)}
+    <select class="project-select" value={st.project} disabled={!!blocked} title={blocked ?? "Project on SP: select another to switch"}
+      aria-label="Project" onChange={(e) => selectProject(+(e.target as HTMLSelectElement).value + 1)}>
+      {Array.from({ length: PROJECT_COUNT }, (_, i) => <option value={i}>Project {i + 1}{name(i) ? ` · ${name(i)}` : ""}</option>)}
     </select>
   );
 }
@@ -80,19 +80,19 @@ export function TopBar() {
       <div class="brand">
         <span class="brand-mark" aria-hidden="true"><i /><i /><i /><i /></span>
         <span class="brand-name">Nexus<b>-404</b></span>
-        <span class="brand-sub">для SP-404MKII</span>
+        <span class="brand-sub">for SP-404MKII</span>
       </div>
 
       <div class={`conn conn-${c}`}>
         <span class="dot" />
-        <span>{demo.value && c === "ready" ? "Демо, без SP" : LABEL[c]}{c === "loading" ? ` ${Math.round(loadProgress.value * 100)} %` : ""}</span>
+        <span>{demo.value && c === "ready" ? "Demo, no SP" : LABEL[c]}{c === "loading" ? ` ${Math.round(loadProgress.value * 100)} %` : ""}</span>
       </div>
 
       {connected && ps && st && (
         <div class="project-info">
           <ProjectSelect />
           <TempoControl />
-          {freeKb.value !== null && <span class="muted">· свободно {(freeKb.value / 1048576).toFixed(1)} GB</span>}
+          {freeKb.value !== null && <span class="muted">· free {(freeKb.value / 1048576).toFixed(1)} GB</span>}
           <PatternsToggle />
           <CardToggle />
           {/* <RecToggle /> — recording from an input is hidden until the idea is thought through (HANDOFF §10) */}
@@ -102,12 +102,12 @@ export function TopBar() {
       <div class="topbar-actions">
         {!connected && c !== "unsupported" && (
           <>
-            {hasGrant.value && <button class="btn" onClick={() => reconnect()} disabled={c === "connecting"}>Переподключить</button>}
-            <button class="btn" onClick={startDemo} disabled={c === "connecting"} title="Выдуманный проект без SP — чтобы посмотреть интерфейс">Демо</button>
+            {hasGrant.value && <button class="btn" onClick={() => reconnect()} disabled={c === "connecting"}>Reconnect</button>}
+            <button class="btn" onClick={startDemo} disabled={c === "connecting"} title="Explore a sample project without connecting SP">Demo</button>
             <button class="btn btn-primary" onClick={connect} disabled={c === "connecting"}><IconPlug /> Connect SP-404MKII</button>
           </>
         )}
-        {connected && <button class="btn" onClick={disconnect}><IconUnplug /> {demo.value ? "Выйти из демо" : "Отключить"}</button>}
+        {connected && <button class="btn" onClick={disconnect}><IconUnplug /> {demo.value ? "Exit demo" : "Disconnect"}</button>}
       </div>
     </header>
   );

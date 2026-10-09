@@ -190,7 +190,7 @@ export function Waveform({ wave, range, onCommit }: { wave: Wave; range?: Range;
           class="wave-canvas"
           style={{ cursor }}
           role="img"
-          aria-label={onCommit ? "Форма волны сэмпла; маркеры Start и End можно перетаскивать" : "Форма волны сэмпла"}
+          aria-label={onCommit ? "Sample waveform; drag the Start and End markers to adjust them" : "Sample waveform"}
           onPointerDown={(e) => {
             const which = nearMarker(e);
             if (!which && !zoomed) return;
@@ -238,14 +238,14 @@ export function Waveform({ wave, range, onCommit }: { wave: Wave; range?: Range;
       </div>
       {canZoom && (
         <div class="wave-tools">
-          <button class="btn btn-ghost" title="Отдалить" disabled={!zoomed} onClick={() => zoomAround(view.from + span / 2, 2)}>−</button>
-          <button class="btn btn-ghost" title="Приблизить (или колесо мыши над волной)" disabled={span <= minSpan()} onClick={() => zoomAround(view.from + span / 2, 0.5)}>+</button>
-          <button class="btn btn-ghost" disabled={!zoomed} onClick={() => setView(FULL)}>Весь</button>
+          <button class="btn btn-ghost" title="Zoom out" disabled={!zoomed} onClick={() => zoomAround(view.from + span / 2, 2)}>−</button>
+          <button class="btn btn-ghost" title="Zoom in (or use the mouse wheel over the waveform)" disabled={span <= minSpan()} onClick={() => zoomAround(view.from + span / 2, 0.5)}>+</button>
+          <button class="btn btn-ghost" disabled={!zoomed} onClick={() => setView(FULL)}>Full</button>
           {shown && <>
-            <button class="btn btn-ghost" title="Приблизить к маркеру Start" onClick={() => focus(rs)}>→ Start</button>
-            <button class="btn btn-ghost" title="Приблизить к маркеру End" onClick={() => focus(re)}>→ End</button>
+            <button class="btn btn-ghost" title="Zoom to Start marker" onClick={() => focus(rs)}>→ Start</button>
+            <button class="btn btn-ghost" title="Zoom to End marker" onClick={() => focus(re)}>→ End</button>
           </>}
-          <span class="wave-view">{zoomed ? `${fmt(view.from, wave.frames)}–${fmt(view.to, wave.frames)} s · ×${Math.round(1 / span)}` : "колесо — зум"}</span>
+          <span class="wave-view">{zoomed ? `${fmt(view.from, wave.frames)}–${fmt(view.to, wave.frames)} s · ×${Math.round(1 / span)}` : "Wheel to zoom"}</span>
         </div>
       )}
     </div>

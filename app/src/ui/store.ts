@@ -51,8 +51,8 @@ export const notice = signal<{ kind: "error" | "info"; text: string } | null>(nu
 
 export const project1 = computed(() => (status.value ? status.value.project + 1 : 0));
 export const writeBlockReason = computed<string | null>(() => {
-  if (conn.value !== "ready") return "SP не подключён";
-  if (status.value && status.value.workingMode !== 0) return "SP показывает меню — закройте его на устройстве";
+  if (conn.value !== "ready") return "SP is not connected";
+  if (status.value && status.value.workingMode !== 0) return "SP is showing a menu — close it on the device";
   return null;
 });
 export const importing = computed(() => jobs.value.some((j) => j.state === "queued" || j.state === "decoding" || j.state === "uploading"));
@@ -88,7 +88,7 @@ export async function connect(): Promise<void> {
     await openPort(await WebSerialTransport.request());
   } catch (e) {
     if ((e as DOMException).name === "NotFoundError") return; // chooser cancelled
-    fail(e, "Подключение");
+    fail(e, "Connect");
     conn.value = "idle";
   }
 }
@@ -99,8 +99,8 @@ export async function reconnect(silent = false): Promise<void> {
   try {
     await openPort(port);
   } catch (e) {
-    if (silent) log("info", `Автоподключение не удалось: ${(e as Error).message}`);
-    else fail(e, "Переподключение");
+    if (silent) log("info", `Auto-connect failed: ${(e as Error).message}`);
+    else fail(e, "Reconnect");
     teardown();
     conn.value = "idle";
   }
@@ -112,14 +112,14 @@ async function openPort(port: SerialPort): Promise<void> {
   const t = new WebSerialTransport(port);
   t.onLost = (reason) => {
     if (transport !== t) return;
-    log("warn", `Связь потеряна: ${reason}`);
+    log("warn", `Connection lost: ${reason}`);
     teardown();
     conn.value = "lost";
   };
   try {
     await t.open();
   } catch (e) {
-    throw new Error(`${(e as Error).message}. Порт занят? Закройте SP-404MKII App и другие вкладки`);
+    throw new Error(`${(e as Error).message}. Port busy? Close SP-404MKII App and other tabs`);
   }
   transport = t;
   device = new SP404Device(t, (level, text) => (level !== "debug" || showDebug.value) && log(level, text));
@@ -158,7 +158,7 @@ export async function disconnect(): Promise<void> {
       picked.value = new Set();
     }
   });
-  log("info", "Отключено");
+  log("info", "Disconnected");
 }
 
 /** Demo mode (`?demo`): made-up data in the store, no device behind it (ui/demo.ts). */
@@ -179,7 +179,7 @@ export async function startDemo(): Promise<void> {
     for (const [pad, w] of d.waves) setWaveform(pad, d.pads[pad], w.samples, w.channels);
     conn.value = "ready";
   });
-  log("info", "Демо-режим: данные выдуманы, SP не подключён");
+  log("info", "Demo mode: sample data, SP is not connected");
 }
 
 if (demo.value) startDemo();
@@ -189,7 +189,7 @@ if (WebSerialTransport.supported() && !demo.value) {
     refreshGrant();
     const port = e.target as SerialPort;
     if (isSp404Port(port) && conn.value === "lost") {
-      log("info", "SP снова подключён — переподключаюсь");
+      log("info", "SP is available again — reconnecting");
       setTimeout(() => conn.value === "lost" && reconnect(true), 1500);
     }
   });
@@ -216,7 +216,7 @@ async function loadAll(first = false): Promise<void> {
       const ps = await x.projectSettings(st.project);
       const blocks = await x.allPadBlocks((done, total) => (loadProgress.value = done / total));
       const kb = await x.freeKb().catch(() => null);
-      const pats = await readPatterns(x, st.project + 1).catch((e) => (log("warn", `Паттерны не прочитаны: ${(e as Error).message}`), null));
+      const pats = await readPatterns(x, st.project + 1).catch((e) => (log("warn", `Could not read patterns: ${(e as Error).message}`), null));
       batch(() => {
         // Drafts belong to the project they were made in (status may already show the new project: compare with the one read last).
         // On opening a project, its drafts come back from the browser — those whose SP file is still the one they started from.
@@ -231,8 +231,8 @@ async function loadAll(first = false): Promise<void> {
             }, (slot) => !pats.has(slot));
             drafts.value = r.map;
             draftsProject.value = st.project + 1;
-            if (r.map.size) log("info", `Черновики паттернов из браузера: ${[...r.map.keys()].map(padName).join(", ")}`);
-            if (r.stale.length) log("warn", `Черновики ${r.stale.map(padName).join(", ")} отброшены: паттерн на SP изменился с тех пор`);
+            if (r.map.size) log("info", `Pattern drafts restored from browser: ${[...r.map.keys()].map(padName).join(", ")}`);
+            if (r.stale.length) log("warn", `Drafts ${r.stale.map(padName).join(", ")} discarded: the patterns on SP have changed since they were saved`);
           } else {
             drafts.value = new Map();
             draftsProject.value = null; // patterns not read: keep what the browser has for later
@@ -252,13 +252,13 @@ async function loadAll(first = false): Promise<void> {
           selectedPad.value = st.bank * 16 + st.pad;
         }
       });
-      log("info", `Проект ${st.project + 1} «${ps.name || ps.names[st.project]}»: ${blocks.filter((b) => b.size).length} сэмплов${pats ? `, паттернов ${pats.size}` : ""}`);
+      log("info", `Project ${st.project + 1} “${ps.name || ps.names[st.project]}”: ${blocks.filter((b) => b.size).length} samples${pats ? `, patterns ${pats.size}` : ""}`);
     });
     if (device === d) conn.value = "ready";
     loadWaveformIfSmall(selectedPad.value);
   } catch (e) {
     if (device === d) {
-      fail(e, "Чтение SP");
+      fail(e, "Read SP");
       conn.value = "ready";
     }
   }
@@ -289,10 +289,10 @@ export async function selectProject(p1: number): Promise<void> {
       conn.value = "loading";
       loadProgress.value = 0;
     });
-    log("info", `Выбран проект ${p1} — жду, пока SP его загрузит`);
+    log("info", `Selected project ${p1} — waiting for SP to load it`);
     scheduleReload(2500);
   } catch (e) {
-    fail(e, "Смена проекта");
+    fail(e, "Switch project");
   }
 }
 
@@ -305,7 +305,7 @@ async function poll(): Promise<void> {
     const prev = status.value;
     status.value = st;
     if (prev && prev.project !== st.project) {
-      log("info", `На SP выбран проект ${st.project + 1} — жду, пока он загрузится`);
+      log("info", `SP selected project ${st.project + 1} — waiting for it to load`);
       // Pad blocks read empty while the device is still loading a project (report §0).
       scheduleReload(2500);
     }
@@ -335,13 +335,13 @@ async function readPatterns(x: SP404Device, p1: number): Promise<Map<number, Pat
   for (const slot of slots) {
     const bytes = await x.readFile(patternPath(p1, slot));
     try {
-      if (!bytes) throw new Error("файл пропал");
+      if (!bytes) throw new Error("file disappeared");
       const p = parsePattern(bytes), again = writePattern(p, bytes);
       out.set(slot, p);
       files.set(slot, { bytes, exact: again.length === bytes.length && again.every((b, i) => b === bytes[i]) });
     } catch (e) {
       out.set(slot, (e as Error).message);
-      log("warn", `Паттерн ${padName(slot)}: ${(e as Error).message}`);
+      log("warn", `Pattern ${padName(slot)}: ${(e as Error).message}`);
     }
   }
   patternFiles.value = files;
@@ -357,12 +357,12 @@ async function readPatterns(x: SP404Device, p1: number): Promise<Map<number, Pat
 function reportPatternFiles(files: ReadonlyMap<number, { bytes: Uint8Array; exact: boolean }>): void {
   if (!files.size) return;
   const bad = [...files].filter(([, f]) => !f.exact).map(([s]) => padName(s));
-  if (bad.length) log("warn", `Паттерны: запись не повторяет файл SP для ${bad.join(", ")} — их правки на SP не пишутся`);
-  else log("info", `Паттерны: все ${files.size} файлов наш записыватель повторяет байт в байт`);
+  if (bad.length) log("warn", `Patterns: our encoder does not reproduce SP's file for ${bad.join(", ")} — edits to these patterns cannot be written to SP`);
+  else log("info", `Patterns: all ${files.size} files are reproduced byte-for-byte by our encoder`);
   const diffs = [...files].map(([s, f]) => ({ s, d: rebuildDiff(f.bytes) }));
   const same = diffs.filter((x) => x.d.same).length;
-  log("debug", `Паттерны с нуля: ${same} из ${files.size} совпадают с файлом SP`);
-  for (const { s, d } of diffs.filter((x) => !x.d.same).slice(0, 4)) log("debug", `  ${padName(s)}: запись ${d.record}: SP ${d.sp} · наш ${d.ours}`);
+  log("debug", `Patterns built from scratch: ${same} of ${files.size} match SP's files`);
+  for (const { s, d } of diffs.filter((x) => !x.d.same).slice(0, 4)) log("debug", `  ${padName(s)}: writing ${d.record}: SP ${d.sp} · ours ${d.ours}`);
 }
 
 /** A pattern being saved (what and at which stage), for the buttons. */
@@ -421,9 +421,9 @@ export async function silencePads(list: number[]): Promise<void> {
   if (!d || conn.value !== "ready" || !list.length) return;
   try {
     await d.exclusive(async (x) => { for (const pad of list) setPad(await x.stopPad(project1.value, pad)); });
-    log("info", `Стоп паттерна: заглушены ${list.map(padName).join(", ")} (Gate off)`);
+    log("info", `Stop pattern: muted ${list.map(padName).join(", ")} (Gate off)`);
   } catch (e) {
-    fail(e, "Остановка pad'ов паттерна");
+    fail(e, "Stop pattern pads");
   }
 }
 
@@ -442,21 +442,21 @@ export const isNewSlot = (slot: number): boolean => !!patterns.value && !pattern
 
 export function saveBlockReason(slot: number): string | null {
   const f = patternFiles.value.get(slot), draft = draftOf(slot), base = patterns.value?.get(slot);
-  if (demo.value) return "Демо-режим: SP не подключён";
-  if (!device || conn.value !== "ready") return "SP не подключён";
-  if (patternWriting.value) return `Идёт запись: ${patternWriting.value}`;
-  if (!draft || !isDirty(draft)) return "Изменений нет";
+  if (demo.value) return "Demo mode: SP is not connected";
+  if (!device || conn.value !== "ready") return "SP is not connected";
+  if (patternWriting.value) return `Writing in progress: ${patternWriting.value}`;
+  if (!draft || !isDirty(draft)) return "No changes";
   if (draft.source) {
     // A copy: written over its source file, which our writer reproduced when the copy was made.
   } else if (isNewSlot(slot)) {
-    if (!patternTemplate()) return "Нужен образец: в проекте должен быть хотя бы один паттерн, записанный на SP";
-    if (!draft.p.notes.length) return "Паттерн пуст";
+    if (!patternTemplate()) return "A reference is required: the project must contain at least one pattern recorded on SP";
+    if (!draft.p.notes.length) return "Pattern is empty";
   } else {
-    if (!f) return "Файл этого паттерна не прочитан с SP";
-    if (!f.exact) return "Наша запись не повторяет этот файл SP: сохранять его небезопасно";
+    if (!f) return "This pattern file has not been read from SP";
+    if (!f.exact) return "Our encoder does not reproduce this SP file: saving it would be unsafe";
   }
   const was = base && typeof base !== "string" ? base.bars : 0;
-  if (draft.p.bars > Math.max(SAVE_MAX_BARS, was)) return `Паттерны длиннее ${Math.max(SAVE_MAX_BARS, was)} тактов на SP не проверены`;
+  if (draft.p.bars > Math.max(SAVE_MAX_BARS, was)) return `Patterns longer than ${Math.max(SAVE_MAX_BARS, was)} bars have not been tested on SP`;
   return writeBlockReason.value;
 }
 
@@ -488,23 +488,23 @@ async function savePattern(slot: number): Promise<boolean> {
   // An existing pattern: its own file, every record we did not change kept. A new one: over a template's skeleton.
   const bytes = draft.source ? writePattern(draft.p, draft.source)
     : fresh ? writePattern(draft.p, patternTemplate()!.bytes, { fresh: true }) : writePattern(draft.p, patternFiles.value.get(slot)!.bytes);
-  const what = `${padName(slot)} в проект ${p1}${draft.source ? " (копия)" : fresh ? " (новый)" : ""}`;
+  const what = `${padName(slot)} to project ${p1}${draft.source ? " (copy)" : fresh ? " (new)" : ""}`;
   patternWriting.value = what;
   try {
     const r = await d.exclusive((x) => x.writePatternAndReload(p1, slot, bytes, via, (s) => (patternWriting.value = `${what}: ${s}`)));
     if (r.kept) {
-      log("info", `Паттерн сохранён: ${what} (${bytes.length} байт), SP перечитал проект через проект ${via}`);
-      notice.value = { kind: "info", text: `Сохранено на SP: ${padName(slot)}` };
+      log("info", `Pattern saved: ${what} (${bytes.length} bytes); SP reloaded the project via project ${via}`);
+      notice.value = { kind: "info", text: `Saved to SP: ${padName(slot)}` };
       if (editingSlot.value === slot) editingSlot.value = null;
       dropDraft(slot);
     } else {
-      log("warn", `${what}: после возврата в проект файл не наш — SP записал свою копию поверх`);
-      notice.value = { kind: "error", text: `${what}: SP при смене проекта записал свою копию паттерна поверх нашей. Черновик остался` };
+      log("warn", `${what}: after returning to the project, the file differs — SP overwrote it with its own copy`);
+      notice.value = { kind: "error", text: `${what}: SP overwrote our pattern with its own copy while switching projects. The draft is kept` };
     }
     await loadAll();
     return r.kept;
   } catch (e) {
-    fail(e, `Сохранение паттерна ${what}`);
+    fail(e, `Save pattern ${what}`);
     void loadAll();
     return false;
   } finally {
@@ -522,7 +522,7 @@ export async function refreshPatterns(): Promise<Map<number, PatternSlot> | null
     if (device === d && project1.value === p1) patterns.value = m;
     return m;
   } catch (e) {
-    fail(e, "Чтение паттернов");
+    fail(e, "Read patterns");
     return null;
   } finally {
     patternsLoading.value = false;
@@ -543,7 +543,7 @@ export function downloadPatternMidi(slot: number): void {
   if (!p || typeof p === "string" || !t) return;
   const name = patternMidiName(project1.value, slot);
   saveFile(name, patternToMidi(p, t.tempoX100), "audio/midi");
-  log("info", `Паттерн ${padName(slot)} → ${name} (${formatBpm(t.tempoX100)} BPM ${t.of})`);
+  log("info", `Pattern ${padName(slot)} → ${name} (${formatBpm(t.tempoX100)} BPM ${t.of})`);
 }
 
 /** A bounce in progress: the slot and the SP's progress 0..1. */
@@ -555,14 +555,14 @@ export const bouncing = signal<{ slot: number; progress: number } | null>(null);
  */
 export async function bouncePattern(slot: number): Promise<Uint8Array | null> {
   const d = device;
-  const blocked = writeBlockReason.value ?? (importing.value ? "Идёт импорт — дождитесь конца" : bouncing.value ? "Уже идёт Bounce" : null);
+  const blocked = writeBlockReason.value ?? (importing.value ? "Import in progress — wait for it to finish" : bouncing.value ? "Bounce is already running" : null);
   if (!d) return null;
   if (blocked) return void (notice.value = { kind: "error", text: blocked }), null;
   bouncing.value = { slot, progress: 0 };
   const t0 = performance.now();
   try {
     const wav = await d.exclusive((x) => x.bouncePattern(project1.value, slot, (f) => (bouncing.value = { slot, progress: f })));
-    log("info", `Bounce ${padName(slot)}: ${(wav.length / 1048576).toFixed(2)} MB за ${((performance.now() - t0) / 1000).toFixed(1)} s`);
+    log("info", `Bounce ${padName(slot)}: ${(wav.length / 1048576).toFixed(2)} MB in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
     return wav;
   } catch (e) {
     fail(e, `Bounce ${padName(slot)}`);
@@ -587,8 +587,8 @@ async function reportPatternsAfterMove(src: number, dst: number, swapped: boolea
     if (!slots.length) continue;
     const followed = slots.filter((s) => !plays(s, from) && plays(s, to));
     const stayed = slots.filter((s) => plays(s, from));
-    if (followed.length) log("info", `Паттерны ${followed.map(padName).join(", ")}: SP перевёл ноты ${padName(from)} на ${padName(to)}`);
-    if (stayed.length) log("warn", `Паттерны ${stayed.map(padName).join(", ")} по-прежнему играют ${padName(from)}${swapped ? ` (там теперь сэмпл с ${padName(to)})` : " (он теперь пуст)"}`);
+    if (followed.length) log("info", `Patterns ${followed.map(padName).join(", ")}: SP moved notes from ${padName(from)} to ${padName(to)}`);
+    if (stayed.length) log("warn", `Patterns ${stayed.map(padName).join(", ")} still play ${padName(from)}${swapped ? ` (now contains the sample from ${padName(to)})` : " (now empty)"}`);
   }
 }
 
@@ -608,7 +608,7 @@ export function selectPad(pad: number): void {
     if (!d || conn.value !== "ready" || (st && st.bank * 16 + st.pad === pad)) return;
     d.exclusive((x) => x.selectOnDevice(pad))
       .then(() => { if (status.value) status.value = { ...status.value, bank: pad >> 4, pad: pad & 15 }; })
-      .catch((e) => log("warn", `Выбор pad'а на SP: ${(e as Error).message}`));
+      .catch((e) => log("warn", `Select pad on SP: ${(e as Error).message}`));
   }, 120);
   loadWaveformIfSmall(pad);
 }
@@ -629,10 +629,10 @@ export async function loadWaveform(pad: number): Promise<void> {
   try {
     const smp = await d.exclusive((x) => x.readFile(samplePath(project1.value, pad), Infinity, (done, total) => (waveLoading.value = { pad, progress: done / total })));
     const pcm = smp && smpToPcm(smp);
-    if (!pcm) throw new Error("файл сэмпла не найден");
+    if (!pcm) throw new Error("sample file not found");
     setWaveform(pad, b, pcm.samples, pcm.channels);
   } catch (e) {
-    fail(e, `Волна ${padName(pad)}`);
+    fail(e, `Waveform ${padName(pad)}`);
   } finally {
     waveLoading.value = null;
   }
@@ -707,7 +707,7 @@ export function endPadDrag(): void {
 export function tempoFor(bank: number): { tempoX100: number; of: string } | null {
   const ps = project.value, b = ps?.banks[bank];
   if (!ps) return null;
-  return ps.useProjectTempo || !b ? { tempoX100: ps.projectTempoX100, of: "проекта" } : { tempoX100: b.tempoX100, of: `банка ${b.letter}` };
+  return ps.useProjectTempo || !b ? { tempoX100: ps.projectTempoX100, of: "project" } : { tempoX100: b.tempoX100, of: `bank ${b.letter}` };
 }
 
 /**
@@ -720,8 +720,8 @@ export function moveSpeedChange(src: number, bank: number): { from: number; to: 
   const from = padSpeed(p, a.tempoX100).ratio, to = padSpeed(p, b.tempoX100).ratio;
   if (Math.abs(to / from - 1) < 0.005) return null;
   const st = 12 * Math.log2(to / from);
-  const pitch = p.vinyl ? ` · с Vinyl ${st > 0 ? "выше" : "ниже"} на ${Math.abs(st).toFixed(1)} st` : "";
-  return { from, to, text: `${padName(src)}: ×${from.toFixed(2)} → ×${to.toFixed(2)} в банке ${BANKS[bank]} (${formatBpm(b.tempoX100)} BPM)${pitch}` };
+  const pitch = p.vinyl ? ` · with Vinyl ${st > 0 ? "higher" : "lower"} by ${Math.abs(st).toFixed(1)} st` : "";
+  return { from, to, text: `${padName(src)}: ×${from.toFixed(2)} → ×${to.toFixed(2)} in bank ${BANKS[bank]} (${formatBpm(b.tempoX100)} BPM)${pitch}` };
 }
 
 /** First empty pad of a bank as last read, or null when the bank is full. */
@@ -781,19 +781,19 @@ export async function deletePicked(): Promise<void> {
   const list = pickedList.value;
   if (!list.length || groupProgress.value) return;
   let done = 0;
-  groupProgress.value = { done, total: list.length, verb: "Удаляю" };
+  groupProgress.value = { done, total: list.length, verb: "Deleting" };
   try {
     for (const pad of list) {
       if (!(await deletePad(pad))) break;
       done++;
       const n = new Set(picked.value);
       n.delete(pad);
-      batch(() => { picked.value = n; groupProgress.value = { done, total: list.length, verb: "Удаляю" }; });
+      batch(() => { picked.value = n; groupProgress.value = { done, total: list.length, verb: "Deleting" }; });
     }
   } finally {
     groupProgress.value = null;
   }
-  log(done === list.length ? "info" : "warn", done === list.length ? `Удалено pad'ов: ${done}` : `Удалено ${done} из ${list.length}: остановлено на ошибке`);
+  log(done === list.length ? "info" : "warn", done === list.length ? `Pads deleted: ${done}` : `Deleted ${done} of ${list.length}: stopped due to an error`);
 }
 
 /** The pads that travel with the dragged one: the picked group, when the drag starts on one of them. */
@@ -818,7 +818,7 @@ export function groupTargets(bank: number, from: number | null, n: number): numb
 export async function dropGroup(targets: number[], copy: boolean): Promise<void> {
   const list = pickedList.value;
   if (list.length !== targets.length || groupProgress.value) return;
-  const verb = copy ? "Копирую" : "Переношу";
+  const verb = copy ? "Copying" : "Moving";
   let done = 0;
   groupProgress.value = { done, total: list.length, verb };
   try {
@@ -831,8 +831,8 @@ export async function dropGroup(targets: number[], copy: boolean): Promise<void>
   }
   // Done: nothing stays picked. Stopped by an error: the pads not handled yet stay picked.
   picked.value = new Set(list.slice(done));
-  const what = copy ? "Скопировано" : "Перенесено";
-  log(done === list.length ? "info" : "warn", done === list.length ? `${what} pad'ов: ${done}` : `${what} ${done} из ${list.length}: остановлено на ошибке`);
+  const what = copy ? "Copied" : "Moved";
+  log(done === list.length ? "info" : "warn", done === list.length ? `${what} pads: ${done}` : `${what} ${done} of ${list.length}: stopped due to an error`);
 }
 
 /** Pad whose deletion waits for the user's confirmation in the inspector header. */
@@ -842,13 +842,13 @@ export const confirmDelete = signal<number | null>(null);
 export async function deletePad(pad: number): Promise<boolean> {
   confirmDelete.value = null;
   const d = device;
-  const blocked = writeBlockReason.value ?? (importing.value ? "Идёт импорт — дождитесь конца" : null);
+  const blocked = writeBlockReason.value ?? (importing.value ? "Import in progress — wait for it to finish" : null);
   if (!d) return false;
   if (blocked) {
     notice.value = { kind: "error", text: blocked };
     return false;
   }
-  const name = pads.value[pad]?.name || "без имени";
+  const name = pads.value[pad]?.name || "untitled";
   try {
     const b = await d.exclusive((x) => x.deletePad(project1.value, pad));
     const drop = <T,>(m: Map<number, T>) => { const n = new Map(m); n.delete(pad); return n; };
@@ -858,10 +858,10 @@ export async function deletePad(pad: number): Promise<boolean> {
       padChannels.value = drop(padChannels.value);
       if (playing.value === pad) playing.value = null;
     });
-    log("info", `${padName(pad)}: удалён «${name}»`);
+    log("info", `${padName(pad)}: deleted “${name}”`);
     return true;
   } catch (e) {
-    fail(e, `Удаление ${padName(pad)}`);
+    fail(e, `Delete ${padName(pad)}`);
     return false;
   }
 }
@@ -869,7 +869,7 @@ export async function deletePad(pad: number): Promise<boolean> {
 /** Copy a pad onto an empty one (Ctrl-drag): read its sample, import it there, copy the settings. */
 export async function copyPad(src: number, dst: number): Promise<boolean> {
   const d = device;
-  const blocked = writeBlockReason.value ?? (importing.value ? "Идёт импорт — дождитесь конца" : copying.value ? "Уже идёт копирование" : null);
+  const blocked = writeBlockReason.value ?? (importing.value ? "Import in progress — wait for it to finish" : copying.value ? "Copy already in progress" : null);
   if (!d || src === dst) return false;
   if (blocked) {
     notice.value = { kind: "error", text: blocked };
@@ -883,12 +883,12 @@ export async function copyPad(src: number, dst: number): Promise<boolean> {
       const ch = padChannels.value.get(src);
       if (ch) padChannels.value = new Map(padChannels.value).set(dst, ch);
     });
-    if (r.differs.length) log("warn", `${padName(src)} ⧉ ${padName(dst)}: скопирован, но отличаются параметры ${r.differs.join(", ")}`);
-    else log("info", `${padName(src)} ⧉ ${padName(dst)}: скопирован «${r.block.name}»`);
+    if (r.differs.length) log("warn", `${padName(src)} ⧉ ${padName(dst)}: copied, but these parameters differ: ${r.differs.join(", ")}`);
+    else log("info", `${padName(src)} ⧉ ${padName(dst)}: copied “${r.block.name}”`);
     selectPad(dst);
     return true;
   } catch (e) {
-    fail(e, `Копирование ${padName(src)} → ${padName(dst)}`);
+    fail(e, `Copy ${padName(src)} → ${padName(dst)}`);
     return false;
   } finally {
     copying.value = null;
@@ -897,7 +897,7 @@ export async function copyPad(src: number, dst: number): Promise<boolean> {
 
 export async function movePad(src: number, dst: number, onlyToEmpty = false): Promise<boolean> {
   const d = device;
-  const blocked = writeBlockReason.value ?? (importing.value ? "Идёт импорт — дождитесь конца" : null);
+  const blocked = writeBlockReason.value ?? (importing.value ? "Import in progress — wait for it to finish" : null);
   if (!d || src === dst) return false;
   if (blocked) {
     notice.value = { kind: "error", text: blocked };
@@ -919,12 +919,12 @@ export async function movePad(src: number, dst: number, onlyToEmpty = false): Pr
       padChannels.value = swap(padChannels.value);
       if (playing.value === src || playing.value === dst) playing.value = null;
     });
-    log("info", r.swapped ? `${padName(src)} ⇄ ${padName(dst)}: поменялись местами` : `${padName(src)} → ${padName(dst)}: перенесён`);
+    log("info", r.swapped ? `${padName(src)} ⇄ ${padName(dst)}: swapped` : `${padName(src)} → ${padName(dst)}: moved`);
     selectPad(dst);
     await reportPatternsAfterMove(src, dst, r.swapped);
     return true;
   } catch (e) {
-    fail(e, `Перенос ${padName(src)} → ${padName(dst)}`);
+    fail(e, `Move ${padName(src)} → ${padName(dst)}`);
     return false;
   }
 }
@@ -957,17 +957,17 @@ export async function editGroup(what: string, fn: (d: SP404Device, p1: number, p
   }
   if (!list.length) return true;
   let done = 0;
-  groupProgress.value = { done, total: list.length, verb: "Меняю" };
+  groupProgress.value = { done, total: list.length, verb: "Updating" };
   try {
     for (const pad of list) {
       try {
         setPad(await d.exclusive((x) => fn(x, project1.value, pad)));
       } catch (e) {
         fail(e, `${padName(pad)}, ${what}`);
-        if (done) log("warn", `${what}: изменено ${done} из ${list.length}, остановлено на ${padName(pad)}`);
+        if (done) log("warn", `${what}: updated ${done} of ${list.length}, stopped at ${padName(pad)}`);
         return false;
       }
-      groupProgress.value = { done: ++done, total: list.length, verb: "Меняю" };
+      groupProgress.value = { done: ++done, total: list.length, verb: "Updating" };
     }
     log("info", `${what}: ${list.map(padName).join(", ")}`);
     return true;
@@ -976,7 +976,7 @@ export async function editGroup(what: string, fn: (d: SP404Device, p1: number, p
   }
 }
 
-const onOff = (on: boolean) => (on ? "вкл" : "выкл");
+const onOff = (on: boolean) => (on ? "on" : "off");
 
 export const setBpm = (pad: number, x100: number) => editPad(pad, `BPM ${(x100 / 100).toFixed(2)}`, (d, p1) => d.setBpm(p1, pad, x100));
 export const setLevel = (pad: number, level: number) => editPad(pad, `Level ${level}`, (d, p1) => d.setLevel(p1, pad, level));
@@ -993,7 +993,7 @@ export const setPitch = (pad: number, coarse: number, fine: number) =>
 export const setVari = (pad: number, mode: number) => editPad(pad, `VARI MODE ${VARI_MODES[mode]}`, (d, p1) => d.setVari(p1, pad, mode));
 export const setOneShot = (pad: number, on: boolean) => editPad(pad, `One Shot ${onOff(on)}`, (d, p1) => d.setOneShot(p1, pad, on));
 export const setRange = (pad: number, start: number, end: number) =>
-  editPad(pad, `Start/End ${start}–${end} кадров`, (d, p1) => d.setRange(p1, pad, start, end));
+  editPad(pad, `Start/End ${start}–${end} frames`, (d, p1) => d.setRange(p1, pad, start, end));
 
 /** Run one project-wide edit (tempos) and show the settings it returns. */
 async function editProject(what: string, fn: (d: SP404Device, p1: number) => Promise<ProjectSettings & { names: string[] }>): Promise<boolean> {
@@ -1001,20 +1001,20 @@ async function editProject(what: string, fn: (d: SP404Device, p1: number) => Pro
   if (!d) return false;
   try {
     project.value = await d.exclusive((x) => fn(x, project1.value));
-    log("info", `Проект ${project1.value}: ${what}`);
+    log("info", `Project ${project1.value}: ${what}`);
     return true;
   } catch (e) {
-    fail(e, `Проект ${project1.value}, ${what}`);
+    fail(e, `Project ${project1.value}, ${what}`);
     return false;
   }
 }
 
 const bpmText = (x100: number) => `${(x100 / 100).toFixed(2)} BPM`;
-export const setProjectTempo = (x100: number) => editProject(`темп проекта ${bpmText(x100)}`, (d, p1) => d.setProjectTempo(p1, x100));
+export const setProjectTempo = (x100: number) => editProject(`project tempo ${bpmText(x100)}`, (d, p1) => d.setProjectTempo(p1, x100));
 export const setBankTempo = (bank: number, x100: number) =>
-  editProject(`темп банка ${padName(bank * 16)[0]} ${bpmText(x100)}`, (d, p1) => d.setBankTempo(p1, bank, x100));
+  editProject(`bank tempo ${padName(bank * 16)[0]} ${bpmText(x100)}`, (d, p1) => d.setBankTempo(p1, bank, x100));
 export const setTempoSelect = (useProject: boolean) =>
-  editProject(`действует темп ${useProject ? "проекта" : "банков"}`, (d, p1) => d.setTempoSelect(p1, useProject));
+  editProject(`active tempo: ${useProject ? "project" : "banks"}`, (d, p1) => d.setTempoSelect(p1, useProject));
 
 /** Range of BPM detection, index into BPM_RANGES (80–159 by default), as BPM SET AUTO on the SP. */
 export const bpmRange = signal(1);
@@ -1034,7 +1034,7 @@ export async function detectPadBpm(pad: number): Promise<BpmResult | null | unde
   await new Promise((r) => setTimeout(r, 0)); // let "анализ…" paint: a long sample takes up to a second
   const [min, max] = BPM_RANGES[bpmRange.value]!;
   const r = detectBpm(w.samples.subarray(from * ch, to * ch), ch, min);
-  log("info", `${padName(pad)}: BPM ${r ? (r.x100 / 100).toFixed(2) + (r.beats ? `, луп ${r.beats} долей` : "") + `, чёткость ${r.clarity.toFixed(2)}` : "не определён"} (диапазон ${min}–${max})`);
+  log("info", `${padName(pad)}: BPM ${r ? (r.x100 / 100).toFixed(2) + (r.beats ? `, loop ${r.beats} beats` : "") + `, clarity ${r.clarity.toFixed(2)}` : "Not detected"} (range ${min}–${max})`);
   return r;
 }
 
@@ -1048,7 +1048,7 @@ export interface BpmPlan { pad: number; from: number; x100: number | null; note:
 export async function planGroupBpm(how: "detect" | "range"): Promise<BpmPlan[] | null> {
   const list = pickedList.value;
   if (!list.length || groupProgress.value) return null;
-  const verb = how === "detect" ? "Анализирую" : "Считаю";
+  const verb = how === "detect" ? "Analyzing" : "Calculating";
   const out: BpmPlan[] = [];
   groupProgress.value = { done: 0, total: list.length, verb };
   try {
@@ -1056,17 +1056,17 @@ export async function planGroupBpm(how: "detect" | "range"): Promise<BpmPlan[] |
       const b = pads.value[pad]!, from = b.bpmX100;
       if (how === "detect") {
         const r = await detectPadBpm(pad);
-        out.push(r ? { pad, from, x100: r.x100, note: r.beats ? `${r.beats} долей` : r.clarity < 0.4 ? "ритм нечёткий" : "" }
-          : { pad, from, x100: null, note: r === null ? "чёткого ритма нет" : "сэмпл не прочитан" });
+        out.push(r ? { pad, from, x100: r.x100, note: r.beats ? `${r.beats} beats` : r.clarity < 0.4 ? "unclear rhythm" : "" }
+          : { pad, from, x100: null, note: r === null ? "no clear rhythm" : "sample not read" });
       } else {
         await loadChannels(pad);
         const ch = channelsOf(pad);
         const r = ch ? bpmFromLength(byteToFrame(b.endByte, ch) - byteToFrame(b.startByte, ch), from) : null;
         const beats = r && (r.beats >= 1 ? String(r.beats) : `1/${1 / r.beats}`);
-        out.push(!ch ? { pad, from, x100: null, note: "заголовок сэмпла не прочитан" }
-          : !r ? { pad, from, x100: null, note: "слишком короткий участок" }
-          : r.x100 < BPM_MIN_X100 || r.x100 > BPM_MAX_X100 ? { pad, from, x100: null, note: `выходит ${formatBpm(r.x100)} — вне 40–200` }
-          : { pad, from, x100: r.x100, note: `${beats} долей` });
+        out.push(!ch ? { pad, from, x100: null, note: "sample header not read" }
+          : !r ? { pad, from, x100: null, note: "region is too short" }
+          : r.x100 < BPM_MIN_X100 || r.x100 > BPM_MAX_X100 ? { pad, from, x100: null, note: `result: ${formatBpm(r.x100)} — outside 40–200` }
+          : { pad, from, x100: r.x100, note: `${beats} beats` });
       }
       groupProgress.value = { done: out.length, total: list.length, verb };
     }
@@ -1079,7 +1079,7 @@ export async function planGroupBpm(how: "detect" | "range"): Promise<BpmPlan[] |
 /** Write the BPMs of a plan to the pads that got one and still have another BPM. */
 export function applyGroupBpm(plan: BpmPlan[]): Promise<boolean> {
   const to = new Map(plan.flatMap((p) => (p.x100 === null ? [] : [[p.pad, p.x100] as const])));
-  return editGroup("BPM по каждому pad'у", (d, p1, pad) => d.setBpm(p1, pad, to.get(pad)!), (b) => to.get(b.index) === undefined || to.get(b.index) === b.bpmX100);
+  return editGroup("BPM for each pad", (d, p1, pad) => d.setBpm(p1, pad, to.get(pad)!), (b) => to.get(b.index) === undefined || to.get(b.index) === b.bpmX100);
 }
 
 /**
@@ -1093,11 +1093,11 @@ export async function downloadPadWav(pad: number): Promise<void> {
   const cached = () => { const w = waveforms.value.get(pad); return w?.key === waveKey(b) && w.samples ? w : undefined; };
   if (!cached()) await loadWaveform(pad);
   const w = cached();
-  if (!w?.samples) return void (notice.value = { kind: "error", text: `${padName(pad)}: не удалось прочитать сэмпл` });
+  if (!w?.samples) return void (notice.value = { kind: "error", text: `${padName(pad)}: could not read the sample` });
   const base = safeFileName(b.name || padName(pad));
   const name = bpmFromFileName(base) === null && b.bpmX100 >= 4000 && b.bpmX100 <= 20000 ? `${base}_${formatBpm(b.bpmX100)}bpm.wav` : `${base}.wav`;
   saveFile(name, encodeWav(w.samples, w.channels), "audio/wav");
-  log("info", `${padName(pad)} → ${name} (${(w.frames / 48000).toFixed(2)} s, ${w.channels === 1 ? "моно" : "стерео"})`);
+  log("info", `${padName(pad)} → ${name} (${(w.frames / 48000).toFixed(2)} s, ${w.channels === 1 ? "mono" : "stereo"})`);
 }
 
 /** Pad started by preview that may still be playing (Gate off), for the stop button; null when none. */
@@ -1111,7 +1111,7 @@ export async function preview(pad: number, on: boolean): Promise<void> {
     if (on) playing.value = pad;
     else if (pads.value[pad]?.gate) playing.value = null; // Gate on: the release has stopped it
   } catch (e) {
-    fail(e, "Прослушивание");
+    fail(e, "Preview");
   }
 }
 
@@ -1120,19 +1120,19 @@ export async function stopPlaying(): Promise<void> {
   const pad = playing.value;
   if (pad === null) return;
   playing.value = null;
-  if (!(await editPad(pad, "стоп", (d, p1) => d.stopPad(p1, pad)))) return;
+  if (!(await editPad(pad, "stop", (d, p1) => d.stopPad(p1, pad)))) return;
   const sel = selectedPad.value;
   if (sel === pad) return;
   await device?.exclusive((x) => x.selectOnDevice(sel))
     .then(() => { if (status.value) status.value = { ...status.value, bank: sel >> 4, pad: sel & 15 }; })
-    .catch((e) => log("warn", `Выбор pad'а на SP: ${(e as Error).message}`));
+    .catch((e) => log("warn", `Select pad on SP: ${(e as Error).message}`));
 }
 
 /** Free pads from `startPad` to the end of its bank, skipping pads already queued. */
 /** Run `fn` with the device to itself (for modules beside the store, e.g. the card browser). */
 export function withDevice<T>(fn: (d: SP404Device) => Promise<T>): Promise<T> {
   const d = device;
-  if (!d || conn.value !== "ready") return Promise.reject(new Error("SP не подключён"));
+  if (!d || conn.value !== "ready") return Promise.reject(new Error("SP is not connected"));
   return d.exclusive(fn);
 }
 
@@ -1147,15 +1147,15 @@ function targetPads(startPad: number, count: number): number[] {
 export function importFiles(files: File[], startPad: number, bpmX100?: number | (number | undefined)[]): void {
   const d = device;
   const audio = files.filter((f) => /^audio\//.test(f.type) || /\.(wav|aiff?|flac|mp3|ogg|m4a|aac)$/i.test(f.name));
-  if (!audio.length) return void (notice.value = { kind: "error", text: "Перетащите аудиофайлы (WAV, AIFF, FLAC, MP3…)" });
+  if (!audio.length) return void (notice.value = { kind: "error", text: "Drop audio files (WAV, AIFF, FLAC, MP3…)" });
   const block = writeBlockReason.value;
-  if (!d || block) return void (notice.value = { kind: "error", text: block ?? "SP не подключён" });
+  if (!d || block) return void (notice.value = { kind: "error", text: block ?? "SP is not connected" });
   const bank = startPad >> 4;
-  if (project.value?.banks[bank]?.protected) return void (notice.value = { kind: "error", text: `Банк ${padName(bank * 16)[0]} защищён (BANK Protect на SP)` });
-  if (pads.value[startPad]?.size) return void (notice.value = { kind: "error", text: `${padName(startPad)} занят. Перетащите на пустой pad — перезапись пока не поддерживается` });
+  if (project.value?.banks[bank]?.protected) return void (notice.value = { kind: "error", text: `Bank ${padName(bank * 16)[0]} is protected (BANK Protect on SP)` });
+  if (pads.value[startPad]?.size) return void (notice.value = { kind: "error", text: `${padName(startPad)} is occupied. Drop onto an empty pad — overwriting is not currently supported` });
   const targets = targetPads(startPad, audio.length);
   if (targets.length < audio.length)
-    notice.value = { kind: "info", text: `В банке хватает места для ${targets.length} из ${audio.length} файлов — остальные пропущены` };
+    notice.value = { kind: "info", text: `The bank has room for ${targets.length} of ${audio.length} files — the rest were skipped` };
   else notice.value = null;
   const fallback = parseDefaultBpm();
   const detectMin = detectOnImport.value ? BPM_RANGES[bpmRange.value]![0] : null;
@@ -1176,7 +1176,7 @@ export function importFiles(files: File[], startPad: number, bpmX100?: number | 
     },
   }, (level, text) => log(level, text));
   importChain = importChain.then(() => uploader.run(p1, newJobs)).then((ok) => {
-    if (ok < newJobs.length) notice.value = { kind: "error", text: `Импортировано ${ok} из ${newJobs.length} — подробности в журнале` };
+    if (ok < newJobs.length) notice.value = { kind: "error", text: `Imported ${ok} of ${newJobs.length} — details in the log` };
   });
 }
 
