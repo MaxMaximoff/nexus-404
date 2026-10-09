@@ -6,10 +6,14 @@ hardware test results: `../SP404MKII-browser-feasibility.md`.
 
 ```bash
 npm install
-npm run dev      # http://localhost:5173 (no hot reload: press F5 after edits)
+npm run dev      # http://localhost:5173/nexus-404/ (no hot reload: press F5 after edits)
 npm test         # protocol codecs, guard, import against a scripted SP
 npm run build    # static files in dist/, serve over HTTPS
+npm run ship     # build + stage dist/ for deployment through Git
 ```
+
+Timeweb deployment: [../DEPLOY.md](../DEPLOY.md). Production URL:
+https://soundplayground.twc1.net/nexus-404/.
 
 Close the official SP-404MKII App first: only one program can open the port.
 
