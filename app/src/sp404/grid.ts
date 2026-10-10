@@ -323,14 +323,15 @@ export function extractLoop(samples: Int16Array, channels: number, loop: Pick<Lo
 
 /**
  * A loop of several stems summed into one, as 16-bit PCM with `channels` channels (a mono stem
- * goes to both; the sum is clipped); each stem's fades as in extractLoop.
+ * goes to both; each at its `gain`, linear, 1 when left out; the sum is clipped); each stem's
+ * fades as in extractLoop.
  */
-export function mixLoop(stems: { samples: Int16Array; channels: number }[], loop: Pick<Loop, "start" | "frames">, channels: number, fade = 0): Int16Array {
+export function mixLoop(stems: { samples: Int16Array; channels: number; gain?: number }[], loop: Pick<Loop, "start" | "frames">, channels: number, fade = 0): Int16Array {
   const sum = new Float64Array(loop.frames * channels);
   for (const stem of stems) {
-    const pcm = extractLoop(stem.samples, stem.channels, loop, fade);
+    const pcm = extractLoop(stem.samples, stem.channels, loop, fade), g = stem.gain ?? 1;
     for (let f = 0; f < loop.frames; f++)
-      for (let c = 0; c < channels; c++) sum[f * channels + c] += pcm[f * stem.channels + Math.min(c, stem.channels - 1)]!;
+      for (let c = 0; c < channels; c++) sum[f * channels + c] += pcm[f * stem.channels + Math.min(c, stem.channels - 1)]! * g;
   }
   return Int16Array.from(sum, (v) => Math.max(-32768, Math.min(32767, Math.round(v))));
 }

@@ -58,6 +58,10 @@ export const slTrack = signal<Track | null>(null);
 export const slGridStem = signal(0);
 /** Stems muted (indices): not heard, and not written to the card. */
 export const slMuted = signal<ReadonlySet<number>>(new Set());
+/** Volume of each stem in dB (stem index → dB; 0 when left out), for every loop. */
+export const slGain = signal<ReadonlyMap<number, number>>(new Map());
+/** A loop's own balance: its first bar → (stem index → dB on top of the stem's volume). */
+export const slLoopGain = signal<ReadonlyMap<number, ReadonlyMap<number, number>>>(new Map());
 /** Clean-up of the stems (UVR leftovers): off, or how much; the cleaned sound is heard and written. */
 export const slClean = signal<"off" | CleanLevel>("off");
 /** The cleaned PCM of the open track's stems at that level; null while off or not ready. */
@@ -181,6 +185,9 @@ export function removeStem(i: number): void {
   stopPlay();
   const without = (set: ReadonlySet<number>) => new Set([...set].filter((j) => j !== i).map((j) => (j > i ? j - 1 : j)));
   slMuted.value = without(slMuted.value);
+  const shift = (m: ReadonlyMap<number, number>) => new Map([...m].filter(([j]) => j !== i).map(([j, v]) => [j > i ? j - 1 : j, v] as [number, number]));
+  slGain.value = shift(slGain.value);
+  slLoopGain.value = new Map([...slLoopGain.value].map(([bar, m]) => [bar, shift(m)] as [number, ReadonlyMap<number, number>]));
   if (slGridStem.value === i) slGridStem.value = 0;
   else if (slGridStem.value > i) slGridStem.value--;
   setTrack({ ...t, stems: labelled(t.stems.filter((_, j) => j !== i)) });
@@ -248,6 +255,8 @@ function setTrack(t: Omit<Track, "frames">): void {
   if (frames - shortest > STEM_LENGTH_SLACK)
     notice.value = { kind: "info", text: `The stems differ in length by ${((frames - shortest) / RATE).toFixed(2)} s: are they of one track?` };
   if (slTrack.value?.id !== t.id) {
+    slGain.value = new Map();
+    slLoopGain.value = new Map();
     slKey.value = undefined;
     slMuted.value = new Set();
     slGridStem.value = Math.max(0, gridStem(stemKinds(t.stems.map((x) => x.name))));
@@ -329,6 +338,37 @@ export function setGridStem(i: number): void {
   if (!t || i === slGridStem.value || i < 0 || i >= t.stems.length || slBusy.value) return;
   slGridStem.value = i;
   void analyze();
+}
+
+/** Stem `i`'s volume in dB for every loop; the loop playing is heard with it. */
+export function setStemGain(i: number, db: number): void {
+  const next = new Map(slGain.value);
+  if (db) next.set(i, db); else next.delete(i);
+  slGain.value = next;
+}
+
+/** Stem `i`'s volume in the loop starting at `bar`, in dB on top of its own (0: none). */
+export function setLoopGain(bar: number, i: number, db: number): void {
+  const next = new Map(slLoopGain.value), m = new Map(next.get(bar) ?? []);
+  if (db) m.set(i, db); else m.delete(i);
+  if (m.size) next.set(bar, m); else next.delete(bar);
+  slLoopGain.value = next;
+}
+
+/** The loop at `bar` back to the stems' own volumes. */
+export function resetLoopGain(bar: number): void {
+  const next = new Map(slLoopGain.value);
+  next.delete(bar);
+  slLoopGain.value = next;
+}
+
+/** Stem `i`'s linear gain in the loop starting at `bar`. */
+export const gainOf = (i: number, bar: number): number => 10 ** (((slGain.value.get(i) ?? 0) + (slLoopGain.value.get(bar)?.get(i) ?? 0)) / 20);
+
+/** Play the loop again (after a change in what is heard), if one is playing. */
+export function replay(): void {
+  const p = slPlay.value;
+  if (p) play(p.bar, !p.loop);
 }
 
 /** A stem in or out of listening — and of the write. */
@@ -418,6 +458,7 @@ function keepInside(): void {
 function pruneOff(): void {
   const starts = new Set(slLoops.value.map((l) => l.bar));
   slOff.value = new Set([...slOff.value].filter((b) => starts.has(b)));
+  if ([...slLoopGain.value.keys()].some((b) => !starts.has(b))) slLoopGain.value = new Map([...slLoopGain.value].filter(([b]) => starts.has(b)));
   if (slSel.value !== null && !starts.has(slSel.value)) slSel.value = slLoops.value.find((l) => l.bar <= slSel.value! && l.bar + l.bars > slSel.value!)?.bar ?? null;
 }
 
@@ -429,6 +470,7 @@ export function cutEvery(bars: number): void {
   stopPlay();
   slCuts.value = new Set(evenCuts(g, t.frames, bars, preRoll()));
   slOff.value = new Set();
+  slLoopGain.value = new Map();
   slSel.value = slLoops.value.find((l) => l.bar >= 1)?.bar ?? slLoops.value[0]?.bar ?? null;
 }
 
@@ -546,10 +588,10 @@ export function play(bar: number, seam = false): void {
   for (const [s, stem] of t.stems.entries()) {
     if (slMuted.value.has(s)) continue;
     for (const [loop, at] of [[a, 0], ...(b ? [[b, a.frames]] : [])] as [Loop, number][]) {
-      const pcm = extractLoop(samplesOf(stem), stem.channels, loop, fade);
+      const pcm = extractLoop(samplesOf(stem), stem.channels, loop, fade), k = (t.stems.length > 1 ? gainOf(s, loop.bar) : 1) / 32768;
       for (let c = 0; c < outCh; c++) {
         const ch = buf.getChannelData(c), from = Math.min(c, stem.channels - 1);
-        for (let f = 0; f < loop.frames; f++) ch[at + f] += pcm[f * stem.channels + from]! / 32768;
+        for (let f = 0; f < loop.frames; f++) ch[at + f] += pcm[f * stem.channels + from]! * k;
       }
     }
   }
@@ -628,9 +670,10 @@ export function outputOf(t: Track): Output | null {
 export const folderPreview = (t: Track) => { const out = outputOf(t); return `IMPORT/${trackName(t.name)}/${out?.label ? `${out.label}/` : ""}`; };
 
 /** A loop of the output as 16-bit PCM: the stem as it is, or the stems summed. */
-const renderLoop = (out: Output, loop: Loop, fade: number): Int16Array =>
-  out.stems.length === 1 ? extractLoop(samplesOf(out.stems[0]!), out.stems[0]!.channels, loop, fade)
-    : mixLoop(out.stems.map((x) => ({ samples: samplesOf(x), channels: x.channels })), loop, out.channels, fade);
+function renderLoop(t: Track, out: Output, loop: Loop, fade: number): Int16Array {
+  const parts = out.stems.map((x) => ({ samples: samplesOf(x), channels: x.channels, gain: t.stems.length > 1 ? gainOf(t.stems.indexOf(x), loop.bar) : 1 }));
+  return parts.length === 1 && parts[0]!.gain === 1 ? extractLoop(parts[0]!.samples, parts[0]!.channels, loop, fade) : mixLoop(parts, loop, out.channels, fade);
+}
 
 /** Where files go on the card: IMPORT/<folder>/<sub>/ ("" sub: right in the folder). */
 interface Target { folder: string; sub: string }
@@ -712,7 +755,7 @@ async function writeFiles(files: CardFile[], place: (t: Track, out: Output) => P
       if (cancel) break;
       const text = files.length > 1 ? `Writing ${i + 1} of ${files.length}: ${name}` : `Writing ${name}`;
       busy(text, i / files.length);
-      const data = new Uint8Array(encodeWav(renderLoop(out, loop, fade), out.channels));
+      const data = new Uint8Array(encodeWav(renderLoop(t, out, loop, fade), out.channels));
       await withDevice((d) => d.writeCardFile(`${CARD}/${targetPath(target!)}${name}`, data, (a, b) => busy(text, (i + a / b) / files.length)));
       done++;
     }

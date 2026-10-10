@@ -1129,3 +1129,11 @@ button, input, select { font: inherit; color: inherit; }
 .sl-key { padding: 3px 9px; border-radius: var(--r-ctl); border: 1px solid var(--line); background: var(--bg-sunk); white-space: nowrap; }
 .sl-key b { color: var(--selection-ink); font-weight: 700; }
 .sl-key .sl-mode { color: var(--text-2); font-weight: 600; }
+.sl-gain { display: inline-flex; align-items: center; gap: 4px; padding: 0 4px; }
+.sl-gain input[type="range"] { width: 64px; accent-color: var(--neon); cursor: pointer; }
+.sl-gain-v { font-size: 11px; min-width: 44px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.sl-gain-v.set { color: var(--selection-ink); font-weight: 600; }
+.sl-loopmix { gap: 10px; padding: 2px 0; }
+.sl-loopmix-stem { display: inline-flex; align-items: center; gap: 2px; font-weight: 600; color: var(--text-2); }
+.sl-loopmix-stem.muted { opacity: 0.5; text-decoration: line-through; }
+.sl-mixmark { color: var(--selection-ink); }

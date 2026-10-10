@@ -7,7 +7,7 @@ import { AUDIO_RE } from "./card";
 import { mainView } from "./Patterns";
 import {
   OVERVIEW_COLS, addStems, analyze, cancelWrite, folderPreview, removeStem, setGridStem, slGridStem, slMuted, slSilent, slStemBlock, toggleMute,
-  outputOf, slClean, slCleaning, slKey, slKeyStem, type Stem, cutEvery, joinNext, nudge, openTrack, play, playheadFrame, resetGrid, selLoop, selStep, setAllOff, setBar1, setPreRoll,
+  outputOf, replay, resetLoopGain, setLoopGain, setStemGain, slGain, slLoopGain, slClean, slCleaning, slKey, slKeyStem, type Stem, cutEvery, joinNext, nudge, openTrack, play, playheadFrame, resetGrid, selLoop, selStep, setAllOff, setBar1, setPreRoll,
   setTempo, slBars, slBusy, slChosen, slCuts, slDetected, slEvery, slFadeMs, slGrid, slLoops, slMetronome, slOff, slPickBar1, slPlay, slPreRollMs, slSel,
   slCardBlock, slState, slTrack, slWriteBlock, writeOne, splitSel, stopPlay, toggleCut, toggleOff, togglePlay, writeLoops, type Track,
 } from "./slice";
@@ -77,10 +77,44 @@ export function SlicerPane() {
             <CutBar />
             <StemBar track={t} />
             {st === "analyzing" ? <div class="sl-wave sl-wave-wait muted">Finding tempo and bars…</div> : slGrid.value && <SliceWave track={t} />}
-            {slGrid.value && st === "ready" && <><LoopList /><WriteBar track={t} /></>}
+            {slGrid.value && st === "ready" && <><LoopMix track={t} /><LoopList /><WriteBar track={t} /></>}
           </>
         )}
     </section>
+  );
+}
+
+const fmtDb = (v: number) => (v === 0 ? "0 dB" : `${v > 0 ? "+" : "−"}${Math.abs(v)} dB`);
+
+/** A small volume slider in dB: dragging is heard on release, a double click goes back to 0 dB. */
+function Gain({ value, min, max, label, onSet }: { value: number; min: number; max: number; label: string; onSet: (db: number) => void }) {
+  return (
+    <span class="sl-gain" title={`${label}: ${fmtDb(value)} (double-click: 0 dB)`}>
+      <input type="range" min={min} max={max} step={0.5} value={value} aria-label={label}
+        onInput={(e) => onSet(+(e.target as HTMLInputElement).value)} onChange={replay}
+        onDblClick={() => { onSet(0); replay(); }} />
+      <span class={`sl-gain-v ${value ? "set" : ""}`}>{fmtDb(value)}</span>
+    </span>
+  );
+}
+
+/** The picked loop's own balance of the stems, on top of each stem's volume. */
+function LoopMix({ track }: { track: Track }) {
+  const l = selLoop();
+  if (!l || track.stems.length < 2) return null;
+  const m = slLoopGain.value.get(l.bar), n = slChosen.value.findIndex((x) => x.bar === l.bar);
+  return (
+    <div class="sl-bar sl-loopmix">
+      <span class="muted">Loop {n >= 0 ? String(n + 1).padStart(2, "0") : "—"} · bars {l.bar}–{l.bar + l.bars - 1} · volume</span>
+      {track.stems.map((x, i) => (
+        <span key={`${i}:${x.name}`} class={`sl-loopmix-stem ${slMuted.value.has(i) ? "muted" : ""}`}>
+          {x.label}
+          <Gain value={m?.get(i) ?? 0} min={-12} max={12} label={`${x.label} in this loop, on top of its own volume`} onSet={(v) => setLoopGain(l.bar, i, v)} />
+        </span>
+      ))}
+      {m ? <button type="button" class="btn btn-ghost" onClick={() => { resetLoopGain(l.bar); replay(); }} title="This loop back to the stems' own volumes">Reset</button>
+        : <span class="muted small">on top of each stem's own volume</span>}
+    </div>
   );
 }
 
@@ -99,6 +133,7 @@ function StemBar({ track }: { track: Track }) {
               title={`${x.name}: ${muted ? "muted — not heard, not written; click to bring it back" : "heard and written; click to mute it (several heard: written as one mix)"}`}>{x.label}</button>
             <button type="button" class={`sl-stem-grid ${grid ? "on" : ""}`} aria-pressed={grid} disabled={busy || grid}
               onClick={() => setGridStem(i)} title={grid ? "The grid is built from this stem" : "Build the grid from this stem"}>◆</button>
+            <Gain value={slGain.value.get(i) ?? 0} min={-24} max={6} label={`${x.label} volume, every loop`} onSet={(v) => setStemGain(i, v)} />
             <button type="button" class="sl-stem-x" disabled={busy} onClick={() => removeStem(i)} aria-label={`Remove ${x.label}`} title="Take this stem out"><IconX /></button>
           </span>
         );
@@ -558,6 +593,9 @@ function LoopList() {
                 <span>bars {l.bar}–{l.bar + l.bars - 1}</span>
                 <span class="muted">
                   {l.bars} bar{l.bars > 1 ? "s" : ""} · {(l.frames / RATE).toFixed(2)} s
+                  {slLoopGain.value.has(l.bar) && (
+                    <span class="sl-mixmark" title={`Own balance: ${[...slLoopGain.value.get(l.bar)!].map(([i, v]) => `${t.stems[i]?.label} ${fmtDb(v)}`).join(", ")}`}> · own mix</span>
+                  )}
                   {silent.has(l.bar) && <span class="sl-quiet" title="These stems are silent in this loop (their files are written anyway)"> · silent: {silent.get(l.bar)!.join(", ")}</span>}
                 </span>
                 <span class="sl-row-actions">

@@ -196,6 +196,11 @@ describe("loops", () => {
     expect([...mixLoop([voice, inst], { start: 1, frames: 3 }, 2)]).toEqual([220, 180, 32767, -32400, 440, 360]);
   });
 
+  it("mixes stems at their own volumes", () => {
+    const a = { samples: new Int16Array([1000, 1000]), channels: 1, gain: 0.5 }, b = { samples: new Int16Array([200, 200]), channels: 1, gain: 2 };
+    expect([...mixLoop([a, b], { start: 0, frames: 2 }, 1)]).toEqual([900, 900]);
+  });
+
   it("extracts a loop with fades at both ends", () => {
     const pcm = new Int16Array(200).fill(1000); // 100 stereo frames
     const out = extractLoop(pcm, 2, { start: 10, frames: 50 }, 10);
