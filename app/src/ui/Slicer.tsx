@@ -6,8 +6,8 @@ import { BPM_RANGES, MODE_NAMES, barEdge, barFrames, camelot, formatBpm, keyName
 import { AUDIO_RE } from "./card";
 import { mainView } from "./Patterns";
 import {
-  OVERVIEW_COLS, addStems, analyze, cancelWrite, folderPreview, removeStem, setGridStem, slGridStem, slMuted, slSilent, slStemBlock, slUnwritten, toggleMute,
-  toggleWritten, outputOf, slKey, slKeyStem, type Stem, cutEvery, joinNext, nudge, openTrack, play, playheadFrame, resetGrid, selLoop, selStep, setAllOff, setBar1, setPreRoll,
+  OVERVIEW_COLS, addStems, analyze, cancelWrite, folderPreview, removeStem, setGridStem, slGridStem, slMuted, slSilent, slStemBlock, toggleMute,
+  outputOf, slClean, slCleaning, slKey, slKeyStem, type Stem, cutEvery, joinNext, nudge, openTrack, play, playheadFrame, resetGrid, selLoop, selStep, setAllOff, setBar1, setPreRoll,
   setTempo, slBars, slBusy, slChosen, slCuts, slDetected, slEvery, slFadeMs, slGrid, slLoops, slMetronome, slOff, slPickBar1, slPlay, slPreRollMs, slSel,
   slCardBlock, slState, slTrack, slWriteBlock, writeOne, splitSel, stopPlay, toggleCut, toggleOff, togglePlay, writeLoops, type Track,
 } from "./slice";
@@ -92,14 +92,11 @@ function StemBar({ track }: { track: Track }) {
     <div class="sl-bar sl-stems">
       <span class="muted">{multi ? "Stems" : "Track"}</span>
       {multi && track.stems.map((x, i) => {
-        const muted = slMuted.value.has(i), grid = slGridStem.value === i, written = !slUnwritten.value.has(i);
+        const muted = slMuted.value.has(i), grid = slGridStem.value === i;
         return (
-          <span key={`${i}:${x.name}`} class={`sl-stem ${muted ? "muted" : ""} ${written ? "" : "unwritten"}`} title={x.name}>
-            <input type="checkbox" class="sl-stem-write" checked={written} disabled={!!slBusy.value} onChange={() => toggleWritten(i)}
-              aria-label={`Write ${x.label} to the card`}
-              title={`${written ? `${x.label} is written to the card: untick to leave it out` : `${x.label} is not written: tick to write it`}. One stem ticked: written as it is, into its own subfolder; several: mixed into one file per loop (mix/).`} />
+          <span key={`${i}:${x.name}`} class={`sl-stem ${muted ? "muted" : ""}`} title={x.name}>
             <button type="button" class="sl-stem-name" aria-pressed={!muted} onClick={() => toggleMute(i)}
-              title={`${x.name}: ${muted ? "muted while listening, click to hear it" : "heard while listening, click to mute it"}`}>{x.label}</button>
+              title={`${x.name}: ${muted ? "muted — not heard, not written; click to bring it back" : "heard and written; click to mute it (several heard: written as one mix)"}`}>{x.label}</button>
             <button type="button" class={`sl-stem-grid ${grid ? "on" : ""}`} aria-pressed={grid} disabled={busy || grid}
               onClick={() => setGridStem(i)} title={grid ? "The grid is built from this stem" : "Build the grid from this stem"}>◆</button>
             <button type="button" class="sl-stem-x" disabled={busy} onClick={() => removeStem(i)} aria-label={`Remove ${x.label}`} title="Take this stem out"><IconX /></button>
@@ -107,6 +104,15 @@ function StemBar({ track }: { track: Track }) {
         );
       })}
       {!multi && <span class="small sl-stem-one" title={track.stems[0]!.name}>{track.stems[0]!.name}</span>}
+      {multi && (
+        <label class="sl-field sl-clean" title={"Clean-up of separation leftovers, heard and written (the stems on disk stay as they are):\n• vocals: low cut, de-esser on the \u2018s\u2019 band, a soft cut of the top;\n• instrumental, drums, other: the \u2018s\u2019 band ducked only while the vocals have an \u2018s\u2019 (their leftovers), the same soft top cut;\n• bass: as it is."}>
+          <span class="muted">Clean-up</span>
+          <select value={slClean.value} disabled={busy} onChange={(e) => (slClean.value = (e.target as HTMLSelectElement).value as typeof slClean.value)}>
+            {(["off", "light", "medium", "strong"] as const).map((v) => <option key={v} value={v}>{v}</option>)}
+          </select>
+          {slCleaning.value && <span class="muted small">cleaning…</span>}
+        </label>
+      )}
       <button type="button" class="btn" disabled={busy} onClick={() => input.current?.click()}
         title="Add stems of this track (the same length): each gets its own subfolder on the card"><IconPlus /> Add stem…</button>
       <input ref={input} type="file" accept="audio/*,.wav,.aif,.aiff,.flac,.mp3,.ogg,.m4a" multiple hidden
@@ -532,7 +538,7 @@ function LoopList() {
       <div class="sl-list-head">
         <span>
           <b>{chosen.length}</b> of {loops.length} loops chosen
-          {multi && !out ? " · no stem ticked to write" : <>{multi ? ` · ${outputText(out!)}` : ""} · {mb(bytes)}</>}
+          {multi && !out ? " · every stem muted" : <>{multi ? ` · ${outputText(out!)}` : ""} · {mb(bytes)}</>}
         </span>
         <button class="btn btn-ghost" disabled={!!slBusy.value || chosen.length === loops.length} onClick={() => setAllOff(false)}>All</button>
         <button class="btn btn-ghost" disabled={!!slBusy.value || !chosen.length} onClick={() => setAllOff(true)}>None</button>
@@ -605,7 +611,7 @@ function WriteBar({ track }: { track: Track }) {
       ) : (
         <>
           <span class="muted small sl-write-text">
-            {slStemBlock.value ? "Tick a stem above to write its loops"
+            {slStemBlock.value ? "Every stem is muted: unmute one to write its loops"
               : <>To the SD card, {track.stems.length > 1 ? "the track's folder, a new subfolder" : "a new folder"} <b>{folderPreview(track)}</b> · files like {loopFileName(track.name, 1, Math.max(n, 1), slGrid.value!.x100, outputOf(track)?.tag ?? "")}</>}
           </span>
           <button class="btn btn-primary" disabled={!!block} title={block ?? "Write the chosen loops to the card"} onClick={() => void writeLoops()}>

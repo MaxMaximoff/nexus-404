@@ -10,7 +10,7 @@
 import { computed, effect, signal } from "@preact/signals";
 import {
   BPM_MAX_X100, BPM_MIN_X100, BPM_RANGES, CARD, barFrames, computePeaks, decodeAudio, encodeWav, evenCuts, extractLoop, formatBpm, gridStem, loopFileName, mixLoop,
-  MODE_NAMES, keyName, loopsFromCuts, padName, stemBase, stemKinds, trackName, wholeBars, uniqueName, type BeatGrid, type KeyResult, type Loop,
+  MODE_NAMES, keyName, loopsFromCuts, type CleanLevel, type CleanRole, padName, stemBase, stemKinds, trackName, wholeBars, uniqueName, type BeatGrid, type KeyResult, type Loop,
 } from "../sp404";
 import type { GridRequest } from "./gridWorker";
 import { cardBusy, openCardDir, showSide, sideTab } from "./card";
@@ -56,10 +56,14 @@ export interface Track {
 export const slTrack = signal<Track | null>(null);
 /** The stem the grid is built from (index into the track's stems). */
 export const slGridStem = signal(0);
-/** Stems left out of listening (indices). */
+/** Stems muted (indices): not heard, and not written to the card. */
 export const slMuted = signal<ReadonlySet<number>>(new Set());
-/** Stems left out of writing to the card (indices): write the voice, the instrumental or both. */
-export const slUnwritten = signal<ReadonlySet<number>>(new Set());
+/** Clean-up of the stems (UVR leftovers): off, or how much; the cleaned sound is heard and written. */
+export const slClean = signal<"off" | CleanLevel>("off");
+/** The cleaned PCM of the open track's stems at that level; null while off or not ready. */
+const slCleaned = signal<{ stems: Stem[]; level: CleanLevel; out: Int16Array[] } | null>(null);
+/** Cleaning is running. */
+export const slCleaning = signal(false);
 /** The track's key: undefined while it is being found, null when there is no clear one. */
 export const slKey = signal<KeyResult | null | undefined>(undefined);
 /** The stem the key was found from (index into the track's stems). */
@@ -177,7 +181,6 @@ export function removeStem(i: number): void {
   stopPlay();
   const without = (set: ReadonlySet<number>) => new Set([...set].filter((j) => j !== i).map((j) => (j > i ? j - 1 : j)));
   slMuted.value = without(slMuted.value);
-  slUnwritten.value = without(slUnwritten.value);
   if (slGridStem.value === i) slGridStem.value = 0;
   else if (slGridStem.value > i) slGridStem.value--;
   setTrack({ ...t, stems: labelled(t.stems.filter((_, j) => j !== i)) });
@@ -247,7 +250,6 @@ function setTrack(t: Omit<Track, "frames">): void {
   if (slTrack.value?.id !== t.id) {
     slKey.value = undefined;
     slMuted.value = new Set();
-    slUnwritten.value = new Set();
     slGridStem.value = Math.max(0, gridStem(stemKinds(t.stems.map((x) => x.name))));
   }
   slTrack.value = { ...t, frames };
@@ -329,7 +331,7 @@ export function setGridStem(i: number): void {
   void analyze();
 }
 
-/** A stem in or out of listening. */
+/** A stem in or out of listening — and of the write. */
 export function toggleMute(i: number): void {
   const next = new Set(slMuted.value);
   if (!next.delete(i)) next.add(i);
@@ -338,15 +340,8 @@ export function toggleMute(i: number): void {
   if (p) play(p.bar, !p.loop);
 }
 
-/** A stem in or out of writing to the card. */
-export function toggleWritten(i: number): void {
-  const next = new Set(slUnwritten.value);
-  if (!next.delete(i)) next.add(i);
-  slUnwritten.value = next;
-}
-
-/** The stems written to the card (all but the ones left out). */
-export const writtenStems = (t: Track): Stem[] => t.stems.filter((_, i) => !slUnwritten.value.has(i));
+/** The stems written to the card: the ones heard (not muted) — what you hear is what you get. */
+export const writtenStems = (t: Track): Stem[] => t.stems.filter((_, i) => !slMuted.value.has(i));
 
 /** Per loop (by its first bar), the labels of stems that are silent there; only with several stems. */
 export const slSilent = computed<Map<number, string[]>>(() => {
@@ -366,6 +361,42 @@ function rms(stem: Stem, l: Loop): number {
   for (let f = a; f < b; f += 16, n++) sum += stem.samples[f * stem.channels]! ** 2;
   return n ? Math.sqrt(sum / n) : 0;
 }
+
+// ---------- clean-up of stems ----------
+
+/** What the clean-up does to a stem: the voice is de-essed, the music ducked by the voice's "s", the bass left alone. */
+export const cleanRole = (stem: Stem): CleanRole =>
+  stem.label.startsWith("vocals") ? "voice" : stem.label.startsWith("bass") ? "none" : "music";
+
+/** The sound of a stem as heard and written: cleaned when the clean-up is on and ready. */
+export function samplesOf(stem: Stem): Int16Array {
+  const c = slCleaned.value;
+  if (slClean.value === "off" || !c || c.level !== slClean.value) return stem.samples;
+  const i = c.stems.indexOf(stem);
+  return i >= 0 ? c.out[i]! : stem.samples;
+}
+
+let cleanJob = 0;
+// The cleaned copy follows the level and the stems (only for a track of several stems).
+effect(() => {
+  const level = slClean.value, t = slTrack.value;
+  const id = ++cleanJob;
+  if (level === "off" || !t || t.stems.length < 2) { slCleaned.value = null; slCleaning.value = false; return; }
+  const c = slCleaned.peek();
+  if (c && c.level === level && c.stems.length === t.stems.length && c.stems.every((x, i) => x === t.stems[i])) return;
+  slCleaning.value = true;
+  const stems = t.stems;
+  void ask<Int16Array[]>({ kind: "clean", level, stems: stems.map((x) => ({ samples: x.samples, channels: x.channels, role: cleanRole(x) })) })
+    .then((out) => {
+      if (id !== cleanJob) return;
+      slCleaned.value = { stems, level, out };
+      log("info", `Slicer: stems cleaned (${level}): ${stems.map((x) => `${x.label} ${cleanRole(x) === "voice" ? "de-essed" : cleanRole(x) === "music" ? "ducked by the voice's s" : "as is"}`).join(", ")}`);
+      const p = slPlay.peek();
+      if (p) play(p.bar, !p.loop); // heard cleaned from now on
+    })
+    .catch((e: Error) => { if (id === cleanJob) notice.value = { kind: "error", text: `Clean-up: ${e.message}` }; })
+    .finally(() => { if (id === cleanJob) slCleaning.value = false; });
+});
 
 // ---------- the grid and the cuts ----------
 
@@ -515,7 +546,7 @@ export function play(bar: number, seam = false): void {
   for (const [s, stem] of t.stems.entries()) {
     if (slMuted.value.has(s)) continue;
     for (const [loop, at] of [[a, 0], ...(b ? [[b, a.frames]] : [])] as [Loop, number][]) {
-      const pcm = extractLoop(stem.samples, stem.channels, loop, fade);
+      const pcm = extractLoop(samplesOf(stem), stem.channels, loop, fade);
       for (let c = 0; c < outCh; c++) {
         const ch = buf.getChannelData(c), from = Math.min(c, stem.channels - 1);
         for (let f = 0; f < loop.frames; f++) ch[at + f] += pcm[f * stem.channels + from]! / 32768;
@@ -567,11 +598,12 @@ function addClicks(buf: AudioBuffer, g: BeatGrid, start: number): void {
 /** Why nothing can be written to the card now, or null. */
 export const slCardBlock = computed<string | null>(() =>
   conn.value !== "ready" ? "SP is not connected" : demo.value ? "Demo: no SD card to write to"
-    : writeBlockReason.value ?? (cardBusy.value || slBusy.value ? "Card is busy — wait for the operation to finish" : null));
+    : writeBlockReason.value ?? (cardBusy.value || slBusy.value ? "Card is busy — wait for the operation to finish" : null)
+    ?? (slCleaning.value ? "Cleaning the stems — a moment" : null));
 /** Why the chosen loops cannot be written now, or null. */
 export const slWriteBlock = computed<string | null>(() => slCardBlock.value ?? slStemBlock.value ?? (!slChosen.value.length ? "No loops chosen" : null));
 /** Why no loop can be written for want of stems, or null. */
-export const slStemBlock = computed<string | null>(() => (slTrack.value && slTrack.value.stems.length > 1 && !writtenStems(slTrack.value).length ? "No stems chosen to write" : null));
+export const slStemBlock = computed<string | null>(() => (slTrack.value && slTrack.value.stems.length > 1 && !writtenStems(slTrack.value).length ? "Every stem is muted: unmute one to write it" : null));
 
 /** What the loops are written as: the ticked stems, one as it is, several mixed into one file. */
 export interface Output {
@@ -597,7 +629,8 @@ export const folderPreview = (t: Track) => { const out = outputOf(t); return `IM
 
 /** A loop of the output as 16-bit PCM: the stem as it is, or the stems summed. */
 const renderLoop = (out: Output, loop: Loop, fade: number): Int16Array =>
-  out.stems.length === 1 ? extractLoop(out.stems[0]!.samples, out.stems[0]!.channels, loop, fade) : mixLoop(out.stems, loop, out.channels, fade);
+  out.stems.length === 1 ? extractLoop(samplesOf(out.stems[0]!), out.stems[0]!.channels, loop, fade)
+    : mixLoop(out.stems.map((x) => ({ samples: samplesOf(x), channels: x.channels })), loop, out.channels, fade);
 
 /** Where files go on the card: IMPORT/<folder>/<sub>/ ("" sub: right in the folder). */
 interface Target { folder: string; sub: string }

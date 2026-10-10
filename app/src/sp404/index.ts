@@ -13,5 +13,6 @@ export * from "./bpm";
 export * from "./grid";
 export * from "./stems";
 export * from "./key";
+export * from "./clean";
 export * from "./pattern";
 export * from "./patternEdit";

@@ -1126,9 +1126,6 @@ button, input, select { font: inherit; color: inherit; }
 .sl-stem button:disabled:not(.on) { opacity: 0.5; cursor: default; }
 .sl-stem-one { color: var(--text-2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px; }
 .sl-quiet { color: var(--warn); }
-.sl-stem .sl-stem-write { margin: 0 2px 0 8px; accent-color: var(--neon); cursor: pointer; }
-.sl-stem.unwritten { border-style: dashed; }
-.sl-stem.unwritten .sl-stem-name { opacity: 0.6; }
 .sl-key { padding: 3px 9px; border-radius: var(--r-ctl); border: 1px solid var(--line); background: var(--bg-sunk); white-space: nowrap; }
 .sl-key b { color: var(--selection-ink); font-weight: 700; }
 .sl-key .sl-mode { color: var(--text-2); font-weight: 600; }
