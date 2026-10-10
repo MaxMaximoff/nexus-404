@@ -1114,3 +1114,15 @@ button, input, select { font: inherit; color: inherit; }
 .sl-write-text b { color: var(--text); font-weight: 600; }
 .sl-progress { width: 160px; height: 6px; border-radius: 3px; background: var(--bg-sunk); border: 1px solid var(--line); overflow: hidden; flex: none; }
 .sl-progress > span { display: block; height: 100%; background: var(--neon); transition: width 0.2s; }
+.sl-stems { gap: 6px; }
+.sl-stem { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: var(--r-ctl); background: var(--bg-sunk); overflow: hidden; }
+.sl-stem button { font: inherit; font-size: 12px; background: transparent; border: 0; color: var(--text-2); cursor: pointer; padding: 4px 7px; display: inline-flex; align-items: center; }
+.sl-stem button:hover:not(:disabled) { background: var(--bg-control); color: var(--text); }
+.sl-stem .sl-stem-name { font-weight: 650; color: var(--selection-ink); padding-left: 10px; }
+.sl-stem.muted .sl-stem-name { color: var(--muted); font-weight: 400; text-decoration: line-through; }
+.sl-stem .sl-stem-grid { color: var(--muted); font-size: 10px; }
+.sl-stem .sl-stem-grid.on { color: var(--neon-hi); cursor: default; }
+.sl-stem .sl-stem-x { color: var(--muted); padding: 4px 6px; }
+.sl-stem button:disabled:not(.on) { opacity: 0.5; cursor: default; }
+.sl-stem-one { color: var(--text-2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px; }
+.sl-quiet { color: var(--warn); }

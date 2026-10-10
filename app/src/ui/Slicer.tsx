@@ -1,18 +1,18 @@
-// The track slicer: a long track on a bar grid, cut into loops; the chosen loops go to a new
-// folder of IMPORT/ on the SD card (logic in slice.ts).
+// The track slicer: a long track (or its stems) on a bar grid, cut into loops; the chosen loops go
+// to a new folder of IMPORT/ on the SD card (logic in slice.ts).
 
 import { useEffect, useRef, useState } from "preact/hooks";
-import { BPM_RANGES, barEdge, barFrames, formatBpm, loopFileName, padName, parseBpmInput, trackName } from "../sp404";
+import { BPM_RANGES, barEdge, barFrames, formatBpm, loopFileName, padName, parseBpmInput } from "../sp404";
 import { AUDIO_RE } from "./card";
 import { mainView } from "./Patterns";
 import {
-  OVERVIEW_COLS, analyze, cancelWrite, cutEvery, joinNext, nudge, openTrack, play, playheadFrame, resetGrid, selLoop, selStep, setAllOff, setBar1, setPreRoll,
+  OVERVIEW_COLS, addStems, analyze, cancelWrite, folderPreview, removeStem, setGridStem, slGridStem, slMuted, slSilent, toggleMute, type Stem, cutEvery, joinNext, nudge, openTrack, play, playheadFrame, resetGrid, selLoop, selStep, setAllOff, setBar1, setPreRoll,
   setTempo, slBars, slBusy, slChosen, slCuts, slDetected, slEvery, slFadeMs, slGrid, slLoops, slMetronome, slOff, slPickBar1, slPlay, slPreRollMs, slSel,
-  slState, slTrack, slWriteBlock, splitSel, stopPlay, toggleCut, toggleOff, togglePlay, writeLoops, type Track,
+  slCardBlock, slState, slTrack, slWriteBlock, writeOne, splitSel, stopPlay, toggleCut, toggleOff, togglePlay, writeLoops, type Track,
 } from "./slice";
 import { bpmRange } from "./store";
 import { columns } from "./Waveform";
-import { IconPlay, IconScissors, IconStop, IconUpload } from "./icons";
+import { IconPlay, IconPlus, IconScissors, IconStop, IconUpload, IconX } from "./icons";
 
 const RATE = 48000;
 const fmtTime = (frames: number) => { const s = frames / RATE; return `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, "0")}`; };
@@ -43,9 +43,10 @@ export function SlicerPane() {
     return () => removeEventListener("keydown", onKey);
   }, []);
 
+  /** One file: a track; several: stems of one track. */
   const take = (files: FileList | null | undefined) => {
-    const f = [...(files ?? [])].find((x) => AUDIO_RE.test(x.name) || x.type.startsWith("audio/"));
-    if (f) void openTrack(f);
+    const audio = [...(files ?? [])].filter((x) => AUDIO_RE.test(x.name) || x.type.startsWith("audio/"));
+    if (audio.length) void openTrack(audio);
   };
 
   return (
@@ -55,9 +56,9 @@ export function SlicerPane() {
       onDrop={(e) => { e.preventDefault(); setOver(false); take(e.dataTransfer?.files); }}>
       <div class="ptn-head">
         <div class="panel-title">Slicer</div>
-        {t && <span class="muted small sl-file" title={t.name}>{t.pad !== undefined ? `pad ${padName(t.pad)} · ${t.name.replace(/\.wav$/, "")}` : t.name} · {fmtTime(t.frames)} · {t.channels === 1 ? "mono" : "stereo"}</span>}
+        {t && <span class="muted small sl-file" title={t.name}>{t.pad !== undefined ? `pad ${padName(t.pad)} · ${t.name.replace(/\.wav$/, "")}` : t.stems.length > 1 ? `${t.name.replace(/\.wav$/, "")} · ${t.stems.length} stems` : t.name} · {fmtTime(t.frames)}{t.stems.length === 1 ? ` · ${t.stems[0]!.channels === 1 ? "mono" : "stereo"}` : ""}</span>}
         <button class="btn btn-ghost" disabled={!!slBusy.value || st === "decoding"} onClick={() => input.current?.click()}>Open track…</button>
-        <input ref={input} type="file" accept="audio/*,.wav,.aif,.aiff,.flac,.mp3,.ogg,.m4a" hidden
+        <input ref={input} type="file" accept="audio/*,.wav,.aif,.aiff,.flac,.mp3,.ogg,.m4a" multiple hidden
           onChange={(e) => { take((e.target as HTMLInputElement).files); (e.target as HTMLInputElement).value = ""; }} />
       </div>
       {st === "decoding" || (!t && st === "analyzing") ? <p class="muted ptn-empty">Decoding…</p>
@@ -66,16 +67,46 @@ export function SlicerPane() {
             <IconScissors />
             <b>Drop a long track here, or open one</b>
             <span class="muted">WAV, AIFF, FLAC, MP3… up to 15 minutes. Tempo and bars are found here; the loops are written to a new folder of IMPORT on the SD card, and from there you put them on pads.</span>
+            <span class="muted">Stems of one track (vocals and instrumental from UVR, the four of Demucs…): drop them together. They share one grid and the same cuts; each stem's loops go to its own subfolder with matching numbers.</span>
           </div>
         ) : (
           <>
             <GridBar />
             <CutBar />
+            <StemBar track={t} />
             {st === "analyzing" ? <div class="sl-wave sl-wave-wait muted">Finding tempo and bars…</div> : slGrid.value && <SliceWave track={t} />}
             {slGrid.value && st === "ready" && <><LoopList /><WriteBar track={t} /></>}
           </>
         )}
     </section>
+  );
+}
+
+/** The track's stems: listen to each or not, which one the grid comes from, take one out, add more. */
+function StemBar({ track }: { track: Track }) {
+  const busy = slState.value !== "ready" || !!slBusy.value, multi = track.stems.length > 1;
+  const input = useRef<HTMLInputElement>(null);
+  return (
+    <div class="sl-bar sl-stems">
+      <span class="muted">{multi ? "Stems" : "Track"}</span>
+      {multi && track.stems.map((x, i) => {
+        const muted = slMuted.value.has(i), grid = slGridStem.value === i;
+        return (
+          <span key={`${i}:${x.name}`} class={`sl-stem ${muted ? "muted" : ""}`} title={x.name}>
+            <button type="button" class="sl-stem-name" aria-pressed={!muted} onClick={() => toggleMute(i)}
+              title={`${x.name}: ${muted ? "muted while listening, click to hear it" : "heard while listening, click to mute it"}`}>{x.label}</button>
+            <button type="button" class={`sl-stem-grid ${grid ? "on" : ""}`} aria-pressed={grid} disabled={busy || grid}
+              onClick={() => setGridStem(i)} title={grid ? "The grid is built from this stem" : "Build the grid from this stem"}>◆</button>
+            <button type="button" class="sl-stem-x" disabled={busy} onClick={() => removeStem(i)} aria-label={`Remove ${x.label}`} title="Take this stem out"><IconX /></button>
+          </span>
+        );
+      })}
+      {!multi && <span class="small sl-stem-one" title={track.stems[0]!.name}>{track.stems[0]!.name}</span>}
+      <button type="button" class="btn" disabled={busy} onClick={() => input.current?.click()}
+        title="Add stems of this track (the same length): each gets its own subfolder on the card"><IconPlus /> Add stem…</button>
+      <input ref={input} type="file" accept="audio/*,.wav,.aif,.aiff,.flac,.mp3,.ogg,.m4a" multiple hidden
+        onChange={(e) => { void addStems([...((e.target as HTMLInputElement).files ?? [])]); (e.target as HTMLInputElement).value = ""; }} />
+    </div>
   );
 }
 
@@ -178,6 +209,25 @@ function aggregate(peaks: Float32Array[], a: number, b: number, cols: number): F
   });
 }
 
+/** Min/max per column of a stem over frames [a, b), per channel: from the overview peaks when coarse enough, else from the samples. */
+function stemColumns(stem: Stem, a: number, b: number, cols: number): Float32Array[] {
+  const perCol = ((b - a) / stem.frames) * OVERVIEW_COLS / cols;
+  return perCol >= 1
+    ? aggregate(stem.peaks, (a / stem.frames) * OVERVIEW_COLS, (b / stem.frames) * OVERVIEW_COLS, cols)
+    : columns(stem.samples, stem.channels, a, b, cols);
+}
+
+/** One lane from several channels: the lowest min and the highest max per column. */
+function mergeChannels(chans: Float32Array[]): Float32Array {
+  const out = new Float32Array(chans[0]!.length);
+  for (let i = 0; i < out.length; i += 2) {
+    let lo = 0, hi = 0;
+    for (const c of chans) { lo = Math.min(lo, c[i]!); hi = Math.max(hi, c[i + 1]!); }
+    out[i] = lo; out[i + 1] = hi;
+  }
+  return out;
+}
+
 const LINE_GRAB_PX = 8;
 
 /** The track's wave with the bar grid, the cuts and the loops; click a bar line to cut, a loop to hear it. */
@@ -225,29 +275,44 @@ function SliceWave({ track }: { track: Track }) {
   };
   const hue = () => getComputedStyle(base.current!).getPropertyValue("--ah").trim() || "180";
 
-  // The wave: only when the view or the size changes.
+  // The wave: only when the view, the size or the stems change. One stem: a lane per channel;
+  // several: a lane per stem (channels together), its label at the left, dimmer when muted.
+  const muted = slMuted.value, gridIdx = slGridStem.value, multi = track.stems.length > 1;
   useEffect(() => {
     const x = prep(base.current!), ah = hue(), h = size.h;
-    // Only the part of the view that has audio (the view may reach past the track's ends).
-    const a = Math.max(0, view.from), b = Math.min(track.frames, view.to);
-    if (b <= a) return;
-    const x0 = Math.round(X(a)), cols = Math.max(1, Math.round(X(b)) - x0);
-    const perCol = ((b - a) / track.frames) * OVERVIEW_COLS / cols;
-    const lanes = perCol >= 1
-      ? aggregate(track.peaks, (a / track.frames) * OVERVIEW_COLS, (b / track.frames) * OVERVIEW_COLS, cols)
-      : columns(track.samples, track.channels, a, b, cols);
-    const laneH = (h - 18) / lanes.length;
-    lanes.forEach((p, ch) => {
-      const mid = 18 + laneH * ch + laneH / 2, amp = laneH * 0.46;
-      x.fillStyle = `hsl(${ah} 90% 55% / 0.42)`;
-      x.strokeStyle = `hsl(${ah} 85% 56% / 0.9)`;
+    const lanes: { p: Float32Array; x0: number; cols: number; stem: number }[] = [];
+    track.stems.forEach((stem, si) => {
+      // Only the part of the view that has audio (the view may reach past the stem's ends).
+      const a = Math.max(0, view.from), b = Math.min(stem.frames, view.to);
+      if (b <= a) return;
+      const x0 = Math.round(X(a)), cols = Math.max(1, Math.round(X(b)) - x0);
+      const chans = stemColumns(stem, a, b, cols);
+      if (multi) lanes.push({ p: mergeChannels(chans), x0, cols, stem: si });
+      else chans.forEach((p) => lanes.push({ p, x0, cols, stem: si }));
+    });
+    const n = multi ? track.stems.length : lanes.length, laneH = (h - 18) / Math.max(1, n);
+    lanes.forEach(({ p, x0, cols, stem }, li) => {
+      const lane = multi ? stem : li, mid = 18 + laneH * lane + laneH / 2, amp = laneH * 0.46, dim = muted.has(stem);
+      x.fillStyle = `hsl(${ah} 90% 55% / ${dim ? 0.12 : 0.42})`;
+      x.strokeStyle = `hsl(${ah} 85% 56% / ${dim ? 0.3 : 0.9})`;
       x.lineWidth = 1;
       x.beginPath();
       for (let i = 0; i < cols; i++) x.lineTo(x0 + i, mid - Math.max(p[i * 2 + 1]!, 0.004) * amp);
       for (let i = cols - 1; i >= 0; i--) x.lineTo(x0 + i, mid - Math.min(p[i * 2]!, -0.004) * amp);
       x.closePath(); x.fill(); x.stroke();
     });
-  }, [track, view.from, view.to, size.w, size.h]);
+    if (!multi) return;
+    x.font = "600 10.5px 'Inter Variable', system-ui, sans-serif";
+    track.stems.forEach((stem, i) => {
+      const top = 18 + laneH * i;
+      if (i) { x.fillStyle = "rgba(255, 255, 255, 0.08)"; x.fillRect(0, Math.round(top), size.w, 1); }
+      const label = `${stem.label}${i === gridIdx ? " ◆" : ""}${muted.has(i) ? " · muted" : ""}`;
+      x.fillStyle = "rgba(9, 13, 18, 0.75)";
+      x.fillRect(4, top + 3, x.measureText(label).width + 8, 15);
+      x.fillStyle = muted.has(i) ? "rgba(160, 175, 190, 0.6)" : `hsl(${ah} 90% 78%)`;
+      x.fillText(label, 8, top + 14);
+    });
+  }, [track, view.from, view.to, size.w, size.h, muted, gridIdx]);
 
   // The grid, the cuts and the loops on top.
   useEffect(() => {
@@ -365,7 +430,7 @@ function SliceWave({ track }: { track: Track }) {
 
   return (
     <div class="wave sl-wave-wrap">
-      <div class="sl-wave">
+      <div class="sl-wave" style={multi ? { height: `${Math.max(210, 18 + track.stems.length * 64)}px` } : undefined}>
         <canvas ref={base} class="sl-canvas" />
         <canvas ref={top} class="sl-canvas" style={{ cursor }} role="img"
           aria-label="Track waveform with bars: click a bar line to add or remove a cut, click a loop to hear it; wheel to zoom, drag to move"
@@ -421,12 +486,13 @@ function SliceWave({ track }: { track: Track }) {
 function LoopList() {
   const loops = slLoops.value, off = slOff.value, sel = slSel.value, t = slTrack.value!, playing = slPlay.value;
   const chosen = slChosen.value;
-  const bytes = chosen.reduce((s, l) => s + l.frames * t.channels * 2 + 44, 0);
+  const bytes = chosen.reduce((s, l) => s + t.stems.reduce((b, x) => b + l.frames * x.channels * 2 + 44, 0), 0);
+  const silent = slSilent.value, multi = t.stems.length > 1;
   let n = 0;
   return (
     <div class="sl-list-wrap">
       <div class="sl-list-head">
-        <span><b>{chosen.length}</b> of {loops.length} loops chosen · {mb(bytes)}</span>
+        <span><b>{chosen.length}</b> of {loops.length} loops chosen{multi ? ` × ${t.stems.length} stems` : ""} · {mb(bytes)}</span>
         <button class="btn btn-ghost" disabled={!!slBusy.value || chosen.length === loops.length} onClick={() => setAllOff(false)}>All</button>
         <button class="btn btn-ghost" disabled={!!slBusy.value || !chosen.length} onClick={() => setAllOff(true)}>None</button>
       </div>
@@ -443,11 +509,19 @@ function LoopList() {
                   onClick={(e) => e.stopPropagation()} onChange={() => toggleOff(l.bar)} />
                 <span class="sl-num">{on ? String(n).padStart(2, "0") : "—"}</span>
                 <span>bars {l.bar}–{l.bar + l.bars - 1}</span>
-                <span class="muted">{l.bars} bar{l.bars > 1 ? "s" : ""} · {(l.frames / RATE).toFixed(2)} s</span>
+                <span class="muted">
+                  {l.bars} bar{l.bars > 1 ? "s" : ""} · {(l.frames / RATE).toFixed(2)} s
+                  {silent.has(l.bar) && <span class="sl-quiet" title="These stems are silent in this loop (their files are written anyway)"> · silent: {silent.get(l.bar)!.join(", ")}</span>}
+                </span>
                 <span class="sl-row-actions">
                   <button class="icon-btn" title="Listen round and round (Space)" aria-label="Listen"
                     onClick={(e) => { e.stopPropagation(); slSel.value = l.bar; if (playing?.bar === l.bar && playing.loop) stopPlay(); else play(l.bar); }}>
                     {playing?.bar === l.bar && playing.loop ? <IconStop /> : <IconPlay />}
+                  </button>
+                  <button class="icon-btn" disabled={!!slCardBlock.value} aria-label="Write this loop to the SD card"
+                    title={slCardBlock.value ?? `Write only this loop${multi ? " (every stem)" : ""} to the SD card, into this track's folder`}
+                    onClick={(e) => { e.stopPropagation(); slSel.value = l.bar; void writeOne(l.bar); }}>
+                    <IconUpload />
                   </button>
                   <button class="btn btn-ghost sl-joint" disabled={!joint} title="This loop and the next one once, to hear the joint"
                     onClick={(e) => { e.stopPropagation(); slSel.value = l.bar; if (playing?.bar === l.bar && !playing.loop) stopPlay(); else play(l.bar, true); }}>
@@ -478,9 +552,9 @@ function WriteBar({ track }: { track: Track }) {
         </>
       ) : (
         <>
-          <span class="muted small sl-write-text">To the SD card, a new folder <b>IMPORT/{trackName(track.name)}/</b> · files like {loopFileName(track.name, 1, Math.max(n, 1), slGrid.value!.x100)}</span>
+          <span class="muted small sl-write-text">To the SD card, a new folder <b>{folderPreview(track)}</b> · files like {loopFileName(track.name, 1, Math.max(n, 1), slGrid.value!.x100, track.stems.length > 1 ? track.stems[0]!.tag : "")}</span>
           <button class="btn btn-primary" disabled={!!block} title={block ?? "Write the chosen loops to the card"} onClick={() => void writeLoops()}>
-            <IconUpload /> Write {n} loop{n === 1 ? "" : "s"} to SD card
+            <IconUpload /> Write {n} loop{n === 1 ? "" : "s"}{track.stems.length > 1 ? ` × ${track.stems.length}` : ""} to SD card
           </button>
         </>
       )}

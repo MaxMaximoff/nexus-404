@@ -69,7 +69,8 @@ describe("beat grid", () => {
 
   it("finds bar 1 when only beat 1 has a kick and the music starts mid-bar", () => {
     const g = detectGrid(track(100, 120, 4, ONE_ONLY, 2), 2, 100)!;
-    expect(Math.abs(g.origin - 4 * RATE)).toBeLessThan(0.004 * RATE);
+    // Hats on every beat and off-beat leave the beat's place a little less sharp here: ±5 ms.
+    expect(Math.abs(g.origin - 4 * RATE)).toBeLessThan(0.005 * RATE);
   });
 
   it("four on the floor after a pickup: bar 1 is where the bass changes", () => {
@@ -114,6 +115,23 @@ describe("beat grid", () => {
     const g = detectGrid(pcm, 2, 100)!;
     expect(g.x100).toBe(14000);
     expect(Math.abs(g.origin - bar1 * RATE)).toBeLessThan(0.004 * RATE);
+  });
+
+  it("four on the floor that starts on bar 1: bar 1 at the start of the music, whatever the tempo", () => {
+    // Bar lines must not come from where the counting of beats happens to start (it once landed
+    // one or two beats late: the change from silence to music was counted on the wrong beat).
+    const four: Kind[][] = [["kick"], ["kick", "snare"], ["kick"], ["kick", "snare"]];
+    for (const [bpm, seconds] of [[126, 120], [131, 60], [118, 90]] as const) {
+      const beat = 60 / bpm, bar1 = 1.5, pcm = track(bpm, seconds, bar1, four);
+      for (let i = Math.round(bar1 * RATE); i < seconds * RATE; i++) {
+        const f = [55, 65.4, 49, 73.4][Math.floor((i / RATE - bar1) / (16 * beat)) % 4]!;
+        const v = Math.round(Math.sin((2 * Math.PI * f * i) / RATE) * 0.12 * 32767);
+        pcm[2 * i] = pcm[2 * i + 1] = Math.max(-32768, Math.min(32767, pcm[2 * i]! + v));
+      }
+      const g = detectGrid(pcm, 2, 100)!;
+      expect(g.x100).toBe(bpm * 100);
+      expect(Math.abs(g.origin - bar1 * RATE)).toBeLessThan(0.004 * RATE);
+    }
   });
 
   it("returns null for noise", () => {

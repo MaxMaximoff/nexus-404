@@ -13,6 +13,8 @@
 import { bpmOfEnvelope, ENV_FPS, fft, onsetEnvelopes } from "./bpm";
 
 const RATE = 48000;
+/** The top of the tempo fold: within this share of its range below the highest peak. */
+const PLATEAU = 0.03;
 /** Up to this many beats a sample whose length is a whole number of beats keeps that tempo. */
 const LOOP_BEATS = 64;
 /** In such a loop, a beat found this close to one of the loop's own beats is put on it. */
@@ -73,10 +75,15 @@ export function detectGrid(samples: Int16Array, channels: number, minBpm: number
   const loop = coarse.beats !== null && coarse.beats <= LOOP_BEATS;
   const lo = loop ? coarse.x100 : Math.max(minBpm * 100, Math.round(coarse.x100 * (1 - SPAN)));
   const hi = loop ? coarse.x100 : Math.min(minBpm * 200 - 1, Math.round(coarse.x100 * (1 + SPAN)));
-  for (let x = lo; x <= hi; x++) {
-    const f = fold(env.full, beatHops(x));
-    if (f.peak > best.peak) best = { x100: x, ...f };
-  }
+  // On a shorter track the fold's peak barely drops a few 0.01 steps either side of the true
+  // tempo, so the top is flat and its highest point a matter of chance: the middle of the top is taken.
+  const peaks: number[] = [];
+  for (let x = lo; x <= hi; x++) peaks.push(fold(env.full, beatHops(x)).peak);
+  const top = Math.max(...peaks), floor = Math.min(...peaks), cutoff = top - (top - floor) * PLATEAU;
+  let wx = 0, w = 0;
+  peaks.forEach((p, i) => { if (p >= cutoff) { wx += (lo + i) * (p - cutoff); w += p - cutoff; } });
+  const x100 = w > 0 ? Math.round(wx / w) : lo + peaks.indexOf(top);
+  best = { x100, ...fold(env.full, beatHops(x100)) };
 
   const period = beatHops(best.x100);
   // Bright off-beats (open hats) can outdo the kick over all bands: the beat is where the low band
@@ -109,14 +116,12 @@ export function detectGrid(samples: Int16Array, channels: number, minBpm: number
   // on a bar line, so the phase where a bar sounds most unlike the bar before wins, if clearly.
   if (cands.length > 1) {
     const nov = beatNovelty(samples, channels, Array.from({ length: count + 1 }, (_, k) => frameOf(k)), beatsPerBar);
-    // Per bar, how far each phase's change stands above the bar's mean: a floor of drum noise
-    // that is the same everywhere drops out, the bar lines where something new starts remain.
+    // How far each beat's change stands above both neighbours', summed by phase: a floor of drum
+    // noise that is the same everywhere drops out, the bar lines where something new starts (the
+    // music itself, a bass that comes in, the next part) remain, whatever beat the counting starts on.
     const excess = new Float64Array(beatsPerBar);
-    for (let k0 = beatsPerBar; k0 + 2 * beatsPerBar <= count; k0 += beatsPerBar) {
-      let mean = 0;
-      for (let j = 0; j < beatsPerBar; j++) mean += nov[k0 + j]! / beatsPerBar;
-      for (let j = 0; j < beatsPerBar; j++) excess[j] += Math.max(0, nov[k0 + j]! - mean);
-    }
+    for (let k = beatsPerBar + 1; k + beatsPerBar + 1 < count; k++)
+      excess[k % beatsPerBar] += Math.max(0, nov[k]! - (nov[k - 1]! + nov[k + 1]!) / 2);
     const score = cands.map((j) => ({ j, s: excess[j]! })).sort((a, b) => b.s - a.s);
     if (score[0]!.s >= score[1]!.s * NOVELTY_LEAD) cands = [score[0]!.j];
   }
@@ -136,7 +141,11 @@ export function detectGrid(samples: Int16Array, channels: number, minBpm: number
 /** One beat in envelope frames at tempo × 100. */
 const beatHops = (x100: number) => (60 * ENV_FPS * 100) / x100;
 
-/** The envelope folded over `period` frames: its mean per fold bin (FOLD_RES bins per frame). */
+/**
+ * The envelope folded over `period` frames: its mean per fold bin (FOLD_RES bins per frame),
+ * smoothed over about a frame. Without that, a period of nearly whole frames puts every frame on
+ * the same few bins and makes a sharp false peak (seen: 130.81 for 131 BPM, a period of 86.00 frames).
+ */
 function foldMeans(env: Float64Array, period: number): Float64Array {
   const bins = Math.ceil(period * FOLD_RES);
   const sum = new Float64Array(bins), weight = new Float64Array(bins);
@@ -145,7 +154,14 @@ function foldMeans(env: Float64Array, period: number): Float64Array {
     sum[a] += env[i]! * (1 - f); weight[a] += 1 - f;
     sum[b] += env[i]! * f; weight[b] += f;
   }
-  return sum.map((v, i) => (weight[i]! > 0 ? v / weight[i]! : 0));
+  const mean = sum.map((v, i) => (weight[i]! > 0 ? v / weight[i]! : 0));
+  const out = new Float64Array(bins);
+  for (let i = 0; i < bins; i++) {
+    let s = 0, w = 0;
+    for (let d = -FOLD_RES; d <= FOLD_RES; d++) { const k = FOLD_RES + 1 - Math.abs(d); s += mean[(((i + d) % bins) + bins) % bins]! * k; w += k; }
+    out[i] = s / w;
+  }
+  return out;
 }
 
 /** The highest fold bin within `reach` (a share of the period) of `phase`: where it is (frames from 0) and its value. */
@@ -328,12 +344,13 @@ export function trackName(fileName: string, max = FOLDER_MAX): string {
 const bpmText = (x100: number) => (x100 / 100).toFixed(2).replace(/\.?0+$/, "");
 
 /**
- * File name of loop `n` (1-based) of `count`: `track_07_93.47bpm.wav`. Short enough that the pad
- * keeps the whole name, tempo included, when it is imported.
+ * File name of loop `n` (1-based) of `count`: `track_07_93.47bpm.wav`, with a stem's `tag`
+ * `track_07_vox_93.47bpm.wav`. Short enough that the pad keeps the whole name, tempo included,
+ * when it is imported.
  */
-export function loopFileName(track: string, n: number, count: number, x100: number): string {
+export function loopFileName(track: string, n: number, count: number, x100: number, tag = ""): string {
   const num = String(n).padStart(Math.max(2, String(count).length), "0");
-  const tail = `_${num}_${bpmText(x100)}bpm`;
+  const tail = `_${num}${tag ? `_${tag}` : ""}_${bpmText(x100)}bpm`;
   return `${trackName(track, PAD_NAME_MAX - tail.length)}${tail}.wav`;
 }
 
