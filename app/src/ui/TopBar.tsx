@@ -6,7 +6,7 @@ import {
 } from "./store";
 import { TempoField } from "./TempoField";
 import { CardToggle, PatternsToggle, SlicerToggle } from "./CardToggle";
-import { IconPlug, IconUnplug } from "./icons";
+import { IconPlug, IconUnplug, Spinner } from "./icons";
 
 const LABEL: Record<string, string> = {
   unsupported: "This browser does not support Web Serial",
@@ -84,7 +84,7 @@ export function TopBar() {
       </div>
 
       <div class={`conn conn-${c}`}>
-        <span class="dot" />
+        {c === "loading" || c === "connecting" ? <Spinner /> : <span class="dot" />}
         <span>{demo.value && c === "ready" ? "Demo, no SP" : LABEL[c]}{c === "loading" ? ` ${Math.round(loadProgress.value * 100)} %` : ""}</span>
       </div>
 

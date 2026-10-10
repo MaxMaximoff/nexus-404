@@ -207,6 +207,28 @@ button, input, select { font: inherit; color: inherit; }
 .conn-loading .dot, .conn-connecting .dot { background: radial-gradient(circle at 40% 35%, var(--glint), var(--neon-hi)); animation: pulse 1s infinite; }
 @keyframes pulse { 50% { opacity: 0.4; } }
 
+/* Spinner: a ring with one lit arc, 1em across, in the current color. */
+.spinner {
+  display: inline-block; flex: none; width: 1em; height: 1em; border-radius: 50%; vertical-align: -0.15em;
+  border: 2px solid color-mix(in srgb, currentColor 22%, transparent); border-top-color: currentColor;
+  animation: spin 0.75s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2s; } }
+.conn .spinner { font-size: 11px; color: var(--neon-hi); }
+
+/* While the SP switches project, the work area is dimmed and says what it waits for. */
+.layout { position: relative; }
+.project-loading {
+  position: absolute; inset: 0; z-index: 20; display: flex; align-items: flex-start; justify-content: center; padding-top: 120px;
+  border-radius: var(--r-panel); background: color-mix(in srgb, var(--bg-app) 60%, transparent); backdrop-filter: blur(2px);
+  animation: fade-in 0.2s ease-out;
+}
+.project-loading-card { display: flex; align-items: center; gap: 12px; padding: 14px 20px; font-size: 13px; font-weight: 600; color: var(--text); }
+.project-loading-card .spinner { font-size: 20px; color: var(--neon-hi); }
+.project-loading-card .muted { font-weight: 500; font-variant-numeric: tabular-nums; }
+@keyframes fade-in { from { opacity: 0; } }
+
 .project-info { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; flex-wrap: wrap; font-size: 12px; color: var(--text-2); }
 .project-info > .muted { white-space: nowrap; }
 .project-name { font-weight: 700; }
@@ -848,7 +870,8 @@ button, input, select { font: inherit; color: inherit; }
 .ptn-save-slot { margin-left: auto; display: inline-flex; align-items: center; }
 .ptn-save { height: 28px; padding: 0 12px; font-size: 12px; }
 .ptn-save-ask { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; max-width: 520px; font-size: 12px; padding: 6px 10px; border-radius: var(--r-ctl); border: 1px solid var(--led-border); }
-.ptn-save-busy { max-width: 360px; }
+.ptn-save-busy { max-width: 360px; display: inline-flex; align-items: center; gap: 7px; }
+.ptn-save-busy .spinner { color: var(--neon-hi); }
 .ptn-dirty-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 /* Row and bar menus, the selection frame. */
 .ptn-row-cell { position: relative; }

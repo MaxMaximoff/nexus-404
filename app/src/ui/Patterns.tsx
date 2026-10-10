@@ -9,7 +9,7 @@ import {
   bouncePattern, bouncing, conn, currentPatternFile, downloadPatternMidi, emptyPattern, log, notice, patternFiles, patterns, patternsLoading, patternsOf, pads, project1,
   refreshPatterns, selectPad, selectedBank, selectedPad, tempoFor, writeBlockReason,
 } from "./store";
-import { IconDownload, IconPencil, IconPlay, IconRefresh, IconStop, IconWave } from "./icons";
+import { IconDownload, IconPencil, IconPlay, IconRefresh, IconStop, IconWave, Spinner } from "./icons";
 import { midiState } from "./midi";
 import { playingSlot, stopPattern, togglePattern } from "./ptnPlayer";
 import { RowSound, silentClass } from "./PatternRowSound";
@@ -71,7 +71,7 @@ export function PatternsPane() {
         <span class="muted small">{m ? `${m.size} of 160` : ""}</span>
         {c === "ready" && (
           <button class="btn btn-ghost" onClick={() => void refreshPatterns()} disabled={patternsLoading.value} title="Read patterns from SP again (after recording on SP)">
-            <IconRefresh /> {patternsLoading.value ? "Reading…" : "Refresh"}
+            {patternsLoading.value ? <><Spinner /> Reading…</> : <><IconRefresh /> Refresh</>}
           </button>
         )}
       </div>

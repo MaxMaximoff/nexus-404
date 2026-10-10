@@ -34,6 +34,8 @@ export const status = signal<DeviceStatus | null>(null);
 export const project = signal<(ProjectSettings & { names: string[] }) | null>(null);
 export const pads = signal<(PadBlock | null)[]>(Array(PAD_COUNT).fill(null));
 export const loadProgress = signal(0);
+/** The project (1-based) the SP is switching to, until it is read here: the work area shows a spinner meanwhile. */
+export const projectSwitching = signal<number | null>(null);
 export const freeKb = signal<number | null>(null);
 export const selectedBank = signal(0);
 export const selectedPad = signal(0);
@@ -136,6 +138,7 @@ function teardown(): void {
   if (reloadTimer) clearTimeout(reloadTimer);
   pollTimer = reloadTimer = null;
   playing.value = null;
+  projectSwitching.value = null;
   device = null;
   transport = null;
 }
@@ -261,6 +264,8 @@ async function loadAll(first = false): Promise<void> {
       fail(e, "Read SP");
       conn.value = "ready";
     }
+  } finally {
+    if (device === d) projectSwitching.value = null;
   }
 }
 
@@ -288,6 +293,7 @@ export async function selectProject(p1: number): Promise<void> {
       playing.value = null;
       conn.value = "loading";
       loadProgress.value = 0;
+      projectSwitching.value = p1;
     });
     log("info", `Selected project ${p1} — waiting for SP to load it`);
     scheduleReload(2500);
@@ -306,6 +312,7 @@ async function poll(): Promise<void> {
     status.value = st;
     if (prev && prev.project !== st.project) {
       log("info", `SP selected project ${st.project + 1} — waiting for it to load`);
+      projectSwitching.value = st.project + 1;
       // Pad blocks read empty while the device is still loading a project (report §0).
       scheduleReload(2500);
     }
@@ -501,6 +508,7 @@ async function savePattern(slot: number): Promise<boolean> {
       log("warn", `${what}: after returning to the project, the file differs — SP overwrote it with its own copy`);
       notice.value = { kind: "error", text: `${what}: SP overwrote our pattern with its own copy while switching projects. The draft is kept` };
     }
+    patternWriting.value = `${what}: reading the project back`;
     await loadAll();
     return r.kept;
   } catch (e) {

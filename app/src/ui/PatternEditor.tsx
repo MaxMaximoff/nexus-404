@@ -16,7 +16,7 @@ import {
   gateFor, moveNote, moveNotes, noteAt, pasteNotes, removeNote, removeNotes, resizeNote, rollNote, semitonesOf, setBars, setSemitones, setVelocities, setVelocity, shiftPad,
   type Clip,
 } from "../sp404/patternEdit";
-import { IconMinus, IconPlus, IconRedo, IconTrash, IconUndo, IconUpload } from "./icons";
+import { IconMinus, IconPlus, IconRedo, IconTrash, IconUndo, IconUpload, Spinner } from "./icons";
 import { auditionPad, connectMidi, midiState } from "./midi";
 import { Pager, followTick, pagingOf } from "./PatternPager";
 import { openPad } from "./Patterns";
@@ -602,7 +602,7 @@ export function SaveControl({ slot }: { slot: number }) {
       <button class="btn ptn-mini" onClick={() => confirmSave(false)}>Cancel</button>
     </span>
   );
-  if (busy) return <span class="muted small ptn-save-busy">{busy}…</span>;
+  if (busy) return <span class="muted small ptn-save-busy" role="status"><Spinner /> {busy}…</span>;
   return (
     <button class="btn btn-primary ptn-save" disabled={!!why} onClick={() => requestSave(slot)}
       title={why ?? "Write the pattern to SP (Ctrl+S). SP briefly switches to another project and returns to reload patterns"}>

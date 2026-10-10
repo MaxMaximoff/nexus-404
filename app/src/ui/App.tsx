@@ -10,8 +10,27 @@ import { SlicerPane } from "./Slicer";
 import { editingSlot } from "./patternDraft";
 import { TopBar } from "./TopBar";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { dragCopy, draggedPad, groupDrop, clearPicked, confirmDelete, confirmGroupDelete, groupProgress, notice, pads, pickBank, pickedList, selectedBank, selectedPad, writeBlockReason } from "./store";
-import { IconX } from "./icons";
+import {
+  dragCopy, draggedPad, groupDrop, clearPicked, confirmDelete, confirmGroupDelete, groupProgress, loadProgress, notice, pads, pickBank, pickedList, projectSwitching,
+  selectedBank, selectedPad, writeBlockReason,
+} from "./store";
+import { IconX, Spinner } from "./icons";
+
+/** Over the work area while the SP switches project: what is shown below is the old project until it is read. */
+function ProjectLoading() {
+  const p1 = projectSwitching.value;
+  if (p1 === null) return null;
+  const pct = Math.round(loadProgress.value * 100);
+  return (
+    <div class="project-loading" role="status" aria-live="polite">
+      <div class="project-loading-card glass">
+        <Spinner />
+        <span>{pct ? `Reading project ${p1}` : `SP is loading project ${p1}…`}</span>
+        {pct > 0 && <span class="muted">{pct} %</span>}
+      </div>
+    </div>
+  );
+}
 
 export function App() {
   const n = notice.value, ptn = mainView.value !== "pads";
@@ -79,6 +98,7 @@ export function App() {
           </div>
         )}
         <main class={`layout ${ptn ? "layout-ptn" : ""} ${solo ? "layout-solo" : ""} ${switching ? "switching" : ""}`}>
+          <ProjectLoading />
           {/* Both blocks stay mounted: switching view only moves their widths. The hidden one is inert and collapses. */}
           <div class="workspace slot" inert={ptn} aria-hidden={ptn}>
             <BankRail /><PadGrid />
