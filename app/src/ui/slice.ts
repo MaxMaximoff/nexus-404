@@ -57,6 +57,8 @@ export const slTrack = signal<Track | null>(null);
 export const slGridStem = signal(0);
 /** Stems left out of listening (indices). */
 export const slMuted = signal<ReadonlySet<number>>(new Set());
+/** Stems left out of writing to the card (indices): write the voice, the instrumental or both. */
+export const slUnwritten = signal<ReadonlySet<number>>(new Set());
 /** What the slicer is busy with before the grid is there. */
 export const slState = signal<"idle" | "decoding" | "analyzing" | "ready">("idle");
 export const slGrid = signal<BeatGrid | null>(null);
@@ -139,7 +141,9 @@ export function removeStem(i: number): void {
   const t = slTrack.value;
   if (!t || t.stems.length < 2 || slBusy.value) return;
   stopPlay();
-  slMuted.value = new Set([...slMuted.value].filter((j) => j !== i).map((j) => (j > i ? j - 1 : j)));
+  const without = (set: ReadonlySet<number>) => new Set([...set].filter((j) => j !== i).map((j) => (j > i ? j - 1 : j)));
+  slMuted.value = without(slMuted.value);
+  slUnwritten.value = without(slUnwritten.value);
   if (slGridStem.value === i) slGridStem.value = 0;
   else if (slGridStem.value > i) slGridStem.value--;
   setTrack({ ...t, stems: labelled(t.stems.filter((_, j) => j !== i)) });
@@ -207,6 +211,7 @@ function setTrack(t: Omit<Track, "frames">): void {
     notice.value = { kind: "info", text: `The stems differ in length by ${((frames - shortest) / RATE).toFixed(2)} s: are they of one track?` };
   if (slTrack.value?.id !== t.id) {
     slMuted.value = new Set();
+    slUnwritten.value = new Set();
     slGridStem.value = Math.max(0, gridStem(stemKinds(t.stems.map((x) => x.name))));
   }
   slTrack.value = { ...t, frames };
@@ -279,6 +284,16 @@ export function toggleMute(i: number): void {
   const p = slPlay.value;
   if (p) play(p.bar, !p.loop);
 }
+
+/** A stem in or out of writing to the card. */
+export function toggleWritten(i: number): void {
+  const next = new Set(slUnwritten.value);
+  if (!next.delete(i)) next.add(i);
+  slUnwritten.value = next;
+}
+
+/** The stems written to the card (all but the ones left out). */
+export const writtenStems = (t: Track): Stem[] => t.stems.filter((_, i) => !slUnwritten.value.has(i));
 
 /** Per loop (by its first bar), the labels of stems that are silent there; only with several stems. */
 export const slSilent = computed<Map<number, string[]>>(() => {
@@ -501,7 +516,9 @@ export const slCardBlock = computed<string | null>(() =>
   conn.value !== "ready" ? "SP is not connected" : demo.value ? "Demo: no SD card to write to"
     : writeBlockReason.value ?? (cardBusy.value || slBusy.value ? "Card is busy — wait for the operation to finish" : null));
 /** Why the chosen loops cannot be written now, or null. */
-export const slWriteBlock = computed<string | null>(() => slCardBlock.value ?? (!slChosen.value.length ? "No loops chosen" : null));
+export const slWriteBlock = computed<string | null>(() => slCardBlock.value ?? slStemBlock.value ?? (!slChosen.value.length ? "No loops chosen" : null));
+/** Why no loop can be written for want of stems, or null. */
+export const slStemBlock = computed<string | null>(() => (slTrack.value && slTrack.value.stems.length > 1 && !writtenStems(slTrack.value).length ? "No stems chosen to write" : null));
 
 /** The card folder made for a track in this session (by the track's id); single loops of that track go into it too. */
 let folderOf: { track: number; name: string } | null = null;
@@ -510,14 +527,14 @@ let folderOf: { track: number; name: string } | null = null;
 const subOf = (t: Track, stem: Stem) => (t.stems.length > 1 ? `/${stem.label}` : "");
 
 /** The track's card folder as it will be named (before a `_2` for a taken name), with its subfolders. */
-export const folderPreview = (t: Track) => `IMPORT/${trackName(t.name)}/${t.stems.length > 1 ? `{${t.stems.map((x) => x.label).join(", ")}}/` : ""}`;
+export const folderPreview = (t: Track) => `IMPORT/${trackName(t.name)}/${t.stems.length > 1 ? `{${writtenStems(t).map((x) => x.label).join(", ")}}/` : ""}`;
 
 /** A new folder IMPORT/<track>/ (`_2`, `_3`… when taken), with a subfolder per stem; it becomes the track's folder. */
 async function newFolder(t: Track): Promise<string> {
   const name = await withDevice(async (d) => {
     const n = uniqueName(trackName(t.name), (await d.listDir(`${CARD}/IMPORT`)).map((e) => e.name));
     await d.mkdirCard(`${CARD}/IMPORT/${n}`);
-    for (const stem of t.stems) if (subOf(t, stem)) await d.mkdirCard(`${CARD}/IMPORT/${n}${subOf(t, stem)}`);
+    for (const stem of writtenStems(t)) if (subOf(t, stem)) await d.mkdirCard(`${CARD}/IMPORT/${n}${subOf(t, stem)}`);
     return n;
   });
   folderOf = { track: t.id, name };
@@ -526,9 +543,9 @@ async function newFolder(t: Track): Promise<string> {
 
 interface CardFile { stem: Stem; loop: Loop; name: string }
 
-/** The files of a loop numbered `n` of `count`: one per stem, the stem's tag in the name when there are several. */
+/** The files of a loop numbered `n` of `count`: one per written stem, the stem's tag in the name when there are several. */
 function filesOf(t: Track, x100: number, loop: Loop, n: number, count: number): CardFile[] {
-  return t.stems.map((stem) => ({ stem, loop, name: loopFileName(t.name, n, count, x100, t.stems.length > 1 ? stem.tag : "") }));
+  return writtenStems(t).map((stem) => ({ stem, loop, name: loopFileName(t.name, n, count, x100, t.stems.length > 1 ? stem.tag : "") }));
 }
 
 /**
@@ -568,7 +585,7 @@ async function writeFiles(files: CardFile[], folder: string | null): Promise<num
   return done;
 }
 
-const where = (t: Track) => `IMPORT/${folderOf!.name}/${t.stems.length > 1 ? ` (${t.stems.map((x) => `${x.label}/`).join(", ")})` : ""}`;
+const where = (t: Track) => `IMPORT/${folderOf!.name}/${t.stems.length > 1 ? ` (${writtenStems(t).map((x) => `${x.label}/`).join(", ")})` : ""}`;
 
 /** The chosen loops as WAV files in a new folder IMPORT/<track>/ on the card (a subfolder per stem); then the card browser shows it. */
 export async function writeLoops(): Promise<void> {
@@ -597,7 +614,7 @@ function loopNumber(bar: number): { n: number; count: number } {
  */
 export async function writeOne(bar: number): Promise<void> {
   const t = slTrack.value, g = slGrid.value, loop = slLoops.value.find((l) => l.bar === bar);
-  if (!t || !g || !loop || slCardBlock.value) return;
+  if (!t || !g || !loop || slCardBlock.value || slStemBlock.value) return;
   let folder: string | null = null, taken: string[] = [];
   try {
     if (folderOf?.track === t.id) {
@@ -605,7 +622,7 @@ export async function writeOne(bar: number): Promise<void> {
       const there = await withDevice(async (d) => {
         if (!(await d.stat(root))) return null;
         const names: string[] = [];
-        for (const stem of t.stems) {
+        for (const stem of writtenStems(t)) {
           const path = root + subOf(t, stem);
           if (!(await d.stat(path))) await d.mkdirCard(path);
           names.push(...(await d.listDir(path)).map((e) => e.name.toLowerCase()));

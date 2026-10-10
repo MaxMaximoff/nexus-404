@@ -6,7 +6,8 @@ import { BPM_RANGES, barEdge, barFrames, formatBpm, loopFileName, padName, parse
 import { AUDIO_RE } from "./card";
 import { mainView } from "./Patterns";
 import {
-  OVERVIEW_COLS, addStems, analyze, cancelWrite, folderPreview, removeStem, setGridStem, slGridStem, slMuted, slSilent, toggleMute, type Stem, cutEvery, joinNext, nudge, openTrack, play, playheadFrame, resetGrid, selLoop, selStep, setAllOff, setBar1, setPreRoll,
+  OVERVIEW_COLS, addStems, analyze, cancelWrite, folderPreview, removeStem, setGridStem, slGridStem, slMuted, slSilent, slStemBlock, slUnwritten, toggleMute,
+  toggleWritten, writtenStems, type Stem, cutEvery, joinNext, nudge, openTrack, play, playheadFrame, resetGrid, selLoop, selStep, setAllOff, setBar1, setPreRoll,
   setTempo, slBars, slBusy, slChosen, slCuts, slDetected, slEvery, slFadeMs, slGrid, slLoops, slMetronome, slOff, slPickBar1, slPlay, slPreRollMs, slSel,
   slCardBlock, slState, slTrack, slWriteBlock, writeOne, splitSel, stopPlay, toggleCut, toggleOff, togglePlay, writeLoops, type Track,
 } from "./slice";
@@ -90,9 +91,11 @@ function StemBar({ track }: { track: Track }) {
     <div class="sl-bar sl-stems">
       <span class="muted">{multi ? "Stems" : "Track"}</span>
       {multi && track.stems.map((x, i) => {
-        const muted = slMuted.value.has(i), grid = slGridStem.value === i;
+        const muted = slMuted.value.has(i), grid = slGridStem.value === i, written = !slUnwritten.value.has(i);
         return (
-          <span key={`${i}:${x.name}`} class={`sl-stem ${muted ? "muted" : ""}`} title={x.name}>
+          <span key={`${i}:${x.name}`} class={`sl-stem ${muted ? "muted" : ""} ${written ? "" : "unwritten"}`} title={x.name}>
+            <input type="checkbox" class="sl-stem-write" checked={written} disabled={!!slBusy.value} onChange={() => toggleWritten(i)}
+              aria-label={`Write ${x.label} to the card`} title={written ? `${x.label} is written to the card: untick to leave it out` : `${x.label} is not written to the card: tick to write it`} />
             <button type="button" class="sl-stem-name" aria-pressed={!muted} onClick={() => toggleMute(i)}
               title={`${x.name}: ${muted ? "muted while listening, click to hear it" : "heard while listening, click to mute it"}`}>{x.label}</button>
             <button type="button" class={`sl-stem-grid ${grid ? "on" : ""}`} aria-pressed={grid} disabled={busy || grid}
@@ -486,13 +489,18 @@ function SliceWave({ track }: { track: Track }) {
 function LoopList() {
   const loops = slLoops.value, off = slOff.value, sel = slSel.value, t = slTrack.value!, playing = slPlay.value;
   const chosen = slChosen.value;
-  const bytes = chosen.reduce((s, l) => s + t.stems.reduce((b, x) => b + l.frames * x.channels * 2 + 44, 0), 0);
+  const written = writtenStems(t);
+  const bytes = chosen.reduce((s, l) => s + written.reduce((b, x) => b + l.frames * x.channels * 2 + 44, 0), 0);
   const silent = slSilent.value, multi = t.stems.length > 1;
   let n = 0;
   return (
     <div class="sl-list-wrap">
       <div class="sl-list-head">
-        <span><b>{chosen.length}</b> of {loops.length} loops chosen{multi ? ` × ${t.stems.length} stems` : ""} · {mb(bytes)}</span>
+        <span>
+          <b>{chosen.length}</b> of {loops.length} loops chosen
+          {multi && !written.length ? " · no stem ticked to write"
+            : <>{multi ? ` × ${written.length} stem${written.length === 1 ? "" : "s"}${written.length < t.stems.length ? ` (${written.map((x) => x.label).join(", ")})` : ""}` : ""} · {mb(bytes)}</>}
+        </span>
         <button class="btn btn-ghost" disabled={!!slBusy.value || chosen.length === loops.length} onClick={() => setAllOff(false)}>All</button>
         <button class="btn btn-ghost" disabled={!!slBusy.value || !chosen.length} onClick={() => setAllOff(true)}>None</button>
       </div>
@@ -518,8 +526,8 @@ function LoopList() {
                     onClick={(e) => { e.stopPropagation(); slSel.value = l.bar; if (playing?.bar === l.bar && playing.loop) stopPlay(); else play(l.bar); }}>
                     {playing?.bar === l.bar && playing.loop ? <IconStop /> : <IconPlay />}
                   </button>
-                  <button class="icon-btn" disabled={!!slCardBlock.value} aria-label="Write this loop to the SD card"
-                    title={slCardBlock.value ?? `Write only this loop${multi ? " (every stem)" : ""} to the SD card, into this track's folder`}
+                  <button class="icon-btn" disabled={!!(slCardBlock.value ?? slStemBlock.value)} aria-label="Write this loop to the SD card"
+                    title={slCardBlock.value ?? slStemBlock.value ?? `Write only this loop${multi ? ` (${written.map((x) => x.label).join(", ")})` : ""} to the SD card, into this track's folder`}
                     onClick={(e) => { e.stopPropagation(); slSel.value = l.bar; void writeOne(l.bar); }}>
                     <IconUpload />
                   </button>
@@ -537,6 +545,12 @@ function LoopList() {
   );
 }
 
+/** " × 2", " (inst)" or nothing: which stems the write button writes. */
+function stemsNote(t: Track): string {
+  const w = writtenStems(t);
+  return t.stems.length < 2 || !w.length ? "" : w.length === 1 ? ` (${w[0]!.label})` : ` × ${w.length}`;
+}
+
 /** Where the loops go, the write button and its progress. */
 function WriteBar({ track }: { track: Track }) {
   const busy = slBusy.value, block = slWriteBlock.value, n = slChosen.value.length;
@@ -552,9 +566,12 @@ function WriteBar({ track }: { track: Track }) {
         </>
       ) : (
         <>
-          <span class="muted small sl-write-text">To the SD card, a new folder <b>{folderPreview(track)}</b> · files like {loopFileName(track.name, 1, Math.max(n, 1), slGrid.value!.x100, track.stems.length > 1 ? track.stems[0]!.tag : "")}</span>
+          <span class="muted small sl-write-text">
+            {slStemBlock.value ? "Tick a stem above to write its loops"
+              : <>To the SD card, a new folder <b>{folderPreview(track)}</b> · files like {loopFileName(track.name, 1, Math.max(n, 1), slGrid.value!.x100, track.stems.length > 1 ? writtenStems(track)[0]!.tag : "")}</>}
+          </span>
           <button class="btn btn-primary" disabled={!!block} title={block ?? "Write the chosen loops to the card"} onClick={() => void writeLoops()}>
-            <IconUpload /> Write {n} loop{n === 1 ? "" : "s"}{track.stems.length > 1 ? ` × ${track.stems.length}` : ""} to SD card
+            <IconUpload /> Write {n} loop{n === 1 ? "" : "s"}{stemsNote(track)} to SD card
           </button>
         </>
       )}
