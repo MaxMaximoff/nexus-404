@@ -3,12 +3,13 @@
 // files to a new folder of IMPORT/ on the SD card. From there they go onto pads like any card file
 // (drag from the card browser; the BPM is in each file name).
 // A track can come as several stems of the same length (voice and instrumental from UVR, Demucs'
-// four…): one grid (from the stem that carries the beat), the same cuts, and each loop written once
-// per stem, into a subfolder per stem with matching numbers.
+// four…): one grid (from the stem that carries the beat) and the same cuts. The ticked stems are
+// written: one as it is into its own subfolder (vocals/), several mixed into one file per loop
+// (mix/, or drums+bass/ for some of them), so the numbers match across subfolders.
 
 import { computed, effect, signal } from "@preact/signals";
 import {
-  BPM_MAX_X100, BPM_MIN_X100, BPM_RANGES, CARD, barFrames, computePeaks, decodeAudio, encodeWav, evenCuts, extractLoop, formatBpm, gridStem, loopFileName,
+  BPM_MAX_X100, BPM_MIN_X100, BPM_RANGES, CARD, barFrames, computePeaks, decodeAudio, encodeWav, evenCuts, extractLoop, formatBpm, gridStem, loopFileName, mixLoop,
   MODE_NAMES, keyName, loopsFromCuts, padName, stemBase, stemKinds, trackName, wholeBars, uniqueName, type BeatGrid, type KeyResult, type Loop,
 } from "../sp404";
 import type { GridRequest } from "./gridWorker";
@@ -572,56 +573,114 @@ export const slWriteBlock = computed<string | null>(() => slCardBlock.value ?? s
 /** Why no loop can be written for want of stems, or null. */
 export const slStemBlock = computed<string | null>(() => (slTrack.value && slTrack.value.stems.length > 1 && !writtenStems(slTrack.value).length ? "No stems chosen to write" : null));
 
-/** The card folder made for a track in this session (by the track's id); single loops of that track go into it too. */
-let folderOf: { track: number; name: string } | null = null;
-
-/** Where a stem's loops go inside the track's folder: its own subfolder when there are several stems. */
-const subOf = (t: Track, stem: Stem) => (t.stems.length > 1 ? `/${stem.label}` : "");
-
-/** The track's card folder as it will be named (before a `_2` for a taken name), with its subfolders. */
-export const folderPreview = (t: Track) => `IMPORT/${trackName(t.name)}/${t.stems.length > 1 ? `{${writtenStems(t).map((x) => x.label).join(", ")}}/` : ""}`;
-
-/** A new folder IMPORT/<track>/ (`_2`, `_3`… when taken), with a subfolder per stem; it becomes the track's folder. */
-async function newFolder(t: Track): Promise<string> {
-  const name = await withDevice(async (d) => {
-    const n = uniqueName(trackName(t.name), (await d.listDir(`${CARD}/IMPORT`)).map((e) => e.name));
-    await d.mkdirCard(`${CARD}/IMPORT/${n}`);
-    for (const stem of writtenStems(t)) if (subOf(t, stem)) await d.mkdirCard(`${CARD}/IMPORT/${n}${subOf(t, stem)}`);
-    return n;
-  });
-  folderOf = { track: t.id, name };
-  return name;
+/** What the loops are written as: the ticked stems, one as it is, several mixed into one file. */
+export interface Output {
+  /** Subfolder in the track's folder ("" for a track of one stem): the stem's label, "mix" for all, "drums+bass" for some. */
+  label: string;
+  /** Tag in the file names ("vox", "mix"; "" for a track of one stem). */
+  tag: string;
+  stems: Stem[];
+  channels: 1 | 2;
 }
 
-interface CardFile { stem: Stem; loop: Loop; name: string }
+/** The output of the open track as ticked now; null when no stem is ticked. */
+export function outputOf(t: Track): Output | null {
+  const w = writtenStems(t);
+  if (!w.length) return null;
+  if (t.stems.length < 2) return { label: "", tag: "", stems: w, channels: w[0]!.channels };
+  if (w.length === 1) return { label: w[0]!.label, tag: w[0]!.tag, stems: w, channels: w[0]!.channels };
+  return { label: w.length === t.stems.length ? "mix" : w.map((x) => x.label).join("+"), tag: "mix", stems: w, channels: w.some((x) => x.channels === 2) ? 2 : 1 };
+}
 
-/** The files of a loop numbered `n` of `count`: one per written stem, the stem's tag in the name when there are several. */
-function filesOf(t: Track, x100: number, loop: Loop, n: number, count: number): CardFile[] {
-  return writtenStems(t).map((stem) => ({ stem, loop, name: loopFileName(t.name, n, count, x100, t.stems.length > 1 ? stem.tag : "") }));
+/** The card folder for the open track as it will be named, with the subfolder (before a `_2` for a taken name). */
+export const folderPreview = (t: Track) => { const out = outputOf(t); return `IMPORT/${trackName(t.name)}/${out?.label ? `${out.label}/` : ""}`; };
+
+/** A loop of the output as 16-bit PCM: the stem as it is, or the stems summed. */
+const renderLoop = (out: Output, loop: Loop, fade: number): Int16Array =>
+  out.stems.length === 1 ? extractLoop(out.stems[0]!.samples, out.stems[0]!.channels, loop, fade) : mixLoop(out.stems, loop, out.channels, fade);
+
+/** Where files go on the card: IMPORT/<folder>/<sub>/ ("" sub: right in the folder). */
+interface Target { folder: string; sub: string }
+const targetPath = (tg: Target) => `IMPORT/${tg.folder}/${tg.sub ? `${tg.sub}/` : ""}`;
+/** The last place written to for a track in this session (by the track's id and the output's label); single loops go there too. */
+let lastTarget: { track: number; label: string; target: Target } | null = null;
+
+/**
+ * Where a write of the whole set goes. A track of several stems keeps one folder IMPORT/<track>/
+ * (made when missing), and each write gets its own subfolder named after the output — `vocals`,
+ * `mix`, `mix_2` when that one is taken — so a mix lands next to the stems written before. A track
+ * of one stem gets a new folder each time (`_2`, `_3`…).
+ */
+function batchTarget(t: Track, out: Output): Promise<Target> {
+  return withDevice(async (d) => {
+    const root = `${CARD}/IMPORT`, base = trackName(t.name), names = (await d.listDir(root)).map((e) => e.name);
+    if (!out.label) {
+      const folder = uniqueName(base, names);
+      await d.mkdirCard(`${root}/${folder}`);
+      return { folder, sub: "" };
+    }
+    const folder = names.find((n) => n.toLowerCase() === base.toLowerCase()) ?? base;
+    if (!(await d.stat(`${root}/${folder}`))) await d.mkdirCard(`${root}/${folder}`);
+    const sub = uniqueName(out.label, (await d.listDir(`${root}/${folder}`)).map((e) => e.name));
+    await d.mkdirCard(`${root}/${folder}/${sub}`);
+    return { folder, sub };
+  });
 }
 
 /**
- * Write `files` into `folder` (a new one when null), one by one with progress; "Stop" ends after
- * the file being written. Then the card browser shows the folder. Returns how many were written.
+ * Where a single loop goes, and the names already there: the last place this output of this track
+ * was written to in this session, while it is on the card; else IMPORT/<track>/<output>/ for a
+ * track of several stems (made when missing), or a new folder for a track of one stem.
  */
-async function writeFiles(files: CardFile[], folder: string | null): Promise<number> {
-  const t = slTrack.value!;
+function singleTarget(t: Track, out: Output): Promise<{ target: Target; taken: string[] }> {
+  return withDevice(async (d) => {
+    const root = `${CARD}/IMPORT`;
+    const names = async (tg: Target) => (await d.listDir(`${CARD}/${targetPath(tg)}`)).map((e) => e.name.toLowerCase());
+    const last = lastTarget?.track === t.id && lastTarget.label === out.label ? lastTarget.target : null;
+    if (last && (await d.stat(`${CARD}/${targetPath(last)}`))) return { target: last, taken: await names(last) };
+    if (!out.label) {
+      const folder = uniqueName(trackName(t.name), (await d.listDir(root)).map((e) => e.name));
+      await d.mkdirCard(`${root}/${folder}`);
+      return { target: { folder, sub: "" }, taken: [] };
+    }
+    const base = trackName(t.name);
+    const folder = (await d.listDir(root)).map((e) => e.name).find((n) => n.toLowerCase() === base.toLowerCase()) ?? base;
+    if (!(await d.stat(`${root}/${folder}`))) await d.mkdirCard(`${root}/${folder}`);
+    const target = { folder, sub: out.label };
+    if (!(await d.stat(`${root}/${folder}/${out.label}`))) await d.mkdirCard(`${root}/${folder}/${out.label}`);
+    return { target, taken: await names(target) };
+  });
+}
+
+interface CardFile { loop: Loop; name: string }
+
+/** The file of a loop numbered `n` of `count`, with the output's tag in its name. */
+function fileOf(t: Track, x100: number, loop: Loop, n: number, count: number): CardFile {
+  return { loop, name: loopFileName(t.name, n, count, x100, outputOf(t)?.tag ?? "") };
+}
+
+/**
+ * Write `files` of the output to where `place` says (asked once the progress shows), one by one;
+ * "Stop" ends after the file being written. Then the card browser shows the folder. Returns the
+ * target and how many were written.
+ */
+async function writeFiles(files: CardFile[], place: (t: Track, out: Output) => Promise<Target>): Promise<{ target: Target | null; done: number }> {
+  const t = slTrack.value!, out = outputOf(t)!;
   stopPlay();
   cancel = false;
   const fade = Math.round((slFadeMs.value * RATE) / 1000);
   const busy = (text: string, progress: number) => { slBusy.value = { text, progress }; cardBusy.value = { text, progress }; };
-  let done = 0;
+  let target: Target | null = null, done = 0;
   try {
-    if (!folder) {
-      busy("Creating folder…", 0);
-      folder = await newFolder(t);
-    }
-    for (const [i, { stem, loop, name }] of files.entries()) {
+    busy("Preparing folder…", 0);
+    target = await place(t, out);
+    lastTarget = { track: t.id, label: out.label, target };
+    for (const [i, { loop, name }] of files.entries()) {
       if (cancel) break;
       const text = files.length > 1 ? `Writing ${i + 1} of ${files.length}: ${name}` : `Writing ${name}`;
       busy(text, i / files.length);
-      const data = new Uint8Array(encodeWav(extractLoop(stem.samples, stem.channels, loop, fade), stem.channels));
-      await withDevice((d) => d.writeCardFile(`${CARD}/IMPORT/${folder}${subOf(t, stem)}/${name}`, data, (a, b) => busy(text, (i + a / b) / files.length)));
+      const data = new Uint8Array(encodeWav(renderLoop(out, loop, fade), out.channels));
+      await withDevice((d) => d.writeCardFile(`${CARD}/${targetPath(target!)}${name}`, data, (a, b) => busy(text, (i + a / b) / files.length)));
       done++;
     }
   } catch (e) {
@@ -630,24 +689,22 @@ async function writeFiles(files: CardFile[], folder: string | null): Promise<num
     slBusy.value = null;
     cardBusy.value = null;
   }
-  if (folder) {
+  if (target) {
     showSide("card");
-    await openCardDir(["IMPORT", folder]);
+    await openCardDir(["IMPORT", target.folder, ...(target.sub ? [target.sub] : [])]);
   }
-  return done;
+  return { target, done };
 }
 
-const where = (t: Track) => `IMPORT/${folderOf!.name}/${t.stems.length > 1 ? ` (${writtenStems(t).map((x) => `${x.label}/`).join(", ")})` : ""}`;
-
-/** The chosen loops as WAV files in a new folder IMPORT/<track>/ on the card (a subfolder per stem); then the card browser shows it. */
+/** The chosen loops as WAV files on the card (see batchTarget for where); then the card browser shows them. */
 export async function writeLoops(): Promise<void> {
   const t = slTrack.value, g = slGrid.value, loops = slChosen.value;
   if (!t || !g || slWriteBlock.value) return;
-  const files = loops.flatMap((l, i) => filesOf(t, g.x100, l, i + 1, loops.length));
-  const done = await writeFiles(files, null);
-  if (!done) return;
-  log("info", `Slicer: ${done} of ${files.length} files at ${formatBpm(g.x100)} BPM → ${where(t)}`);
-  notice.value = { kind: "info", text: `${done} file${done === 1 ? "" : "s"} written to ${where(t)} on the card${done < files.length ? " (stopped)" : ""}. Drag them from the card onto pads.` };
+  const files = loops.map((l, i) => fileOf(t, g.x100, l, i + 1, loops.length));
+  const { target, done } = await writeFiles(files, batchTarget);
+  if (!target || !done) return;
+  log("info", `Slicer: ${done} of ${files.length} loops at ${formatBpm(g.x100)} BPM → ${targetPath(target)}`);
+  notice.value = { kind: "info", text: `${done} loop${done === 1 ? "" : "s"} written to ${targetPath(target)} on the card${done < files.length ? " (stopped)" : ""}. Drag them from the card onto pads.` };
 }
 
 /**
@@ -659,42 +716,22 @@ function loopNumber(bar: number): { n: number; count: number } {
   return chosen >= 0 ? { n: chosen + 1, count: slChosen.value.length } : { n: slLoops.value.findIndex((l) => l.bar === bar) + 1, count: slLoops.value.length };
 }
 
-/**
- * One loop (in every stem) to the card: into the folder already made for this track in this
- * session (missing subfolders made again; a new folder when it is gone), else a new
- * IMPORT/<track>/. When a name is taken there, every stem's file gets the same `_2`, `_3`…
- */
+/** One loop to the card (see singleTarget for where); a name taken there gets `_2`, `_3`… */
 export async function writeOne(bar: number): Promise<void> {
   const t = slTrack.value, g = slGrid.value, loop = slLoops.value.find((l) => l.bar === bar);
   if (!t || !g || !loop || slCardBlock.value || slStemBlock.value) return;
-  let folder: string | null = null, taken: string[] = [];
-  try {
-    if (folderOf?.track === t.id) {
-      const root = `${CARD}/IMPORT/${folderOf.name}`;
-      const there = await withDevice(async (d) => {
-        if (!(await d.stat(root))) return null;
-        const names: string[] = [];
-        for (const stem of writtenStems(t)) {
-          const path = root + subOf(t, stem);
-          if (!(await d.stat(path))) await d.mkdirCard(path);
-          names.push(...(await d.listDir(path)).map((e) => e.name.toLowerCase()));
-        }
-        return names;
-      });
-      if (there) { folder = folderOf.name; taken = there; }
-    }
-  } catch (e) {
-    return void (notice.value = { kind: "error", text: `Write to card: ${(e as Error).message}` });
-  }
   const { n, count } = loopNumber(bar);
-  const plain = filesOf(t, g.x100, loop, n, count);
-  const named = (k: number) => plain.map((f) => ({ ...f, name: k === 1 ? f.name : f.name.replace(/\.wav$/, `_${k}.wav`) }));
-  let k = 1;
-  while (named(k).some((f) => taken.includes(f.name.toLowerCase()))) k++;
-  const files = named(k);
-  if (!(await writeFiles(files, folder))) return;
-  log("info", `Slicer: bars ${loop.bar}–${loop.bar + loop.bars - 1} → ${where(t)}: ${files.map((f) => f.name).join(", ")}`);
-  notice.value = { kind: "info", text: `${files.length > 1 ? `${files.length} files` : files[0]!.name} written to ${where(t)} on the card` };
+  const plain = fileOf(t, g.x100, loop, n, count);
+  let name = plain.name;
+  const { target, done } = await writeFiles([plain], async (tr, out) => {
+    const { target, taken } = await singleTarget(tr, out);
+    for (let k = 2; taken.includes(name.toLowerCase()); k++) name = plain.name.replace(/\.wav$/, `_${k}.wav`);
+    plain.name = name;
+    return target;
+  });
+  if (!target || !done) return;
+  log("info", `Slicer: bars ${loop.bar}–${loop.bar + loop.bars - 1} → ${targetPath(target)}${name}`);
+  notice.value = { kind: "info", text: `${name} written to ${targetPath(target)} on the card` };
 }
 
 export function cancelWrite(): void {

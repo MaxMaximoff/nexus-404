@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { barFrames, detectGrid, evenCuts, extractLoop, loopFileName, loopsFromCuts, loopsOf, trackName, uniqueName, wholeBars, type BeatGrid } from "./grid";
+import { barFrames, detectGrid, evenCuts, extractLoop, mixLoop, loopFileName, loopsFromCuts, loopsOf, trackName, uniqueName, wholeBars, type BeatGrid } from "./grid";
 import { bpmFromFileName } from "./audio";
 
 const RATE = 48000;
@@ -188,6 +188,12 @@ describe("loops", () => {
     expect(wholeBars(g, 4 * 96_000, 100)).toEqual({ first: 1, last: 4 }); // pre-roll before the start
     const pcm = new Int16Array(20).fill(7); // 10 stereo frames
     expect([...extractLoop(pcm, 2, { start: -2, frames: 14 })]).toEqual([0, 0, 0, 0, ...Array(20).fill(7), 0, 0, 0, 0]);
+  });
+
+  it("mixes stems into one loop: a mono stem into both channels, the sum clipped", () => {
+    const voice = { samples: new Int16Array([100, 200, 300, 400]), channels: 1 }; // 4 mono frames
+    const inst = { samples: new Int16Array([10, -10, 20, -20, 32700, -32700, 40, -40]), channels: 2 }; // 4 stereo frames
+    expect([...mixLoop([voice, inst], { start: 1, frames: 3 }, 2)]).toEqual([220, 180, 32767, -32400, 440, 360]);
   });
 
   it("extracts a loop with fades at both ends", () => {
