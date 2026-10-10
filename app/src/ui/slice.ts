@@ -9,7 +9,7 @@
 import { computed, effect, signal } from "@preact/signals";
 import {
   BPM_MAX_X100, BPM_MIN_X100, BPM_RANGES, CARD, barFrames, computePeaks, decodeAudio, encodeWav, evenCuts, extractLoop, formatBpm, gridStem, loopFileName,
-  keyName, loopsFromCuts, padName, stemBase, stemKinds, trackName, wholeBars, uniqueName, type BeatGrid, type KeyResult, type Loop,
+  MODE_NAMES, keyName, loopsFromCuts, padName, stemBase, stemKinds, trackName, wholeBars, uniqueName, type BeatGrid, type KeyResult, type Loop,
 } from "../sp404";
 import type { GridRequest } from "./gridWorker";
 import { cardBusy, openCardDir, showSide, sideTab } from "./card";
@@ -274,7 +274,7 @@ export async function findKey(): Promise<void> {
     if (slTrack.value?.id !== t.id || slKeyStem.value !== i || slTrack.value.stems[i] !== stem) return; // the track or its stems changed meanwhile
     slKey.value = k;
     const from = t.stems.length > 1 ? ` (from ${stem.label})` : "";
-    log("info", k ? `Slicer: key ${keyName(k)}${from}, match ${k.score.toFixed(2)}, next ${keyName(k.alt)} ${k.alt.score.toFixed(2)}, tuning ${k.cents >= 0 ? "+" : ""}${k.cents} cents` : `Slicer: no clear key${from}`);
+    log("info", k ? `Slicer: key ${keyName(k)} ${MODE_NAMES[k.mode]}${from} (next mode ${MODE_NAMES[k.modeAlt]}, ${k.modeLead.toFixed(3)} behind), next home ${keyName(k.alt)} ${MODE_NAMES[k.alt.mode]} (${k.altLead.toFixed(3)} behind), tuning ${k.cents >= 0 ? "+" : ""}${k.cents} cents` : `Slicer: no clear key${from}`);
   } catch (e) {
     if (slTrack.value?.id === t.id) slKey.value = null;
     log("warn", `Slicer: key: ${(e as Error).message}`);

@@ -2,7 +2,7 @@
 // to a new folder of IMPORT/ on the SD card (logic in slice.ts).
 
 import { useEffect, useRef, useState } from "preact/hooks";
-import { BPM_RANGES, barEdge, barFrames, camelot, formatBpm, keyName, loopFileName, padName, parseBpmInput } from "../sp404";
+import { BPM_RANGES, MODE_NAMES, barEdge, barFrames, camelot, formatBpm, keyName, loopFileName, noteName, padName, parseBpmInput } from "../sp404";
 import { AUDIO_RE } from "./card";
 import { mainView } from "./Patterns";
 import {
@@ -166,18 +166,31 @@ function KeyChip() {
   const k = slKey.value, t = slTrack.value;
   if (k === undefined) return <span class="sl-key muted small">Key…</span>;
   if (!k) return <span class="sl-key muted small" title="No held tones to go by (drums only, speech, noise)">No clear key</span>;
-  const close = k.score - k.alt.score < KEY_CLOSE;
+  const close = k.altLead < KEY_CLOSE;
   const from = t && t.stems.length > 1 ? ` from ${t.stems[slKeyStem.value]?.label}` : "";
+  // Plain major and minor go without a word; any other mode is named, with "?" when barely ahead.
+  const plain = k.mode === "ionian" || k.mode === "aeolian", unsure = k.modeLead < MODE_SURE;
   return (
-    <span class="sl-key small" title={`Key${from}: ${keyName(k)} (Camelot ${camelot(k)}), match ${k.score.toFixed(2)}; next ${keyName(k.alt)} ${k.alt.score.toFixed(2)}. Tuning ${k.cents >= 0 ? "+" : ""}${k.cents} cents from A = 440. A guess: relative keys (Am / C) and keys a fifth apart are easy to mix up.`}>
-      <b>{keyName(k)}</b> <span class="muted">{camelot(k)}</span>
-      {close && <span class="muted"> · or {keyName(k.alt)} {camelot(k.alt)}</span>}
+    <span class="sl-key small" title={`Key${from}: ${keyName(k)} ${MODE_NAMES[k.mode]} (Camelot ${camelot(k)}); next mode on this tonic: ${MODE_NAMES[k.modeAlt]}, ${k.modeLead.toFixed(3)} behind. Next home note: ${keyName(k.alt)} ${MODE_NAMES[k.alt.mode]}, ${k.altLead.toFixed(3)} behind. Tuning ${k.cents >= 0 ? "+" : ""}${k.cents} cents from A = 440.
+Notes from the tonic up, % of all: ${profile(k)}.
+A guess: relative keys (Am / C), keys a fifth apart and neighbouring modes are easy to mix up.`}>
+      <b>{keyName(k)}</b>
+      {(!plain || unsure) && <span class="sl-mode"> {plain ? "" : MODE_NAMES[k.mode]}{unsure ? (plain ? `${MODE_NAMES[k.mode]}?` : "?") : ""}</span>}
+      {" "}<span class="muted">{camelot(k)}</span>
+      {close && <span class="muted"> · or {keyName(k.alt)}{k.alt.mode === "ionian" || k.alt.mode === "aeolian" ? "" : ` ${MODE_NAMES[k.alt.mode]}`} {camelot(k.alt)}</span>}
     </span>
   );
 }
 
-/** The next best key is shown when its match is this close to the best one. */
-const KEY_CLOSE = 0.05;
+/** How much each note sounds, from the tonic up: "F 23 · Gb 9 · G 2 …" (percent). */
+function profile(k: { tonic: number; minor: boolean; chroma: number[] }): string {
+  return Array.from({ length: 12 }, (_, i) => `${noteName(k.tonic + i, k.minor)} ${Math.round(k.chroma[(k.tonic + i) % 12]! * 100)}`).join(" · ");
+}
+
+/** The next best home note is shown when it is this close behind (joint search score). */
+const KEY_CLOSE = 0.08;
+/** A mode less than this ahead of the next one on the same tonic is shown with "?". */
+const MODE_SURE = 0.03;
 
 /** How the track is cut, and how the loops sound. */
 function CutBar() {

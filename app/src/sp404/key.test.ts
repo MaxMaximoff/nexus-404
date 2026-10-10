@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { camelot, detectKey, keyName } from "./key";
+import { camelot, detectKey, keyName, type Mode } from "./key";
 
 const RATE = 48000;
 
@@ -52,7 +52,7 @@ describe("key detection", () => {
       const r = detectKey(pcm, 2)!;
       expect(keyName(r)).toBe(keyName({ tonic: k, minor: false }));
     }
-  });
+  }, 30000);
 
   it("finds a minor key in every transposition (i–iv–V–i)", () => {
     for (let k = 0; k < 12; k++) {
@@ -60,7 +60,7 @@ describe("key detection", () => {
       const r = detectKey(pcm, 2)!;
       expect(keyName(r)).toBe(keyName({ tonic: (9 + k) % 12, minor: true }));
     }
-  });
+  }, 30000);
 
   it("tells A minor from C major when the minor chord is home (i–VI–VII–i)", () => {
     const r = detectKey(chords([{ notes: MIN(9), bars: 2 }, { notes: MAJ(5), bars: 1 }, { notes: MAJ(7), bars: 1 }], 4), 2)!;
@@ -72,6 +72,49 @@ describe("key detection", () => {
     expect(keyName(r)).toBe("Am");
     expect(Math.abs(r.cents - 35)).toBeLessThanOrEqual(5);
   });
+
+  it("finds the mode on the tonic", () => {
+    // Each mode by chords that carry its own notes; the tonic chord gets two bars and the bass.
+    const cases: [Mode, { notes: number[]; bars: number }[]][] = [
+      ["ionian", [{ notes: MAJ(0), bars: 2 }, { notes: MAJ(5), bars: 1 }, { notes: MAJ(7), bars: 1 }]],
+      ["aeolian", [{ notes: MIN(0), bars: 2 }, { notes: MAJ(8), bars: 1 }, { notes: MAJ(10), bars: 1 }]],
+      ["harmonic", [{ notes: MIN(0), bars: 2 }, { notes: MIN(5), bars: 1 }, { notes: MAJ(7), bars: 1 }]],
+      ["dorian", [{ notes: MIN(0), bars: 2 }, { notes: MAJ(5), bars: 2 }, { notes: MIN(0), bars: 2 }, { notes: MIN(2), bars: 1 }, { notes: MAJ(5), bars: 1 }]],
+      ["phrygian", [{ notes: MIN(0), bars: 2 }, { notes: MAJ(1), bars: 1 }, { notes: MIN(10), bars: 1 }]],
+      ["mixolydian", [{ notes: MAJ(0), bars: 2 }, { notes: MAJ(10), bars: 1 }, { notes: MAJ(5), bars: 1 }]],
+      ["lydian", [{ notes: MAJ(0), bars: 2 }, { notes: MAJ(2), bars: 1 }, { notes: MAJ(7), bars: 1 }]],
+      ["phrygianDominant", [{ notes: MAJ(0), bars: 2 }, { notes: MAJ(1), bars: 1 }, { notes: MIN(5), bars: 1 }, { notes: MAJ(0), bars: 1 }, { notes: MIN(10), bars: 1 }]],
+    ];
+    const wrong: string[] = [];
+    for (const [mode, prog] of cases)
+      for (const k of [0, 5, 9]) {
+        const r = detectKey(chords(prog.map((c) => ({ notes: up(c.notes, k), bars: c.bars })), 3), 2)!;
+        if (r.tonic !== k % 12 || r.mode !== mode) wrong.push(`${mode} on ${keyName({ tonic: k, minor: false })}: ${keyName(r)} ${r.mode} (next ${r.modeAlt}, lead ${r.modeLead.toFixed(3)})`);
+      }
+    expect(wrong).toEqual([]);
+  }, 60000); // 24 synthetic tracks
+
+  it("calls a Phrygian minor minor, even where the major profile matches better", () => {
+    const r = detectKey(chords([{ notes: MIN(5), bars: 2 }, { notes: MAJ(6), bars: 1 }, { notes: MIN(3), bars: 1 }], 3), 2)!;
+    expect([keyName(r), r.mode, camelot(r)]).toEqual(["Fm", "phrygian", "4A"]);
+  });
+
+  it("keeps a minor minor under a loud saw bass (its 5th and 7th harmonics would make it Mixolydian)", () => {
+    // F Phrygian (Fm, Gb, Ebm) over a bass with 16 harmonics, five times as loud as the chords.
+    const hz = (semi: number, oct: number) => 440 * 2 ** ((semi - 9) / 12 + (oct - 4));
+    const prog: [number[], number][] = [[[5, 8, 12], 2], [[6, 10, 13], 1], [[3, 6, 10], 1]];
+    const total = 32, n = total * RATE, m = new Float64Array(n);
+    for (let t0 = 0, i = 0; t0 < total - 0.01; i++) {
+      const [notes, len] = prog[i % prog.length]!, a = Math.round(t0 * RATE), L = Math.min(n - a, Math.round(len * 2 * RATE));
+      for (const x of notes) for (let h = 1; h <= 5; h++) { const w = (2 * Math.PI * hz(x, 3) * h) / RATE; for (let j = 0; j < L; j++) m[a + j]! += (Math.sin(w * j) * 0.03) / h; }
+      for (let h = 1; h <= 16; h++) { const w = (2 * Math.PI * hz(notes[0]!, 1) * h) / RATE; for (let j = 0; j < L; j++) m[a + j]! += (Math.sin(w * j) * 0.3) / h; }
+      t0 += len * 2;
+    }
+    const pcm = new Int16Array(n * 2);
+    for (let i = 0; i < n; i++) pcm[2 * i] = pcm[2 * i + 1] = Math.max(-32768, Math.min(32767, Math.round(m[i]! * 32767)));
+    const r = detectKey(pcm, 2)!;
+    expect([keyName(r), r.mode]).toEqual(["Fm", "phrygian"]);
+  }, 30000);
 
   it("finds no key in drums and noise", () => {
     const n = 20 * RATE, pcm = new Int16Array(n * 2), rand = rng(9);
