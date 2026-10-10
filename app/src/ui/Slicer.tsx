@@ -2,12 +2,12 @@
 // to a new folder of IMPORT/ on the SD card (logic in slice.ts).
 
 import { useEffect, useRef, useState } from "preact/hooks";
-import { BPM_RANGES, barEdge, barFrames, formatBpm, loopFileName, padName, parseBpmInput } from "../sp404";
+import { BPM_RANGES, barEdge, barFrames, camelot, formatBpm, keyName, loopFileName, padName, parseBpmInput } from "../sp404";
 import { AUDIO_RE } from "./card";
 import { mainView } from "./Patterns";
 import {
   OVERVIEW_COLS, addStems, analyze, cancelWrite, folderPreview, removeStem, setGridStem, slGridStem, slMuted, slSilent, slStemBlock, slUnwritten, toggleMute,
-  toggleWritten, writtenStems, type Stem, cutEvery, joinNext, nudge, openTrack, play, playheadFrame, resetGrid, selLoop, selStep, setAllOff, setBar1, setPreRoll,
+  toggleWritten, writtenStems, slKey, slKeyStem, type Stem, cutEvery, joinNext, nudge, openTrack, play, playheadFrame, resetGrid, selLoop, selStep, setAllOff, setBar1, setPreRoll,
   setTempo, slBars, slBusy, slChosen, slCuts, slDetected, slEvery, slFadeMs, slGrid, slLoops, slMetronome, slOff, slPickBar1, slPlay, slPreRollMs, slSel,
   slCardBlock, slState, slTrack, slWriteBlock, writeOne, splitSel, stopPlay, toggleCut, toggleOff, togglePlay, writeLoops, type Track,
 } from "./slice";
@@ -156,9 +156,28 @@ function GridBar() {
       <span class="muted small sl-detected">
         {slState.value === "analyzing" ? "Analysing…" : det ? `Detected ${formatBpm(det.x100)} BPM · pulse ${Math.round(det.clarity * 100)} %` : g ? "No clear beat: set by hand" : ""}
       </span>
+      {slState.value === "ready" && <KeyChip />}
     </div>
   );
 }
+
+/** The detected key: name and Camelot code; the next best when it is nearly as likely. */
+function KeyChip() {
+  const k = slKey.value, t = slTrack.value;
+  if (k === undefined) return <span class="sl-key muted small">Key…</span>;
+  if (!k) return <span class="sl-key muted small" title="No held tones to go by (drums only, speech, noise)">No clear key</span>;
+  const close = k.score - k.alt.score < KEY_CLOSE;
+  const from = t && t.stems.length > 1 ? ` from ${t.stems[slKeyStem.value]?.label}` : "";
+  return (
+    <span class="sl-key small" title={`Key${from}: ${keyName(k)} (Camelot ${camelot(k)}), match ${k.score.toFixed(2)}; next ${keyName(k.alt)} ${k.alt.score.toFixed(2)}. Tuning ${k.cents >= 0 ? "+" : ""}${k.cents} cents from A = 440. A guess: relative keys (Am / C) and keys a fifth apart are easy to mix up.`}>
+      <b>{keyName(k)}</b> <span class="muted">{camelot(k)}</span>
+      {close && <span class="muted"> · or {keyName(k.alt)} {camelot(k.alt)}</span>}
+    </span>
+  );
+}
+
+/** The next best key is shown when its match is this close to the best one. */
+const KEY_CLOSE = 0.05;
 
 /** How the track is cut, and how the loops sound. */
 function CutBar() {

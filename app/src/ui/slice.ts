@@ -9,7 +9,7 @@
 import { computed, effect, signal } from "@preact/signals";
 import {
   BPM_MAX_X100, BPM_MIN_X100, BPM_RANGES, CARD, barFrames, computePeaks, decodeAudio, encodeWav, evenCuts, extractLoop, formatBpm, gridStem, loopFileName,
-  loopsFromCuts, padName, stemBase, stemKinds, trackName, wholeBars, uniqueName, type BeatGrid, type Loop,
+  keyName, loopsFromCuts, padName, stemBase, stemKinds, trackName, wholeBars, uniqueName, type BeatGrid, type KeyResult, type Loop,
 } from "../sp404";
 import type { GridRequest } from "./gridWorker";
 import { cardBusy, openCardDir, showSide, sideTab } from "./card";
@@ -59,6 +59,10 @@ export const slGridStem = signal(0);
 export const slMuted = signal<ReadonlySet<number>>(new Set());
 /** Stems left out of writing to the card (indices): write the voice, the instrumental or both. */
 export const slUnwritten = signal<ReadonlySet<number>>(new Set());
+/** The track's key: undefined while it is being found, null when there is no clear one. */
+export const slKey = signal<KeyResult | null | undefined>(undefined);
+/** The stem the key was found from (index into the track's stems). */
+export const slKeyStem = signal(0);
 /** What the slicer is busy with before the grid is there. */
 export const slState = signal<"idle" | "decoding" | "analyzing" | "ready">("idle");
 export const slGrid = signal<BeatGrid | null>(null);
@@ -95,6 +99,34 @@ export const slBars = computed(() => (slGrid.value && slTrack.value ? wholeBars(
 
 let worker: Worker | null = null;
 let job = 0;
+let req = 0;
+const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+
+/** A request without its id (Omit spread over each kind). */
+type Request = GridRequest extends infer R ? (R extends GridRequest ? Omit<R, "id"> : never) : never;
+
+/** One request to the analysis worker; requests may overlap (the grid of one stem, the key of another). */
+function ask<T>(msg: Request): Promise<T> {
+  if (!worker) {
+    worker = new Worker(new URL("./gridWorker.ts", import.meta.url), { type: "module" });
+    worker.onmessage = (e: MessageEvent<{ id: number; result: unknown }>) => {
+      const p = pending.get(e.data.id);
+      pending.delete(e.data.id);
+      p?.resolve(e.data.result);
+    };
+    worker.onerror = (e) => {
+      for (const p of pending.values()) p.reject(new Error(e.message || "analysis failed"));
+      pending.clear();
+      worker?.terminate();
+      worker = null;
+    };
+  }
+  const id = ++req;
+  return new Promise<T>((resolve, reject) => {
+    pending.set(id, { resolve: resolve as (v: unknown) => void, reject });
+    worker!.postMessage({ ...msg, id } as GridRequest);
+  });
+}
 let nextTrack = 1;
 
 /** Decode files: one track, or stems of one track; then find the grid. */
@@ -131,6 +163,7 @@ export async function addStems(files: File[]): Promise<void> {
     // A single track named after its file is named after the stems' track from now on.
     const name = cur.stems.length > 1 || cur.pad !== undefined ? cur.name : `${[cur.stems[0]!, ...added].map((x) => stemBase(x.name)).find(Boolean) ?? "track"}.wav`;
     setTrack({ ...cur, name, stems: labelled([...cur.stems, ...added]) });
+    void findKey();
   } catch (e) {
     notice.value = { kind: "error", text: `${files.map((f) => f.name).join(", ")}: ${(e as Error).message}` };
   }
@@ -147,6 +180,7 @@ export function removeStem(i: number): void {
   if (slGridStem.value === i) slGridStem.value = 0;
   else if (slGridStem.value > i) slGridStem.value--;
   setTrack({ ...t, stems: labelled(t.stems.filter((_, j) => j !== i)) });
+  void findKey();
 }
 
 /** Labels and tags from the stems' names, each used once; none for a single stem. */
@@ -210,6 +244,7 @@ function setTrack(t: Omit<Track, "frames">): void {
   if (frames - shortest > STEM_LENGTH_SLACK)
     notice.value = { kind: "info", text: `The stems differ in length by ${((frames - shortest) / RATE).toFixed(2)} s: are they of one track?` };
   if (slTrack.value?.id !== t.id) {
+    slKey.value = undefined;
     slMuted.value = new Set();
     slUnwritten.value = new Set();
     slGridStem.value = Math.max(0, gridStem(stemKinds(t.stems.map((x) => x.name))));
@@ -218,14 +253,32 @@ function setTrack(t: Omit<Track, "frames">): void {
 }
 
 /** The grid of one stem, from the worker. */
-function detect(stem: Stem, id: number): Promise<BeatGrid | null> {
-  const minBpm = BPM_RANGES[bpmRange.value]![0];
-  worker ??= new Worker(new URL("./gridWorker.ts", import.meta.url), { type: "module" });
-  return new Promise<BeatGrid | null>((resolve, reject) => {
-    worker!.onmessage = (e: MessageEvent<{ id: number; grid: BeatGrid | null }>) => { if (e.data.id === id) resolve(e.data.grid); };
-    worker!.onerror = (e) => reject(new Error(e.message || "analysis failed"));
-    worker!.postMessage({ id, samples: stem.samples, channels: stem.channels, minBpm } satisfies GridRequest);
-  });
+function detect(stem: Stem): Promise<BeatGrid | null> {
+  return ask<BeatGrid | null>({ kind: "grid", samples: stem.samples, channels: stem.channels, minBpm: BPM_RANGES[bpmRange.value]![0] });
+}
+
+/** How good a stem is for finding the key: the instrumental, then the instruments, the bass, the voice; drums never. */
+const KEY_RANK: Record<string, number> = { inst: 6, piano: 5, guitar: 5, other: 4, track: 3, bass: 2, vocals: 1, drums: 0 };
+const keyRank = (stem: Stem) => KEY_RANK[stem.label.replace(/_\d+$/, "").replace(/^track\d+$/, "track")] ?? 3;
+
+/** Find the open track's key from its most tonal stem (in the background; the grid does not wait for it). */
+export async function findKey(): Promise<void> {
+  const t = slTrack.value;
+  if (!t) return;
+  const i = t.stems.length > 1 ? t.stems.reduce((b, x, j) => (keyRank(x) > keyRank(t.stems[b]!) ? j : b), 0) : 0;
+  const stem = t.stems[i]!;
+  slKey.value = undefined;
+  slKeyStem.value = i;
+  try {
+    const k = await ask<KeyResult | null>({ kind: "key", samples: stem.samples, channels: stem.channels });
+    if (slTrack.value?.id !== t.id || slKeyStem.value !== i || slTrack.value.stems[i] !== stem) return; // the track or its stems changed meanwhile
+    slKey.value = k;
+    const from = t.stems.length > 1 ? ` (from ${stem.label})` : "";
+    log("info", k ? `Slicer: key ${keyName(k)}${from}, match ${k.score.toFixed(2)}, next ${keyName(k.alt)} ${k.alt.score.toFixed(2)}, tuning ${k.cents >= 0 ? "+" : ""}${k.cents} cents` : `Slicer: no clear key${from}`);
+  } catch (e) {
+    if (slTrack.value?.id === t.id) slKey.value = null;
+    log("warn", `Slicer: key: ${(e as Error).message}`);
+  }
 }
 
 /**
@@ -242,14 +295,12 @@ export async function analyze(fresh = false): Promise<void> {
   try {
     if (fresh && t.stems.length > 1 && gridStem(stemKinds(t.stems.map((x) => x.name))) < 0) {
       for (const [i, stem] of t.stems.entries()) {
-        const g = await detect(stem, id);
+        const g = await detect(stem);
         if (id !== job) return;
         if (g && (!grid || g.clarity > grid.clarity)) { grid = g; slGridStem.value = i; }
       }
-    } else grid = await detect(t.stems[Math.min(slGridStem.value, t.stems.length - 1)]!, id);
+    } else grid = await detect(t.stems[Math.min(slGridStem.value, t.stems.length - 1)]!);
   } catch (e) {
-    worker?.terminate();
-    worker = null;
     if (id !== job) return;
     slState.value = "ready";
     return void (notice.value = { kind: "error", text: `Tempo analysis: ${(e as Error).message}` });
@@ -266,6 +317,7 @@ export async function analyze(fresh = false): Promise<void> {
   setGrid(grid ?? { x100: t.fallbackX100 ?? 12000, beatsPerBar: 4, origin: 0, clarity: 0 }, true);
   // A short sample (a pad's loop): fewer bars per loop until it gives at least two.
   for (const n of [2, 1]) if (slLoops.value.length < 2) cutEvery(n);
+  if (fresh) void findKey();
 }
 
 /** Build the grid from another stem. */

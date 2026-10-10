@@ -12,5 +12,6 @@ export { md5 } from "./md5";
 export * from "./bpm";
 export * from "./grid";
 export * from "./stems";
+export * from "./key";
 export * from "./pattern";
 export * from "./patternEdit";

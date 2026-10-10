@@ -1129,3 +1129,5 @@ button, input, select { font: inherit; color: inherit; }
 .sl-stem .sl-stem-write { margin: 0 2px 0 8px; accent-color: var(--neon); cursor: pointer; }
 .sl-stem.unwritten { border-style: dashed; }
 .sl-stem.unwritten .sl-stem-name { opacity: 0.6; }
+.sl-key { padding: 3px 9px; border-radius: var(--r-ctl); border: 1px solid var(--line); background: var(--bg-sunk); white-space: nowrap; }
+.sl-key b { color: var(--selection-ink); font-weight: 700; }
