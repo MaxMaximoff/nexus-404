@@ -10,6 +10,7 @@ import {
   outputOf, replay, resetLoopGain, setLoopGain, setStemGain, slGain, slLoopGain, slClean, slCleaning, slKey, slKeyStem, type Stem, cutEvery, joinNext, nudge, openTrack, play, playheadFrame, resetGrid, selLoop, selStep, setAllOff, setBar1, setPreRoll,
   setTempo, slBars, slBusy, slChosen, slCuts, slDetected, slEvery, slFadeMs, slGrid, slLoops, slMetronome, slOff, slPickBar1, slPlay, slPreRollMs, slSel,
   slCardBlock, slState, slTrack, slWriteBlock, writeOne, splitSel, stopPlay, toggleCut, toggleOff, togglePlay, writeLoops, type Track,
+  slRestored, startOver, writtenAs,
 } from "./slice";
 import { bpmRange } from "./store";
 import { columns } from "./Waveform";
@@ -197,8 +198,15 @@ function GridBar() {
       <span class="muted small">ms</span>
       {changed && <button type="button" class="btn btn-ghost" disabled={busy} onClick={resetGrid} title={`Back to the detected grid: ${formatBpm(det!.x100)} BPM`}>Reset grid</button>}
       <span class="muted small sl-detected">
-        {slState.value === "analyzing" ? "Analysing…" : det ? `Detected ${formatBpm(det.x100)} BPM · pulse ${Math.round(det.clarity * 100)} %` : g ? "No clear beat: set by hand" : ""}
+        {slState.value === "analyzing" ? "Analysing…" : <>
+          {slRestored.value && <span class="sl-restored" title="This track was opened before: its grid, cuts and choices are as you left them">From last time · </span>}
+          {det ? `Detected ${formatBpm(det.x100)} BPM · pulse ${Math.round(det.clarity * 100)} %` : g ? "No clear beat: set by hand" : ""}
+        </>}
       </span>
+      {slRestored.value && slState.value === "ready" && (
+        <button type="button" class="btn btn-ghost" disabled={busy} onClick={startOver}
+          title="Forget the grid, the cuts and the choices kept from last time, and find the tempo and bars anew (the marks of loops already on the card stay)">Start over</button>
+      )}
       {slState.value === "ready" && <KeyChip />}
     </div>
   );
@@ -567,6 +575,7 @@ function LoopList() {
   const out = outputOf(t);
   const bytes = out ? chosen.reduce((s, l) => s + l.frames * out.channels * 2 + 44, 0) : 0;
   const silent = slSilent.value, multi = t.stems.length > 1;
+  const onCard = loops.filter((l) => writtenAs(l).length).length;
   let n = 0;
   return (
     <div class="sl-list-wrap">
@@ -574,6 +583,7 @@ function LoopList() {
         <span>
           <b>{chosen.length}</b> of {loops.length} loops chosen
           {multi && !out ? " · every stem muted" : <>{multi ? ` · ${outputText(out!)}` : ""} · {mb(bytes)}</>}
+          {onCard > 0 && <span class="sl-done"> · {onCard} already on card</span>}
         </span>
         <button class="btn btn-ghost" disabled={!!slBusy.value || chosen.length === loops.length} onClick={() => setAllOff(false)}>All</button>
         <button class="btn btn-ghost" disabled={!!slBusy.value || !chosen.length} onClick={() => setAllOff(true)}>None</button>
@@ -597,6 +607,10 @@ function LoopList() {
                     <span class="sl-mixmark" title={`Own balance: ${[...slLoopGain.value.get(l.bar)!].map(([i, v]) => `${t.stems[i]?.label} ${fmtDb(v)}`).join(", ")}`}> · own mix</span>
                   )}
                   {silent.has(l.bar) && <span class="sl-quiet" title="These stems are silent in this loop (their files are written anyway)"> · silent: {silent.get(l.bar)!.join(", ")}</span>}
+                  {(() => {
+                    const w = writtenAs(l);
+                    return w.length > 0 && <span class="sl-done" title={`Already written to the SD card${multi ? `: ${w.map((x) => x || "track").join(", ")}` : ""}`}> · on card{multi ? `: ${w.join(", ")}` : ""}</span>;
+                  })()}
                 </span>
                 <span class="sl-row-actions">
                   <button class="icon-btn" title="Listen round and round (Space)" aria-label="Listen"

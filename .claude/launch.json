@@ -8,6 +8,12 @@
       "port": 5173
     },
     {
+      "name": "app-5174",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "app", "--", "--port", "5174"],
+      "port": 5174
+    },
+    {
       "name": "poc",
       "runtimeExecutable": "python",
       "runtimeArgs": ["-m", "http.server", "8000", "--bind", "127.0.0.1"],

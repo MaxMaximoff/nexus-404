@@ -7,7 +7,7 @@
 // written: one as it is into its own subfolder (vocals/), several mixed into one file per loop
 // (mix/, or drums+bass/ for some of them), so the numbers match across subfolders.
 
-import { computed, effect, signal } from "@preact/signals";
+import { batch, computed, effect, signal } from "@preact/signals";
 import {
   BPM_MAX_X100, BPM_MIN_X100, BPM_RANGES, CARD, barFrames, computePeaks, decodeAudio, encodeWav, evenCuts, extractLoop, formatBpm, gridStem, loopFileName, mixLoop,
   MODE_NAMES, keyName, loopsFromCuts, type CleanLevel, type CleanRole, padName, stemBase, stemKinds, trackName, wholeBars, uniqueName, type BeatGrid, type KeyResult, type Loop,
@@ -94,6 +94,10 @@ export const slPickBar1 = signal(false);
 /** Writing to the card: what and how far; `cancel` stops after the file being written. */
 export const slBusy = signal<{ text: string; progress: number } | null>(null);
 let cancel = false;
+/** Loops written to the card, per output label ("" for a track of one stem): "bar:bars" of each. */
+export const slWritten = signal<ReadonlyMap<string, ReadonlySet<string>>>(new Map());
+/** The track's grid, cuts and choices came back from the browser (from an earlier session). */
+export const slRestored = signal(false);
 
 const preRoll = () => Math.round((slPreRollMs.value * RATE) / 1000);
 
@@ -152,7 +156,8 @@ export async function openTrack(files: File | File[]): Promise<void> {
     if (!stems) return;
     const name = stems.length > 1 ? `${list.map((f) => stemBase(f.name)).find(Boolean) ?? "track"}.wav` : list[0]!.name;
     setTrack({ id: nextTrack++, name, stems: labelled(stems) });
-    await analyze(true);
+    if (recall()) void findKey();
+    else await analyze(true);
   } catch (e) {
     if (id !== job) return;
     slState.value = "idle";
@@ -234,7 +239,8 @@ export async function openPad(pad: number): Promise<void> {
     const stem: Stem = { name, label: "", tag: "", samples: pcm.samples, channels, frames: pcm.frames, peaks: computePeaks(pcm.samples, channels, OVERVIEW_COLS) };
     log("info", `Slicer: pad ${padName(pad)}, ${(pcm.frames / RATE / 60).toFixed(2)} min`);
     setTrack({ id: nextTrack++, name, stems: [stem], pad, fallbackX100: bpm });
-    await analyze(true);
+    if (recall()) void findKey();
+    else await analyze(true);
   } catch (e) {
     slState.value = "idle";
     notice.value = { kind: "error", text: `${padName(pad)}: ${(e as Error).message}` };
@@ -257,6 +263,8 @@ function setTrack(t: Omit<Track, "frames">): void {
   if (slTrack.value?.id !== t.id) {
     slGain.value = new Map();
     slLoopGain.value = new Map();
+    slWritten.value = new Map();
+    slRestored.value = false;
     slKey.value = undefined;
     slMuted.value = new Set();
     slGridStem.value = Math.max(0, gridStem(stemKinds(t.stems.map((x) => x.name))));
@@ -303,6 +311,7 @@ export async function analyze(fresh = false): Promise<void> {
   if (!t) return;
   const id = ++job;
   slState.value = "analyzing";
+  slRestored.value = false;
   let grid: BeatGrid | null = null;
   try {
     if (fresh && t.stems.length > 1 && gridStem(stemKinds(t.stems.map((x) => x.name))) < 0) {
@@ -758,6 +767,7 @@ async function writeFiles(files: CardFile[], place: (t: Track, out: Output) => P
       const data = new Uint8Array(encodeWav(renderLoop(t, out, loop, fade), out.channels));
       await withDevice((d) => d.writeCardFile(`${CARD}/${targetPath(target!)}${name}`, data, (a, b) => busy(text, (i + a / b) / files.length)));
       done++;
+      if (slTrack.value?.id === t.id) markWritten(out.label, loop);
     }
   } catch (e) {
     notice.value = { kind: "error", text: `Write to card: ${(e as Error).message}` };
@@ -813,6 +823,137 @@ export async function writeOne(bar: number): Promise<void> {
 export function cancelWrite(): void {
   cancel = true;
 }
+
+const loopKey = (l: Loop) => `${l.bar}:${l.bars}`;
+
+function markWritten(label: string, l: Loop): void {
+  const next = new Map(slWritten.value);
+  next.set(label, new Set([...(next.get(label) ?? []), loopKey(l)]));
+  slWritten.value = next;
+}
+
+/** The outputs a loop has been written to the card as ("" for a track of one stem), as it is cut now. */
+export const writtenAs = (l: Loop): string[] => [...slWritten.value].filter(([, s]) => s.has(loopKey(l))).map(([label]) => label);
+
+// ---------- kept in the browser ----------
+// The work on a track (grid, cuts, choices, volumes, what went to the card) is kept in the browser
+// and comes back when the same audio is opened again, so a track can be finished another day. The
+// audio is told by its sound, not its file name: a renamed file comes back too.
+
+const KEEP_KEY = "nexus404.slicer";
+/** Tracks kept, the latest first. */
+const KEEP_MAX = 40;
+
+interface Kept {
+  /** The stems it was for (stemId). */
+  stems: string[];
+  grid: BeatGrid;
+  detected: BeatGrid | null;
+  every: number;
+  cuts: number[];
+  off: number[];
+  sel: number | null;
+  preRoll: number;
+  fade: number;
+  clean: "off" | CleanLevel;
+  gridStem: string;
+  muted: string[];
+  gain: [string, number][];
+  loopGain: [number, [string, number][]][];
+  written: [string, string[]][];
+}
+
+const ids = new WeakMap<Stem, string>();
+/** A stem told by its sound: its length and a sum over every 61st sample. */
+function stemId(x: Stem): string {
+  let id = ids.get(x);
+  if (!id) {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < x.samples.length; i += 61) h = Math.imul(h ^ (x.samples[i]! & 0xffff), 0x01000193) >>> 0;
+    ids.set(x, (id = `${x.frames}:${x.channels}:${h.toString(16)}`));
+  }
+  return id;
+}
+
+function loadKept(): Kept[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(KEEP_KEY) ?? "[]");
+    return Array.isArray(v) ? v.filter((k) => Array.isArray(k?.stems) && Array.isArray(k.cuts)) : [];
+  } catch { return []; }
+}
+
+const isGrid = (g: unknown): g is BeatGrid => {
+  const x = g as BeatGrid | null;
+  return !!x && Number.isFinite(x.origin) && x.origin >= 0 && x.x100 >= BPM_MIN_X100 && x.x100 <= BPM_MAX_X100 && x.beatsPerBar > 0;
+};
+
+/** The open track's work back from the browser, when it was kept; true when it was. */
+function recall(): boolean {
+  const t = slTrack.value;
+  if (!t) return false;
+  const now = t.stems.map(stemId), at = (id: string) => now.indexOf(id);
+  // Kept tracks never share a stem (a save replaces those that do), so one at most matches.
+  const k = loadKept().find((x) => x.stems.some((s) => now.includes(s)));
+  if (!k || !isGrid(k.grid)) return false;
+  const byStem = (pairs: [string, number][]) => new Map(pairs.map(([id, v]) => [at(id), v] as [number, number]).filter(([i]) => i >= 0));
+  batch(() => {
+    slDetected.value = isGrid(k.detected) ? k.detected : null;
+    slEvery.value = k.every || DEFAULT_EVERY;
+    slPreRollMs.value = k.preRoll ?? 0;
+    slFadeMs.value = k.fade ?? 1;
+    if (t.stems.length > 1) slClean.value = k.clean ?? "off";
+    if (at(k.gridStem) >= 0) slGridStem.value = at(k.gridStem);
+    slMuted.value = new Set((k.muted ?? []).map(at).filter((i) => i >= 0));
+    slGain.value = byStem(k.gain ?? []);
+    slLoopGain.value = new Map((k.loopGain ?? []).map(([bar, m]) => [bar, byStem(m)] as [number, ReadonlyMap<number, number>]).filter(([, m]) => m.size));
+    slWritten.value = new Map((k.written ?? []).map(([label, s]) => [label, new Set(s)]));
+    slGrid.value = k.grid;
+    slCuts.value = new Set(k.cuts);
+    slOff.value = new Set(k.off ?? []);
+    slSel.value = k.sel ?? null;
+    keepInside();
+    if (slSel.value === null) slSel.value = slLoops.value.find((l) => l.bar >= 1)?.bar ?? slLoops.value[0]?.bar ?? null;
+    slRestored.value = true;
+    slState.value = "ready";
+  });
+  const written = [...slWritten.value.values()].reduce((n, s) => n + s.size, 0);
+  log("info", `Slicer: grid and cuts from last time, ${formatBpm(k.grid.x100)} BPM, ${slChosen.value.length} of ${slLoops.value.length} loops chosen${written ? `, ${written} written before` : ""}`);
+  return true;
+}
+
+/** Forget what was kept and find the grid anew, as for a track never opened. */
+export function startOver(): void {
+  const t = slTrack.value;
+  if (!t || slBusy.value) return;
+  stopPlay();
+  slGain.value = new Map();
+  slLoopGain.value = new Map();
+  slMuted.value = new Set();
+  slGridStem.value = Math.max(0, gridStem(stemKinds(t.stems.map((x) => x.name))));
+  void analyze(true);
+}
+
+// Keep the open track's work in the browser on every change.
+effect(() => {
+  const t = slTrack.value, g = slGrid.value;
+  if (!t || !g || slState.value !== "ready") return;
+  const now = t.stems.map(stemId), id = (i: number) => now[i]!;
+  const pairs = (m: ReadonlyMap<number, number>) => [...m].filter(([i]) => i < now.length).map(([i, v]) => [id(i), v] as [string, number]);
+  const k: Kept = {
+    stems: now, grid: g, detected: slDetected.value, every: slEvery.value,
+    cuts: [...slCuts.value], off: [...slOff.value], sel: slSel.value,
+    preRoll: slPreRollMs.value, fade: slFadeMs.value, clean: slClean.value,
+    gridStem: id(Math.min(slGridStem.value, now.length - 1)),
+    muted: [...slMuted.value].filter((i) => i < now.length).map(id),
+    gain: pairs(slGain.value),
+    loopGain: [...slLoopGain.value].map(([bar, m]) => [bar, pairs(m)] as [number, [string, number][]]),
+    written: [...slWritten.value].map(([label, s]) => [label, [...s]] as [string, string[]]),
+  };
+  try {
+    const rest = loadKept().filter((x) => !x.stems.some((s) => now.includes(s)));
+    localStorage.setItem(KEEP_KEY, JSON.stringify([k, ...rest].slice(0, KEEP_MAX)));
+  } catch { /* storage blocked or full: kept in memory only */ }
+});
 
 // Listening stops when the slicer leaves the screen (after `source` above exists: the effect runs at once).
 effect(() => { if (mainView.value !== "slicer") stopPlay(); });

@@ -1160,3 +1160,5 @@ button, input, select { font: inherit; color: inherit; }
 .sl-loopmix-stem { display: inline-flex; align-items: center; gap: 2px; font-weight: 600; color: var(--text-2); }
 .sl-loopmix-stem.muted { opacity: 0.5; text-decoration: line-through; }
 .sl-mixmark { color: var(--selection-ink); }
+.sl-done { color: var(--ok); }
+.sl-restored { color: var(--selection-ink); }
