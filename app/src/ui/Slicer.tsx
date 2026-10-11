@@ -119,26 +119,13 @@ function LoopMix({ track }: { track: Track }) {
   );
 }
 
-/** The track's stems: listen to each or not, which one the grid comes from, take one out, add more. */
+/** The track's stems as a whole: the clean-up, add more (each stem's own controls sit at its lane). */
 function StemBar({ track }: { track: Track }) {
   const busy = slState.value !== "ready" || !!slBusy.value, multi = track.stems.length > 1;
   const input = useRef<HTMLInputElement>(null);
   return (
     <div class="sl-bar sl-stems">
       <span class="muted">{multi ? "Stems" : "Track"}</span>
-      {multi && track.stems.map((x, i) => {
-        const muted = slMuted.value.has(i), grid = slGridStem.value === i;
-        return (
-          <span key={`${i}:${x.name}`} class={`sl-stem ${muted ? "muted" : ""}`} title={x.name}>
-            <button type="button" class="sl-stem-name" aria-pressed={!muted} onClick={() => toggleMute(i)}
-              title={`${x.name}: ${muted ? "muted — not heard, not written; click to bring it back" : "heard and written; click to mute it (several heard: written as one mix)"}`}>{x.label}</button>
-            <button type="button" class={`sl-stem-grid ${grid ? "on" : ""}`} aria-pressed={grid} disabled={busy || grid}
-              onClick={() => setGridStem(i)} title={grid ? "The grid is built from this stem" : "Build the grid from this stem"}>◆</button>
-            <Gain value={slGain.value.get(i) ?? 0} min={-24} max={6} label={`${x.label} volume, every loop`} onSet={(v) => setStemGain(i, v)} />
-            <button type="button" class="sl-stem-x" disabled={busy} onClick={() => removeStem(i)} aria-label={`Remove ${x.label}`} title="Take this stem out"><IconX /></button>
-          </span>
-        );
-      })}
       {!multi && <span class="small sl-stem-one" title={track.stems[0]!.name}>{track.stems[0]!.name}</span>}
       {multi && (
         <label class="sl-field sl-clean" title={"Clean-up of separation leftovers, heard and written (the stems on disk stay as they are):\n• vocals: low cut, de-esser on the \u2018s\u2019 band, a soft cut of the top;\n• instrumental, drums, other: the \u2018s\u2019 band ducked only while the vocals have an \u2018s\u2019 (their leftovers), the same soft top cut;\n• bass: as it is."}>
@@ -314,6 +301,34 @@ function mergeChannels(chans: Float32Array[]): Float32Array {
   return out;
 }
 
+/** The column at the left of the wave, a header per stem lane: mute, the grid's stem, volume, take it out. */
+function StemLanes({ track }: { track: Track }) {
+  const busy = slState.value !== "ready" || !!slBusy.value;
+  return (
+    <div class="sl-lanes">
+      <div class="sl-lanes-top" />
+      {track.stems.map((x, i) => {
+        const muted = slMuted.value.has(i), grid = slGridStem.value === i;
+        return (
+          <div key={`${i}:${x.name}`} class={`sl-lane ${muted ? "muted" : ""}`}>
+            <div class="sl-lane-row">
+              <span class="sl-lane-name" title={x.name}>{x.label}</span>
+              <button type="button" class={`sl-lane-grid ${grid ? "on" : ""}`} aria-pressed={grid} disabled={busy || grid}
+                onClick={() => setGridStem(i)} title={grid ? "The grid is built from this stem" : "Build the grid from this stem"}>◆</button>
+              <button type="button" class="sl-lane-x" disabled={busy} onClick={() => removeStem(i)} aria-label={`Remove ${x.label}`} title="Take this stem out"><IconX /></button>
+            </div>
+            <div class="sl-lane-row">
+              <button type="button" class={`sl-lane-mute ${muted ? "on" : ""}`} aria-pressed={muted} onClick={() => toggleMute(i)}
+                title={muted ? `${x.label} is muted: not heard, not written; click to bring it back` : `Mute ${x.label} (several heard: written as one mix)`}>M</button>
+              <Gain value={slGain.value.get(i) ?? 0} min={-24} max={6} label={`${x.label} volume, every loop`} onSet={(v) => setStemGain(i, v)} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 const LINE_GRAB_PX = 8;
 
 /** The track's wave with the bar grid, the cuts and the loops; click a bar line to cut, a loop to hear it. */
@@ -362,8 +377,8 @@ function SliceWave({ track }: { track: Track }) {
   const hue = () => getComputedStyle(base.current!).getPropertyValue("--ah").trim() || "180";
 
   // The wave: only when the view, the size or the stems change. One stem: a lane per channel;
-  // several: a lane per stem (channels together), its label at the left, dimmer when muted.
-  const muted = slMuted.value, gridIdx = slGridStem.value, multi = track.stems.length > 1;
+  // several: a lane per stem (channels together), dimmer when muted; its header is in the column at the left.
+  const muted = slMuted.value, multi = track.stems.length > 1;
   useEffect(() => {
     const x = prep(base.current!), ah = hue(), h = size.h;
     const lanes: { p: Float32Array; x0: number; cols: number; stem: number }[] = [];
@@ -388,17 +403,9 @@ function SliceWave({ track }: { track: Track }) {
       x.closePath(); x.fill(); x.stroke();
     });
     if (!multi) return;
-    x.font = "600 10.5px 'Inter Variable', system-ui, sans-serif";
-    track.stems.forEach((stem, i) => {
-      const top = 18 + laneH * i;
-      if (i) { x.fillStyle = "rgba(255, 255, 255, 0.08)"; x.fillRect(0, Math.round(top), size.w, 1); }
-      const label = `${stem.label}${i === gridIdx ? " ◆" : ""}${muted.has(i) ? " · muted" : ""}`;
-      x.fillStyle = "rgba(9, 13, 18, 0.75)";
-      x.fillRect(4, top + 3, x.measureText(label).width + 8, 15);
-      x.fillStyle = muted.has(i) ? "rgba(160, 175, 190, 0.6)" : `hsl(${ah} 90% 78%)`;
-      x.fillText(label, 8, top + 14);
-    });
-  }, [track, view.from, view.to, size.w, size.h, muted, gridIdx]);
+    x.fillStyle = "rgba(255, 255, 255, 0.08)";
+    for (let i = 1; i < track.stems.length; i++) x.fillRect(0, Math.round(18 + laneH * i), size.w, 1);
+  }, [track, view.from, view.to, size.w, size.h, muted]);
 
   // The grid, the cuts and the loops on top.
   useEffect(() => {
@@ -517,41 +524,44 @@ function SliceWave({ track }: { track: Track }) {
   return (
     <div class="wave sl-wave-wrap">
       <div class="sl-wave" style={multi ? { height: `${Math.max(210, 18 + track.stems.length * 64)}px` } : undefined}>
-        <canvas ref={base} class="sl-canvas" />
-        <canvas ref={top} class="sl-canvas" style={{ cursor }} role="img"
-          aria-label="Track waveform with bars: click a bar line to add or remove a cut, click a loop to hear it; wheel to zoom, drag to move"
-          onPointerDown={(e) => {
-            drag.current = { x: e.clientX, view, moved: false };
-            try { (e.target as HTMLCanvasElement).setPointerCapture(e.pointerId); } catch { /* gone */ }
-          }}
-          onPointerMove={(e) => {
-            const d = drag.current;
-            if (d) {
-              if (!d.moved && Math.abs(e.clientX - d.x) < 4) return;
-              d.moved = true;
-              const s = d.view.to - d.view.from;
-              setView(clamp(d.view.from - ((e.clientX - d.x) / size.w) * s, s));
-              return;
-            }
-            const px = pos(e);
-            setHover({ frame: frameAt(px), x: px });
-          }}
-          onPointerUp={(e) => {
-            const d = drag.current;
-            drag.current = null;
-            if (d && !d.moved) click(pos(e));
-          }}
-          onPointerCancel={() => (drag.current = null)}
-          onPointerLeave={() => setHover(null)}
-          onWheel={(e) => {
-            e.preventDefault();
-            if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
-              const d = e.shiftKey ? e.deltaY || e.deltaX : e.deltaX;
-              return setView(clamp(view.from + (d / size.w) * span, span));
-            }
-            zoom(frameAt(pos(e)), Math.exp(e.deltaY * 0.0015));
-          }} />
-        <div ref={head} class="sl-head" />
+        {multi && <StemLanes track={track} />}
+        <div class="sl-wave-area">
+          <canvas ref={base} class="sl-canvas" />
+          <canvas ref={top} class="sl-canvas" style={{ cursor }} role="img"
+            aria-label="Track waveform with bars: click a bar line to add or remove a cut, click a loop to hear it; wheel to zoom, drag to move"
+            onPointerDown={(e) => {
+              drag.current = { x: e.clientX, view, moved: false };
+              try { (e.target as HTMLCanvasElement).setPointerCapture(e.pointerId); } catch { /* gone */ }
+            }}
+            onPointerMove={(e) => {
+              const d = drag.current;
+              if (d) {
+                if (!d.moved && Math.abs(e.clientX - d.x) < 4) return;
+                d.moved = true;
+                const s = d.view.to - d.view.from;
+                setView(clamp(d.view.from - ((e.clientX - d.x) / size.w) * s, s));
+                return;
+              }
+              const px = pos(e);
+              setHover({ frame: frameAt(px), x: px });
+            }}
+            onPointerUp={(e) => {
+              const d = drag.current;
+              drag.current = null;
+              if (d && !d.moved) click(pos(e));
+            }}
+            onPointerCancel={() => (drag.current = null)}
+            onPointerLeave={() => setHover(null)}
+            onWheel={(e) => {
+              e.preventDefault();
+              if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+                const d = e.shiftKey ? e.deltaY || e.deltaX : e.deltaX;
+                return setView(clamp(view.from + (d / size.w) * span, span));
+              }
+              zoom(frameAt(pos(e)), Math.exp(e.deltaY * 0.0015));
+            }} />
+          <div ref={head} class="sl-head" />
+        </div>
       </div>
       <div class="wave-tools">
         <button class="btn btn-ghost" title="Zoom out" disabled={span >= track.frames} onClick={() => zoom(view.from + span / 2, 2)}>−</button>
