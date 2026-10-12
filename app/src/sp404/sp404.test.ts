@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   CH_CONTROL, CH_FILE, FileReq, FrameDecoder, O_CREAT_TRUNC_RDWR, SP404Device, assignSampleBlock, bpmFromFileName,
   padSpeed, padFieldOf, bpmFromLength, trimAndNormalize, floatBlocksToPcm, encodeWav, decodeAudio, computePeaks, computeEnvelope, findSound, ENVELOPE_BLOCK, encodeLong, encodeShort, makeGuard, md5, parseBpmInput, parseFileReply, parsePadBlock, parseSmpHeader,
-  samplePath, septDec, septEnc, smpHeader, buildSmp, SampleUploader, newJob, type ImportJob, smpToPcm, deviceErrorText, frameToByte, remotePath, type SP404Transport,
+  samplePath, septDec, septEnc, smpHeader, buildSmp, SampleUploader, newJob, type ImportJob, padLayout, groupSampleName, smpToPcm, deviceErrorText, frameToByte, remotePath, type SP404Transport,
 } from "./index";
 
 const hex = (a: ArrayLike<number>) => Buffer.from(Uint8Array.from(a)).toString("hex");
@@ -403,7 +403,7 @@ describe("device against a scripted SP", () => {
         const len = second.u32, data = p.subarray(15, 15 + len), f = files.get(open!.path)!;
         const n = new Uint8Array(Math.max(f.length, open!.pos + len)); n.set(f); n.set(data, open!.pos);
         files.set(open!.path, n); open!.pos += len;
-        if (second.high & 4) { const done = (globalThis as any).__batch + len; (globalThis as any).__batch = 0; status(done); } else (globalThis as any).__batch = ((globalThis as any).__batch ?? 0) + len;
+        if (second.high & 4) { const done = ((globalThis as any).__batch ?? 0) + len; (globalThis as any).__batch = 0; status(done); } else (globalThis as any).__batch = ((globalThis as any).__batch ?? 0) + len;
       } else if (op === 0x03) status(0);
       else if (op === 0x12 && dirs.has(path)) {
         const d = new Uint8Array(8); new DataView(d.buffer).setUint32(0, 0x41ff, true);
@@ -512,6 +512,25 @@ describe("device against a scripted SP", () => {
     expect(await up.run(4, jobs)).toBe(4);
     expect(sp.params.filter(([id]) => id === 0x6f)).toEqual([[0x6f, 33, 9600], [0x6f, 34, 12000], [0x6f, 35, 9000], [0x6f, 36, 9000]]);
     expect(jobs.map((j) => j.bpmFrom)).toEqual(["name", "detected", "field", "field"]);
+  });
+  it("imports the slicer's groups onto pads in columns (A1, A5… then bank B), named after the pad, with the track's BPM", async () => {
+    const sp = fakeSp();
+    const dev = new SP404Device(sp.t);
+    await dev.exclusive((d) => d.importSmp(4, 1, buildSmp(new Int16Array(4), 2), "taken")); // A2: someone else's sample
+    const up = new SampleUploader(dev, { onJob: () => {}, onPad: () => {} }, () => {});
+    const cells = padLayout([0, 3], 5, 0)!; // vocal and others, five loops
+    const slugs = ["vocal", "drums", "bass", "others"];
+    const jobs = cells.map((c) => newJob(clickWav(`${groupSampleName(slugs[c.group]!, c.pad)}.wav`, 93, 1), c.pad, 9347, null, null, "source"));
+    expect(await up.run(4, jobs)).toBe(10);
+    const blocks = await dev.exclusive(async (d) => { const out = []; for (const c of cells) out.push(await d.padBlock(c.pad)); return out; });
+    expect(blocks.map((b) => b.name)).toEqual(["vocal_A1", "others_A4", "vocal_A5", "others_A8", "vocal_A9", "others_A12", "vocal_A13", "others_A16", "vocal_B1", "others_B4"]);
+    expect(sp.params.filter(([id]) => id === 0x6f).map(([, , v]) => v)).toEqual(Array(10).fill(9347));
+    expect((await dev.exclusive((d) => d.padBlock(1))).name).toBe("taken"); // the column left out is not touched
+    // A pad that is not empty is refused, and the rest still go.
+    const again = [newJob(clickWav("vocal_A1.wav", 93, 1), 0, 9347, null, null, "source"), newJob(clickWav("vocal_B5.wav", 93, 1), 20, 9347, null, null, "source")];
+    expect(await up.run(4, again)).toBe(1);
+    expect(again.map((j) => j.state)).toEqual(["error", "done"]);
+    expect(again[0]!.message).toMatch(/occupied/);
   });
 
   async function loaded() {

@@ -6,17 +6,21 @@
 // four…): one grid (from the stem that carries the beat) and the same cuts. The ticked stems are
 // written: one as it is into its own subfolder (vocals/), several mixed into one file per loop
 // (mix/, or drums+bass/ for some of them), so the numbers match across subfolders.
+// Or the stems go in groups (vocal, drums, bass, others), each mixed into one sound per loop and
+// laid out on pads, a group a column and a loop a row (sp404/groups.ts), and/or written to the
+// card, a subfolder per group, with the pads' names (drums/drums_A2.wav).
 
 import { batch, computed, effect, signal } from "@preact/signals";
 import {
   BPM_MAX_X100, BPM_MIN_X100, BPM_RANGES, CARD, barFrames, computePeaks, decodeAudio, encodeWav, evenCuts, extractLoop, formatBpm, gridStem, loopFileName, mixLoop,
   keyFullName, keyName, loopsFromCuts, type CleanLevel, type CleanRole, padName, stemBase, stemKinds, trackName, wholeBars, uniqueName, type BeatGrid, type Loop,
+  BANKS, DEFAULT_GROUP_NAMES, GROUP_COUNT, banksFor, banksText, defaultGroups, groupFolders, groupSampleName, groupSlugs, padLayout, type Cell, type StemFamily,
 } from "../sp404";
 import type { EssentiaKey, EssentiaKeyAnalysis } from "../sp404/essentiaKey";
 import type { GridReply, GridRequest } from "./gridWorker";
 import { cardBusy, openCardDir, showSide, sideTab } from "./card";
 import { mainView, showView } from "./Patterns";
-import { bpmRange, conn, demo, log, notice, padPcm, pads, withDevice, writeBlockReason } from "./store";
+import { bpmRange, conn, demo, importToPads, importing, log, notice, padPcm, pads, placeDemoPad, project, selectedBank, withDevice, writeBlockReason } from "./store";
 
 const RATE = 48000;
 const MAX_MINUTES = 15;
@@ -33,6 +37,8 @@ export interface Stem {
   /** Its kind as a card subfolder ("vocals", "inst"…) and a short tag for file names; "" for a track of one stem. */
   label: string;
   tag: string;
+  /** What it is (its group on pads starts from it); "others" for a track of one stem. */
+  family: StemFamily;
   samples: Int16Array;
   channels: 1 | 2;
   frames: number;
@@ -101,6 +107,15 @@ let cancel = false;
 export const slWritten = signal<ReadonlyMap<string, ReadonlySet<string>>>(new Map());
 /** The track's grid, cuts and choices came back from the browser (from an earlier session). */
 export const slRestored = signal(false);
+/** Each stem's group on pads (its column, 0–3), by stem index; -1: in none. */
+export const slStemGroup = signal<readonly number[]>([]);
+/** The groups' names, a column each. */
+export const slGroupNames = signal<readonly string[]>(DEFAULT_GROUP_NAMES);
+/** Where the groups' loops go: onto pads, into the track's folder on the card, or both. */
+export const slToPads = signal(true);
+export const slToCard = signal(true);
+/** The bank the groups' first loops go to; the fifth loop and on go on in the next banks. */
+export const slStartBank = signal(0);
 
 const preRoll = () => Math.round((slPreRollMs.value * RATE) / 1000);
 
@@ -180,7 +195,11 @@ export async function addStems(files: File[]): Promise<void> {
     const cur = slTrack.value!;
     // A single track named after its file is named after the stems' track from now on.
     const name = cur.stems.length > 1 || cur.pad !== undefined ? cur.name : `${[cur.stems[0]!, ...added].map((x) => stemBase(x.name)).find(Boolean) ?? "track"}.wav`;
+    const groups = slStemGroup.value;
     setTrack({ ...cur, name, stems: labelled([...cur.stems, ...added]) });
+    // A track of one stem had no kinds: then every stem gets its group from its kind now.
+    const keep = cur.stems.length > 1;
+    slStemGroup.value = slTrack.value!.stems.map((x, i) => (keep && i < groups.length ? groups[i]! : defaultGroups([x.family])[0]!));
     void findKey();
   } catch (e) {
     notice.value = { kind: "error", text: `${files.map((f) => f.name).join(", ")}: ${(e as Error).message}` };
@@ -197,6 +216,7 @@ export function removeStem(i: number): void {
   const shift = (m: ReadonlyMap<number, number>) => new Map([...m].filter(([j]) => j !== i).map(([j, v]) => [j > i ? j - 1 : j, v] as [number, number]));
   slGain.value = shift(slGain.value);
   slLoopGain.value = new Map([...slLoopGain.value].map(([bar, m]) => [bar, shift(m)] as [number, ReadonlyMap<number, number>]));
+  slStemGroup.value = slStemGroup.value.filter((_, j) => j !== i);
   if (slGridStem.value === i) slGridStem.value = 0;
   else if (slGridStem.value > i) slGridStem.value--;
   setTrack({ ...t, stems: labelled(t.stems.filter((_, j) => j !== i)) });
@@ -205,9 +225,9 @@ export function removeStem(i: number): void {
 
 /** Labels and tags from the stems' names, each used once; none for a single stem. */
 function labelled(stems: Stem[]): Stem[] {
-  if (stems.length < 2) return stems.map((x) => ({ ...x, label: "", tag: "" }));
+  if (stems.length < 2) return stems.map((x) => ({ ...x, label: "", tag: "", family: "others" as const }));
   const kinds = stemKinds(stems.map((x) => x.name));
-  return stems.map((x, i) => ({ ...x, label: kinds[i]!.label, tag: kinds[i]!.tag }));
+  return stems.map((x, i) => ({ ...x, label: kinds[i]!.label, tag: kinds[i]!.tag, family: kinds[i]!.family }));
 }
 
 /** Decode files into stems; null when `stale()` turns true meanwhile. */
@@ -216,7 +236,7 @@ async function decodeStems(files: File[], stale: () => boolean): Promise<Stem[] 
   for (const f of files) {
     const a = await decodeAudio(f);
     if (stale()) return null;
-    out.push({ name: f.name, label: "", tag: "", samples: a.samples, channels: a.channels, frames: a.frames, peaks: computePeaks(a.samples, a.channels, OVERVIEW_COLS) });
+    out.push({ name: f.name, label: "", tag: "", family: "others", samples: a.samples, channels: a.channels, frames: a.frames, peaks: computePeaks(a.samples, a.channels, OVERVIEW_COLS) });
     log("info", `Slicer: ${f.name}, ${a.note}, ${(a.frames / RATE / 60).toFixed(2)} min`);
   }
   return out;
@@ -240,7 +260,7 @@ export async function openPad(pad: number): Promise<void> {
   try {
     const bpm = b.bpmX100 >= BPM_MIN_X100 && b.bpmX100 <= BPM_MAX_X100 ? b.bpmX100 : undefined;
     const name = `${b.name || padName(pad)}.wav`, channels = pcm.channels === 1 ? 1 : 2;
-    const stem: Stem = { name, label: "", tag: "", samples: pcm.samples, channels, frames: pcm.frames, peaks: computePeaks(pcm.samples, channels, OVERVIEW_COLS) };
+    const stem: Stem = { name, label: "", tag: "", family: "others", samples: pcm.samples, channels, frames: pcm.frames, peaks: computePeaks(pcm.samples, channels, OVERVIEW_COLS) };
     log("info", `Slicer: pad ${padName(pad)}, ${(pcm.frames / RATE / 60).toFixed(2)} min`);
     setTrack({ id: nextTrack++, name, stems: [stem], pad, fallbackX100: bpm });
     if (recall()) void findKey();
@@ -273,6 +293,9 @@ function setTrack(t: Omit<Track, "frames">): void {
     slKeyError.value = null;
     slMuted.value = new Set();
     slGridStem.value = Math.max(0, gridStem(stemKinds(t.stems.map((x) => x.name))));
+    slStemGroup.value = defaultGroups(t.stems.map((x) => x.family));
+    slGroupNames.value = DEFAULT_GROUP_NAMES;
+    slStartBank.value = selectedBank.value;
   }
   slTrack.value = { ...t, frames };
 }
@@ -283,8 +306,8 @@ function detect(stem: Stem): Promise<BeatGrid | null> {
 }
 
 /** How good a stem is for finding the key: the instrumental, then the instruments, the bass, the voice; drums never. */
-const KEY_RANK: Record<string, number> = { inst: 6, piano: 5, guitar: 5, other: 4, track: 3, bass: 2, vocals: 1, drums: 0 };
-const keyRank = (stem: Stem) => KEY_RANK[stem.label.replace(/_\d+$/, "").replace(/^track\d+$/, "track")] ?? 3;
+const KEY_RANK: Record<string, number> = { inst: 6, piano: 5, guitar: 5, synth: 5, strings: 5, other: 4, brass: 4, track: 3, bass: 2, vocals: 1, backvox: 1, fx: 1 };
+const keyRank = (stem: Stem) => (stem.family === "drums" ? 0 : KEY_RANK[stem.label.replace(/_\d+$/, "").replace(/^track\d+$/, "track")] ?? 3);
 
 let keyJob = 0;
 
@@ -437,8 +460,7 @@ function rms(stem: Stem, l: Loop): number {
 // ---------- clean-up of stems ----------
 
 /** What the clean-up does to a stem: the voice is de-essed, the music ducked by the voice's "s", the bass left alone. */
-export const cleanRole = (stem: Stem): CleanRole =>
-  stem.label.startsWith("vocals") ? "voice" : stem.label.startsWith("bass") ? "none" : "music";
+export const cleanRole = (stem: Stem): CleanRole => (stem.family === "vocal" ? "voice" : stem.family === "bass" ? "none" : "music");
 
 /** The sound of a stem as heard and written: cleaned when the clean-up is on and ready. */
 export function samplesOf(stem: Stem): Int16Array {
@@ -858,6 +880,166 @@ function markWritten(label: string, l: Loop): void {
 /** The outputs a loop has been written to the card as ("" for a track of one stem), as it is cut now. */
 export const writtenAs = (l: Loop): string[] => [...slWritten.value].filter(([, s]) => s.has(loopKey(l))).map(([label]) => label);
 
+// ---------- groups on pads ----------
+
+/** Stem `i` into group `g` (a column, 0–3), or out of every group (-1). */
+export function setStemGroup(i: number, g: number): void {
+  const next = [...slStemGroup.value];
+  next[i] = g;
+  slStemGroup.value = next;
+}
+
+/** Stem `i` into the next group: vocal → drums → bass → others → none → vocal. */
+export function cycleStemGroup(i: number): void {
+  const g = slStemGroup.value[i] ?? -1;
+  setStemGroup(i, g + 1 >= GROUP_COUNT ? -1 : g + 1);
+}
+
+export function renameGroup(g: number, name: string): void {
+  const next = [...slGroupNames.value];
+  next[g] = name;
+  slGroupNames.value = next;
+}
+
+/** A group as written: its column, its name in file names (`tag` = `label`), its stems mixed. */
+export interface GroupOutput extends Output { col: number }
+
+/** The groups that have a stem heard (muted stems are left out, as everywhere), by column. */
+export function groupOutputs(t: Track): GroupOutput[] {
+  const slugs = groupSlugs(slGroupNames.value), out: GroupOutput[] = [];
+  for (let col = 0; col < GROUP_COUNT; col++) {
+    const stems = t.stems.filter((_, i) => slStemGroup.value[i] === col && !slMuted.value.has(i));
+    if (stems.length) out.push({ col, label: slugs[col]!, tag: slugs[col]!, stems, channels: stems.some((x) => x.channels === 2) ? 2 : 1 });
+  }
+  return out;
+}
+
+/** Where the chosen loops of the groups go on pads, row by row; null when they run past bank J (or no stems). */
+export const slLayout = computed<Cell[] | null>(() => {
+  const t = slTrack.value;
+  return t && t.stems.length > 1 ? padLayout(groupOutputs(t).map((o) => o.col), slChosen.value.length, slStartBank.value) : null;
+});
+
+/** Pads of the layout that cannot take a loop now: a sample on them, or their bank protected. */
+export const slPadConflicts = computed<number[]>(() =>
+  (slLayout.value ?? []).map((c) => c.pad).filter((p) => pads.value[p]?.size || project.value?.banks[p >> 4]?.protected));
+
+/** The first bank from which the layout lies on free pads only; null when there is none. */
+export const slFreeStart = computed<number | null>(() => {
+  const t = slTrack.value;
+  if (!t || t.stems.length < 2) return null;
+  const cols = groupOutputs(t).map((o) => o.col), n = slChosen.value.length;
+  for (let b = 0; b < BANKS.length; b++) {
+    const cells = padLayout(cols, n, b);
+    if (cells?.every((c) => !pads.value[c.pad]?.size && !project.value?.banks[c.pad >> 4]?.protected)) return b;
+  }
+  return null;
+});
+
+/** Why the groups cannot be written now, or null. */
+export const slGroupBlock = computed<string | null>(() => {
+  const t = slTrack.value, toPads = slToPads.value, toCard = slToCard.value;
+  if (!t || t.stems.length < 2) return "Groups are for a track of several stems";
+  if (!toPads && !toCard) return "Tick pads, the SD card or both";
+  if (conn.value !== "ready") return "SP is not connected";
+  if (demo.value && toCard) return "Demo: no SD card to write to — untick SD card";
+  if (!demo.value && writeBlockReason.value) return writeBlockReason.value;
+  if (slBusy.value) return "Writing — wait for it to finish";
+  if (toCard && cardBusy.value) return "Card is busy — wait for the operation to finish";
+  if (toPads && importing.value) return "Imports are running — wait for them to finish";
+  if (slCleaning.value) return "Cleaning the stems — a moment";
+  if (!groupOutputs(t).length) return "No stem in a group is heard: put stems in groups, or unmute them";
+  const n = slChosen.value.length, start = slStartBank.value;
+  if (!n) return "No loops chosen";
+  if (!slLayout.value) return `${n} loops take ${banksFor(n)} banks: from bank ${BANKS[start]} there ${BANKS.length - start === 1 ? "is 1" : `are ${BANKS.length - start}`} — start earlier or choose fewer loops`;
+  const busy = toPads ? slPadConflicts.value : [];
+  if (busy.length) return `Not free: ${busy.slice(0, 6).map(padName).join(", ")}${busy.length > 6 ? ` and ${busy.length - 6} more` : ""} — clear them or start from another bank`;
+  return null;
+});
+
+/**
+ * The track's folder on the card (made when missing) and a subfolder per group in it, made; one
+ * `_2`, `_3`… for all of them when any is taken.
+ */
+function groupTargets(t: Track, outs: GroupOutput[]): Promise<{ folder: string; subs: string[] }> {
+  return withDevice(async (d) => {
+    const root = `${CARD}/IMPORT`, base = trackName(t.name);
+    const folder = (await d.listDir(root)).map((e) => e.name).find((n) => n.toLowerCase() === base.toLowerCase()) ?? base;
+    if (!(await d.stat(`${root}/${folder}`))) await d.mkdirCard(`${root}/${folder}`);
+    const subs = groupFolders(outs.map((o) => o.tag), (await d.listDir(`${root}/${folder}`)).map((e) => e.name));
+    for (const s of subs) await d.mkdirCard(`${root}/${folder}/${s}`);
+    return { folder, subs };
+  });
+}
+
+/** Demo mode: the loop on its pad as the SP would show it after the import. */
+async function demoImport(pad: number, name: string, pcm: Int16Array, channels: 1 | 2, x100: number): Promise<void> {
+  const { demoPadBlock } = await import("./demo");
+  placeDemoPad(demoPadBlock(pad, name, pcm.length / channels / RATE, channels === 2, x100 / 100), pcm, channels);
+  await new Promise((r) => setTimeout(r, 60)); // the progress shows
+}
+
+/**
+ * The chosen loops of every group onto their pads (slLayout) with the track's BPM, and/or as WAV
+ * files into the track's folder on the card, a subfolder per group; named after the pad
+ * (`drums_A2`). Row by row: "Stop" ends after the file being written and leaves whole rows.
+ */
+export async function writeGroups(): Promise<void> {
+  const t = slTrack.value, g = slGrid.value, loops = slChosen.value, cells = slLayout.value;
+  if (!t || !g || !cells || slGroupBlock.value) return;
+  const outs = groupOutputs(t), toPads = slToPads.value, toCard = slToCard.value, start = slStartBank.value;
+  stopPlay();
+  cancel = false;
+  const fade = Math.round((slFadeMs.value * RATE) / 1000);
+  const busy = (text: string, progress: number) => {
+    slBusy.value = { text, progress };
+    if (toCard) cardBusy.value = { text, progress };
+  };
+  let target: { folder: string; subs: string[] } | null = null, done = 0;
+  try {
+    if (toCard) {
+      busy("Preparing folders…", 0);
+      target = await groupTargets(t, outs);
+    }
+    for (const [i, cell] of cells.entries()) {
+      if (cancel) break;
+      const k = outs.findIndex((o) => o.col === cell.group), out = outs[k]!, loop = loops[cell.loop]!;
+      const name = groupSampleName(out.tag, cell.pad), text = `${i + 1} of ${cells.length}: ${name}`;
+      busy(text, i / cells.length);
+      const pcm = renderLoop(t, out, loop, fade), wav = encodeWav(pcm, out.channels);
+      if (toPads) {
+        if (demo.value) await demoImport(cell.pad, name, pcm, out.channels, g.x100);
+        else if (!(await importToPads([{ file: new File([wav], `${name}.wav`, { type: "audio/wav" }), pad: cell.pad, bpmX100: g.x100 }])))
+          throw new Error(`${padName(cell.pad)}: the import failed — details in the log`);
+      }
+      if (target) {
+        const path = `${CARD}/IMPORT/${target.folder}/${target.subs[k]}/${name}.wav`;
+        await withDevice((d) => d.writeCardFile(path, new Uint8Array(wav), (a, b) => busy(text, (i + a / b) / cells.length)));
+        if (slTrack.value?.id === t.id) markWritten(target.subs[k]!, loop);
+      }
+      done++;
+    }
+  } catch (e) {
+    notice.value = { kind: "error", text: `Groups: ${(e as Error).message}` };
+  } finally {
+    slBusy.value = null;
+    if (toCard) cardBusy.value = null;
+  }
+  if (!done) return;
+  const where = [
+    toPads ? `pads of bank${banksFor(loops.length) > 1 ? "s" : ""} ${banksText(start, loops.length)}` : "",
+    target ? `IMPORT/${target.folder}/ (${target.subs.join(", ")})` : "",
+  ].filter(Boolean).join(" and ");
+  log("info", `Slicer: ${done} of ${cells.length} loops of ${outs.map((o) => o.tag).join(", ")} at ${formatBpm(g.x100)} BPM → ${where}`);
+  if (done === cells.length) notice.value = { kind: "info", text: `${done} loop${done === 1 ? "" : "s"} written to ${where}` };
+  else if (cancel) notice.value = { kind: "info", text: `Stopped: ${done} of ${cells.length} loops written to ${where}` };
+  if (toPads) selectedBank.value = start;
+  if (target) {
+    showSide("card");
+    await openCardDir(["IMPORT", target.folder]);
+  }
+}
+
 // ---------- kept in the browser ----------
 // The work on a track (grid, cuts, choices, volumes, what went to the card) is kept in the browser
 // and comes back when the same audio is opened again, so a track can be finished another day. The
@@ -884,6 +1066,10 @@ interface Kept {
   gain: [string, number][];
   loopGain: [number, [string, number][]][];
   written: [string, string[]][];
+  /** Each stem's group (stemId → column, -1 for none), the groups' names, the bank they start in. */
+  groups?: [string, number][];
+  groupNames?: string[];
+  startBank?: number;
 }
 
 const ids = new WeakMap<Stem, string>();
@@ -930,6 +1116,10 @@ function recall(): boolean {
     slGain.value = byStem(k.gain ?? []);
     slLoopGain.value = new Map((k.loopGain ?? []).map(([bar, m]) => [bar, byStem(m)] as [number, ReadonlyMap<number, number>]).filter(([, m]) => m.size));
     slWritten.value = new Map((k.written ?? []).map(([label, s]) => [label, new Set(s)]));
+    const groups = new Map(k.groups ?? []);
+    slStemGroup.value = t.stems.map((x, i) => groups.get(now[i]!) ?? defaultGroups([x.family])[0]!);
+    if (k.groupNames?.length === GROUP_COUNT) slGroupNames.value = k.groupNames;
+    if (k.startBank !== undefined && k.startBank >= 0 && k.startBank < BANKS.length) slStartBank.value = k.startBank;
     slGrid.value = k.grid;
     slCuts.value = new Set(k.cuts);
     slOff.value = new Set(k.off ?? []);
@@ -953,6 +1143,8 @@ export function startOver(): void {
   slLoopGain.value = new Map();
   slMuted.value = new Set();
   slGridStem.value = Math.max(0, gridStem(stemKinds(t.stems.map((x) => x.name))));
+  slStemGroup.value = defaultGroups(t.stems.map((x) => x.family));
+  slGroupNames.value = DEFAULT_GROUP_NAMES;
   void analyze(true);
 }
 
@@ -971,6 +1163,9 @@ effect(() => {
     gain: pairs(slGain.value),
     loopGain: [...slLoopGain.value].map(([bar, m]) => [bar, pairs(m)] as [number, [string, number][]]),
     written: [...slWritten.value].map(([label, s]) => [label, [...s]] as [string, string[]]),
+    groups: now.map((x, i) => [x, slStemGroup.value[i] ?? -1] as [string, number]),
+    groupNames: [...slGroupNames.value],
+    startBank: slStartBank.value,
   };
   try {
     const rest = loadKept().filter((x) => !x.stems.some((s) => now.includes(s)));

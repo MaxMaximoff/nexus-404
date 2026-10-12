@@ -20,7 +20,8 @@ it("takes the key from the pitched stem, drops stale answers, and tells an error
   vi.stubGlobal("localStorage", { getItem: (k: string) => kept.get(k) ?? null, setItem: (k: string, v: string) => kept.set(k, v), removeItem: (k: string) => kept.delete(k) });
   vi.stubGlobal("location", { search: "", hash: "", pathname: "/nexus-404/" }); // the store reads ?demo when loaded
   const api = await import("./slice");
-  const stem = (name: string, label: string, fill: number) => ({ name, label, tag: label, channels: 2 as const, frames: 48000 * 5, samples: new Int16Array(48000 * 10).fill(fill), peaks: [] });
+  const family = (label: string) => (label.startsWith("drums") ? "drums" as const : label.startsWith("vocals") ? "vocal" as const : "others" as const);
+  const stem = (name: string, label: string, fill: number) => ({ name, label, tag: label, family: family(label), channels: 2 as const, frames: 48000 * 5, samples: new Int16Array(48000 * 10).fill(fill), peaks: [] });
   const track = { id: 901, name: "Song.wav", frames: 48000 * 5, stems: [stem("Song (Vocals).wav", "vocals", 1), stem("Song (Instrumental).wav", "inst", 2)] };
   const key = (tonic: number, minor = true): EssentiaKeyAnalysis => ({ key: { tonic, minor, strength: 0.8, source: "essentia-edma" }, backend: "test", coldStart: false, initMs: 0, analysisMs: 1 });
   const settle = async () => { for (let i = 0; i < 3; i++) await Promise.resolve(); };

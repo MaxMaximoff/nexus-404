@@ -2,7 +2,7 @@
 // to a new folder of IMPORT/ on the SD card (logic in slice.ts).
 
 import { useEffect, useRef, useState } from "preact/hooks";
-import { BPM_RANGES, barEdge, barFrames, camelot, formatBpm, keyFullName, keyName, loopFileName, padName, parseBpmInput } from "../sp404";
+import { BANKS, BPM_RANGES, GROUP_COUNT, ROWS, barEdge, barFrames, banksFor, banksText, camelot, formatBpm, groupSampleName, groupSlugs, keyFullName, keyName, loopFileName, padName, parseBpmInput, trackName } from "../sp404";
 import { AUDIO_RE } from "./card";
 import { mainView } from "./Patterns";
 import {
@@ -11,8 +11,9 @@ import {
   setTempo, slBars, slBusy, slChosen, slCuts, slDetected, slEvery, slFadeMs, slGrid, slLoops, slMetronome, slOff, slPickBar1, slPlay, slPreRollMs, slSel,
   slCardBlock, slState, slTrack, slWriteBlock, writeOne, splitSel, stopPlay, toggleCut, toggleOff, togglePlay, writeLoops, type Track,
   slRestored, startOver, writtenAs,
+  cycleStemGroup, groupOutputs, renameGroup, slFreeStart, slGroupBlock, slGroupNames, slLayout, slPadConflicts, slStartBank, slStemGroup, slToCard, slToPads, writeGroups,
 } from "./slice";
-import { bpmRange } from "./store";
+import { bpmRange, demo, pads } from "./store";
 import { columns } from "./Waveform";
 import { IconPlay, IconPlus, IconScissors, IconStop, IconUpload, IconX } from "./icons";
 
@@ -78,7 +79,7 @@ export function SlicerPane() {
             <CutBar />
             <StemBar track={t} />
             {st === "analyzing" ? <div class="sl-wave sl-wave-wait muted">Finding tempo and bars…</div> : slGrid.value && <SliceWave track={t} />}
-            {slGrid.value && st === "ready" && <><LoopMix track={t} /><LoopList /><WriteBar track={t} /></>}
+            {slGrid.value && st === "ready" && <><LoopMix track={t} /><LoopList />{t.stems.length > 1 && <GroupPanel track={t} />}<WriteBar track={t} /></>}
           </>
         )}
     </section>
@@ -306,11 +307,14 @@ function StemLanes({ track }: { track: Track }) {
     <div class="sl-lanes">
       <div class="sl-lanes-top" />
       {track.stems.map((x, i) => {
-        const muted = slMuted.value.has(i), grid = slGridStem.value === i;
+        const muted = slMuted.value.has(i), grid = slGridStem.value === i, g = slStemGroup.value[i] ?? -1;
+        const gName = g >= 0 ? groupSlugs(slGroupNames.value)[g]! : "";
         return (
-          <div key={`${i}:${x.name}`} class={`sl-lane ${muted ? "muted" : ""}`}>
+          <div key={`${i}:${x.name}`} class={`sl-lane ${muted ? "muted" : ""} ${g >= 0 ? `sl-g${g}` : ""}`}>
             <div class="sl-lane-row">
               <span class="sl-lane-name" title={x.name}>{x.label}</span>
+              <button type="button" class={`sl-lane-group ${g >= 0 ? "on" : ""}`} disabled={!!slBusy.value} onClick={() => cycleStemGroup(i)}
+                title={`${g >= 0 ? `Group ${gName}: column ${g + 1} on pads` : "In no group: not written by groups"}. Click: the next group`}>{g >= 0 ? gName : "—"}</button>
               <button type="button" class={`sl-lane-grid ${grid ? "on" : ""}`} aria-pressed={grid} disabled={busy || grid}
                 onClick={() => setGridStem(i)} title={grid ? "The grid is built from this stem" : "Build the grid from this stem"}>◆</button>
               <button type="button" class="sl-lane-x" disabled={busy} onClick={() => removeStem(i)} aria-label={`Remove ${x.label}`} title="Take this stem out"><IconX /></button>
@@ -584,6 +588,12 @@ function LoopList() {
   const bytes = out ? chosen.reduce((s, l) => s + l.frames * out.channels * 2 + 44, 0) : 0;
   const silent = slSilent.value, multi = t.stems.length > 1;
   const onCard = loops.filter((l) => writtenAs(l).length).length;
+  // The pads each chosen loop's groups go to (a row of a bank).
+  const rowPads = new Map<number, number[]>();
+  for (const c of slLayout.value ?? []) {
+    const bar = chosen[c.loop]?.bar;
+    if (bar !== undefined) rowPads.set(bar, [...(rowPads.get(bar) ?? []), c.pad]);
+  }
   let n = 0;
   return (
     <div class="sl-list-wrap">
@@ -614,6 +624,10 @@ function LoopList() {
                   {slLoopGain.value.has(l.bar) && (
                     <span class="sl-mixmark" title={`Own balance: ${[...slLoopGain.value.get(l.bar)!].map(([i, v]) => `${t.stems[i]?.label} ${fmtDb(v)}`).join(", ")}`}> · own mix</span>
                   )}
+                  {rowPads.has(l.bar) && (() => {
+                    const p = rowPads.get(l.bar)!;
+                    return <span class="sl-pads" title={`Groups → pads ${p.map(padName).join(", ")}`}> · → {padName(p[0]!)}{p.length > 1 ? `–${padName(p.at(-1)!)}` : ""}</span>;
+                  })()}
                   {silent.has(l.bar) && <span class="sl-quiet" title="These stems are silent in this loop (their files are written anyway)"> · silent: {silent.get(l.bar)!.join(", ")}</span>}
                   {(() => {
                     const w = writtenAs(l);
@@ -640,6 +654,93 @@ function LoopList() {
           })}
         </ol>
       )}
+    </div>
+  );
+}
+
+/**
+ * The stems in groups, a group a column of pads and a loop a row (four loops a bank, then the
+ * next bank): the groups' names, where they start, the pads they take, and the write.
+ */
+function GroupPanel({ track }: { track: Track }) {
+  const names = slGroupNames.value, slugs = groupSlugs(names), outs = groupOutputs(track), cells = slLayout.value ?? [];
+  const n = slChosen.value.length, start = slStartBank.value, free = slFreeStart.value, block = slGroupBlock.value, busy = !!slBusy.value;
+  const toPads = slToPads.value, toCard = slToCard.value, conflicts = new Set(toPads ? slPadConflicts.value : []);
+  const at = new Map(cells.map((c) => [c.pad, c]));
+  const banks = Array.from({ length: Math.max(1, banksFor(n)) }, (_, k) => start + k).filter((b) => b < BANKS.length);
+  const example = outs[0] && cells[0] ? groupSampleName(outs[0].tag, cells.find((c) => c.group === outs[0]!.col)?.pad ?? cells[0].pad) : "";
+  return (
+    <div class="sl-groups">
+      <div class="sl-groups-head">
+        <b>Groups → pads</b>
+        <span class="muted small">a group a column, a loop a row; {ROWS} loops a bank, then the next bank · named after the pad</span>
+      </div>
+      <div class="sl-groups-cols">
+        {Array.from({ length: GROUP_COUNT }, (_, g) => {
+          const stems = track.stems.map((x, i) => ({ x, i })).filter(({ i }) => slStemGroup.value[i] === g);
+          const col = cells.filter((c) => c.group === g).slice(0, ROWS).map((c) => padName(c.pad));
+          return (
+            <div key={g} class={`sl-group sl-g${g} ${outs.some((o) => o.col === g) ? "" : "empty"}`}>
+              <input class="value-field" type="text" spellcheck={false} maxLength={19} value={names[g]} disabled={busy} aria-label={`Name of group ${g + 1}`}
+                title={`Group ${g + 1}: column ${g + 1} of every bank; its loops are named ${slugs[g]}_A${g + 1}…`}
+                onInput={(e) => renameGroup(g, (e.target as HTMLInputElement).value)} />
+              <span class="small sl-group-stems">
+                {stems.length ? stems.map(({ x, i }, k) => <span key={i} class={slMuted.value.has(i) ? "muted-stem" : ""}>{k ? ", " : ""}{x.label}</span>)
+                  : <span class="muted">no stems: click a stem's group chip</span>}
+              </span>
+              <span class="muted small">{col.length ? `${col.join(" ")}${n > ROWS ? " …" : ""}` : "—"}</span>
+            </div>
+          );
+        })}
+      </div>
+      <div class="sl-bar sl-groups-row">
+        <label class="sl-field">
+          <span class="muted">From bank</span>
+          <select value={start} disabled={busy} onChange={(e) => (slStartBank.value = +(e.target as HTMLSelectElement).value)}>
+            {[...BANKS].map((b, i) => <option key={b} value={i}>{b}</option>)}
+          </select>
+        </label>
+        {toPads && free !== null && free !== start && (conflicts.size > 0 || !slLayout.value) && (
+          <button type="button" class="btn btn-ghost" disabled={busy} onClick={() => (slStartBank.value = free)}
+            title="Start from the first bank where every pad the loops take is free">First free: {BANKS[free]}</button>
+        )}
+        <span class="sl-sep" />
+        <label class="sl-check" title="Import the loops onto the pads (only empty pads; nothing is overwritten)">
+          <input type="checkbox" checked={toPads} disabled={busy} onChange={() => (slToPads.value = !toPads)} /> Pads
+        </label>
+        <label class="sl-check" title={demo.value ? "Demo: there is no SD card" : `Also as WAV files on the SD card: IMPORT/${trackName(track.name)}/<group>/`}>
+          <input type="checkbox" checked={toCard} disabled={busy} onChange={() => (slToCard.value = !toCard)} /> SD card
+        </label>
+      </div>
+      {n > 0 && slLayout.value && (
+        <div class="sl-maps">
+          {banks.map((b) => (
+            <div key={b} class="sl-map">
+              <span class="sl-map-bank">{BANKS[b]}</span>
+              <div class="sl-map-grid">
+                {Array.from({ length: 16 }, (_, k) => {
+                  const pad = b * 16 + k, c = at.get(pad), p = pads.value[pad], bad = conflicts.has(pad);
+                  const title = `${padName(pad)}: ${c ? `${slugs[c.group]} · loop ${String(c.loop + 1).padStart(2, "0")}` : "stays as it is"}${p?.size ? ` · now “${p.name}”` : ""}${bad ? " — not free" : ""}`;
+                  return <i key={k} class={`${c ? `sl-g${c.group} on` : ""} ${p?.size ? "full" : ""} ${bad ? "bad" : ""}`} title={title}>{c ? c.loop + 1 : ""}</i>;
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      <div class="sl-write">
+        <span class={`small sl-write-text ${block ? "muted" : ""}`}>
+          {block ?? <>
+            <b>{n}</b> loop{n === 1 ? "" : "s"} × <b>{outs.length}</b> group{outs.length === 1 ? "" : "s"}
+            {toPads && <> → pads <b>{banksText(start, n)}</b></>}
+            {toCard && <>{toPads ? " and" : " →"} <b>IMPORT/{trackName(track.name)}/</b>{outs.map((o) => o.tag).join(", ")}</>}
+            {example && <> · names like {example}</>}
+          </>}
+        </span>
+        <button class="btn btn-primary" disabled={!!block} title={block ?? "Write every group's chosen loops"} onClick={() => void writeGroups()}>
+          <IconUpload /> Write {cells.length} loop{cells.length === 1 ? "" : "s"}
+        </button>
+      </div>
     </div>
   );
 }

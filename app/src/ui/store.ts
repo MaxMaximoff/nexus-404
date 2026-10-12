@@ -1181,6 +1181,25 @@ export function importFiles(files: File[], startPad: number, bpmX100?: number | 
   const detectMin = detectOnImport.value ? BPM_RANGES[bpmRange.value]![0] : null;
   const given = (i: number) => (Array.isArray(bpmX100) ? bpmX100[i] : bpmX100);
   const newJobs = targets.map((pad, i) => newJob(audio[i], pad, given(i) ?? bpmFromFileName(audio[i].name), fallback, detectMin, given(i) !== undefined ? "source" : "name"));
+  void runJobs(d, newJobs).then((ok) => {
+    if (ok < newJobs.length) notice.value = { kind: "error", text: `Imported ${ok} of ${newJobs.length} — details in the log` };
+  });
+}
+
+/**
+ * Files onto the pads given (each one empty, not queued, its bank not protected), each with its
+ * BPM: loops laid out by the caller (the slicer's groups). Resolves with how many were imported.
+ */
+export function importToPads(items: { file: File; pad: number; bpmX100: number }[]): Promise<number> {
+  const d = device, block = writeBlockReason.value;
+  if (!d || block) return Promise.reject(new Error(block ?? "SP is not connected"));
+  const taken = items.find(({ pad }) => pads.value[pad]?.size || reserved.has(pad) || project.value?.banks[pad >> 4]?.protected);
+  if (taken) return Promise.reject(new Error(`${padName(taken.pad)} is not free`));
+  return runJobs(d, items.map(({ file, pad, bpmX100 }) => newJob(file, pad, bpmX100, null, null, "source")));
+}
+
+/** Queue jobs after the imports before them; resolves with how many of them succeeded. */
+function runJobs(d: SP404Device, newJobs: ImportJob[]): Promise<number> {
   newJobs.forEach((j) => reserved.add(j.pad));
   jobs.value = [...jobs.value.filter((j) => j.state !== "done"), ...newJobs];
   const p1 = project1.value;
@@ -1195,9 +1214,17 @@ export function importFiles(files: File[], startPad: number, bpmX100?: number | 
       if (selectedPad.value === b.index) selectPad(b.index);
     },
   }, (level, text) => log(level, text));
-  importChain = importChain.then(() => uploader.run(p1, newJobs)).then((ok) => {
-    if (ok < newJobs.length) notice.value = { kind: "error", text: `Imported ${ok} of ${newJobs.length} — details in the log` };
-  });
+  const run = importChain.then(() => uploader.run(p1, newJobs));
+  importChain = run.catch(() => 0);
+  return run;
+}
+
+/** Demo mode only: a pad as if a sample had been imported onto it (no device behind it). */
+export function placeDemoPad(b: PadBlock, samples: Int16Array, channels: number): void {
+  if (!demo.value) return;
+  setPad(b);
+  setWaveform(b.index, b, samples, channels);
+  if (selectedPad.value === b.index) selectPad(b.index);
 }
 
 function parseDefaultBpm(): number | null {

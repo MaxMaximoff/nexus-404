@@ -153,3 +153,8 @@ export function demoData(): DemoData {
     freeKb: 12_900_000,
   };
 }
+
+/** A pad block for a loop put on `pad` in demo mode (the slicer's groups), as the SP would read it after the import. */
+export function demoPadBlock(pad: number, name: string, seconds: number, stereo: boolean, bpm: number) {
+  return block(pad, { name, len: seconds, shape: "loop", stereo, bpm });
+}
