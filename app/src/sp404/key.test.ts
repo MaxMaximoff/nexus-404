@@ -1,133 +1,18 @@
-import { describe, expect, it } from "vitest";
-import { camelot, detectKey, keyName, type Mode } from "./key";
+import { expect, it } from "vitest";
+import { camelot, keyFullName, keyName } from "./key";
 
-const RATE = 48000;
-
-function rng(seed: number) {
-  let s = seed >>> 0;
-  return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 2 ** 32) * 2 - 1;
-}
-
-/**
- * A track of chords: each chord (semitones from C, the first one the root) for `bars` bars at
- * 120 BPM, as tones with five harmonics plus the root an octave below as a bass; a kick on
- * every beat and a noise snare on 2 and 4 over it. `cents` detunes everything.
- */
-function chords(prog: { notes: number[]; bars: number }[], repeats: number, cents = 0, seed = 1): Int16Array {
-  const bar = 2, total = prog.reduce((s, c) => s + c.bars, 0) * bar * repeats, n = Math.round(total * RATE);
-  const out = new Float64Array(n), rand = rng(seed), tune = 2 ** (cents / 1200);
-  const hz = (semi: number, octave: number) => 440 * tune * 2 ** ((semi - 9) / 12 + (octave - 4));
-  let t0 = 0;
-  for (let r = 0; r < repeats; r++)
-    for (const c of prog) {
-      const a = Math.round(t0 * RATE), len = Math.round(c.bars * bar * RATE);
-      const voices = [...c.notes.map((s) => ({ f: hz(s, 3), amp: 0.08 })), { f: hz(c.notes[0]!, 2), amp: 0.12 }];
-      for (const v of voices)
-        for (let h = 1; h <= 5; h++) {
-          const w = (2 * Math.PI * v.f * h) / RATE, amp = v.amp / h;
-          for (let i = 0; i < len; i++) out[a + i]! += Math.sin(w * i) * amp;
-        }
-      t0 += c.bars * bar;
-    }
-  for (let b = 0; b * 0.5 < total; b++) {
-    const a = Math.round(b * 0.5 * RATE);
-    for (let i = 0; i < 12000 && a + i < n; i++) {
-      const t = i / RATE;
-      out[a + i]! += Math.sin(2 * Math.PI * (50 + 80 * Math.exp(-t * 30)) * t) * Math.exp(-t * 12) * 0.5 + (b % 2 ? rand() * Math.exp(-t * 25) * 0.25 : 0);
-    }
+it("names major and minor keys and puts every one on the Camelot wheel", () => {
+  const majorNames = ["C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
+  const minorNames = ["Cm", "C#m", "Dm", "Ebm", "Em", "Fm", "F#m", "Gm", "G#m", "Am", "Bbm", "Bm"];
+  const majorWheel = ["8B", "3B", "10B", "5B", "12B", "7B", "2B", "9B", "4B", "11B", "6B", "1B"];
+  const minorWheel = ["5A", "12A", "7A", "2A", "9A", "4A", "11A", "6A", "1A", "8A", "3A", "10A"];
+  for (let tonic = 0; tonic < 12; tonic++) {
+    expect(keyName({ tonic, minor: false })).toBe(majorNames[tonic]);
+    expect(keyName({ tonic, minor: true })).toBe(minorNames[tonic]);
+    expect(camelot({ tonic, minor: false })).toBe(majorWheel[tonic]);
+    expect(camelot({ tonic, minor: true })).toBe(minorWheel[tonic]);
   }
-  const pcm = new Int16Array(n * 2);
-  for (let i = 0; i < n; i++) pcm[2 * i] = pcm[2 * i + 1] = Math.max(-32768, Math.min(32767, Math.round(out[i]! * 32767)));
-  return pcm;
-}
-
-const up = (notes: number[], k: number) => notes.map((x) => x + k);
-const MAJ = (root: number) => [root, root + 4, root + 7];
-const MIN = (root: number) => [root, root + 3, root + 7];
-
-describe("key detection", () => {
-  it("finds a major key in every transposition (I–IV–V–I)", () => {
-    for (let k = 0; k < 12; k++) {
-      const pcm = chords([{ notes: up(MAJ(0), k), bars: 2 }, { notes: up(MAJ(5), k), bars: 1 }, { notes: up(MAJ(7), k), bars: 1 }], 3);
-      const r = detectKey(pcm, 2)!;
-      expect(keyName(r)).toBe(keyName({ tonic: k, minor: false }));
-    }
-  }, 30000);
-
-  it("finds a minor key in every transposition (i–iv–V–i)", () => {
-    for (let k = 0; k < 12; k++) {
-      const pcm = chords([{ notes: up(MIN(9), k), bars: 2 }, { notes: up(MIN(14), k), bars: 1 }, { notes: up(MAJ(16), k), bars: 1 }], 3);
-      const r = detectKey(pcm, 2)!;
-      expect(keyName(r)).toBe(keyName({ tonic: (9 + k) % 12, minor: true }));
-    }
-  }, 30000);
-
-  it("tells A minor from C major when the minor chord is home (i–VI–VII–i)", () => {
-    const r = detectKey(chords([{ notes: MIN(9), bars: 2 }, { notes: MAJ(5), bars: 1 }, { notes: MAJ(7), bars: 1 }], 4), 2)!;
-    expect(keyName(r)).toBe("Am");
-  });
-
-  it("follows a track tuned off A = 440", () => {
-    const r = detectKey(chords([{ notes: MIN(9), bars: 2 }, { notes: MIN(14), bars: 1 }, { notes: MAJ(16), bars: 1 }], 3, 35), 2)!;
-    expect(keyName(r)).toBe("Am");
-    expect(Math.abs(r.cents - 35)).toBeLessThanOrEqual(5);
-  });
-
-  it("finds the mode on the tonic", () => {
-    // Each mode by chords that carry its own notes; the tonic chord gets two bars and the bass.
-    const cases: [Mode, { notes: number[]; bars: number }[]][] = [
-      ["ionian", [{ notes: MAJ(0), bars: 2 }, { notes: MAJ(5), bars: 1 }, { notes: MAJ(7), bars: 1 }]],
-      ["aeolian", [{ notes: MIN(0), bars: 2 }, { notes: MAJ(8), bars: 1 }, { notes: MAJ(10), bars: 1 }]],
-      ["harmonic", [{ notes: MIN(0), bars: 2 }, { notes: MIN(5), bars: 1 }, { notes: MAJ(7), bars: 1 }]],
-      ["dorian", [{ notes: MIN(0), bars: 2 }, { notes: MAJ(5), bars: 2 }, { notes: MIN(0), bars: 2 }, { notes: MIN(2), bars: 1 }, { notes: MAJ(5), bars: 1 }]],
-      ["phrygian", [{ notes: MIN(0), bars: 2 }, { notes: MAJ(1), bars: 1 }, { notes: MIN(10), bars: 1 }]],
-      ["mixolydian", [{ notes: MAJ(0), bars: 2 }, { notes: MAJ(10), bars: 1 }, { notes: MAJ(5), bars: 1 }]],
-      ["lydian", [{ notes: MAJ(0), bars: 2 }, { notes: MAJ(2), bars: 1 }, { notes: MAJ(7), bars: 1 }]],
-      ["phrygianDominant", [{ notes: MAJ(0), bars: 2 }, { notes: MAJ(1), bars: 1 }, { notes: MIN(5), bars: 1 }, { notes: MAJ(0), bars: 1 }, { notes: MIN(10), bars: 1 }]],
-    ];
-    const wrong: string[] = [];
-    for (const [mode, prog] of cases)
-      for (const k of [0, 5, 9]) {
-        const r = detectKey(chords(prog.map((c) => ({ notes: up(c.notes, k), bars: c.bars })), 3), 2)!;
-        if (r.tonic !== k % 12 || r.mode !== mode) wrong.push(`${mode} on ${keyName({ tonic: k, minor: false })}: ${keyName(r)} ${r.mode} (next ${r.modeAlt}, lead ${r.modeLead.toFixed(3)})`);
-      }
-    expect(wrong).toEqual([]);
-  }, 60000); // 24 synthetic tracks
-
-  it("calls a Phrygian minor minor, even where the major profile matches better", () => {
-    const r = detectKey(chords([{ notes: MIN(5), bars: 2 }, { notes: MAJ(6), bars: 1 }, { notes: MIN(3), bars: 1 }], 3), 2)!;
-    expect([keyName(r), r.mode, camelot(r)]).toEqual(["Fm", "phrygian", "4A"]);
-  });
-
-  it("keeps a minor minor under a loud saw bass (its 5th and 7th harmonics would make it Mixolydian)", () => {
-    // F Phrygian (Fm, Gb, Ebm) over a bass with 16 harmonics, five times as loud as the chords.
-    const hz = (semi: number, oct: number) => 440 * 2 ** ((semi - 9) / 12 + (oct - 4));
-    const prog: [number[], number][] = [[[5, 8, 12], 2], [[6, 10, 13], 1], [[3, 6, 10], 1]];
-    const total = 32, n = total * RATE, m = new Float64Array(n);
-    for (let t0 = 0, i = 0; t0 < total - 0.01; i++) {
-      const [notes, len] = prog[i % prog.length]!, a = Math.round(t0 * RATE), L = Math.min(n - a, Math.round(len * 2 * RATE));
-      for (const x of notes) for (let h = 1; h <= 5; h++) { const w = (2 * Math.PI * hz(x, 3) * h) / RATE; for (let j = 0; j < L; j++) m[a + j]! += (Math.sin(w * j) * 0.03) / h; }
-      for (let h = 1; h <= 16; h++) { const w = (2 * Math.PI * hz(notes[0]!, 1) * h) / RATE; for (let j = 0; j < L; j++) m[a + j]! += (Math.sin(w * j) * 0.3) / h; }
-      t0 += len * 2;
-    }
-    const pcm = new Int16Array(n * 2);
-    for (let i = 0; i < n; i++) pcm[2 * i] = pcm[2 * i + 1] = Math.max(-32768, Math.min(32767, Math.round(m[i]! * 32767)));
-    const r = detectKey(pcm, 2)!;
-    expect([keyName(r), r.mode]).toEqual(["Fm", "phrygian"]);
-  }, 30000);
-
-  it("finds no key in drums and noise", () => {
-    const n = 20 * RATE, pcm = new Int16Array(n * 2), rand = rng(9);
-    for (let i = 0; i < n; i++) pcm[2 * i] = pcm[2 * i + 1] = Math.round(rand() * 6000 * (i % 24000 < 4000 ? 1 : 0.2));
-    expect(detectKey(pcm, 2)).toBeNull();
-  });
-
-  it("names keys and places them on the Camelot wheel", () => {
-    expect([keyName({ tonic: 9, minor: true }), camelot({ tonic: 9, minor: true })]).toEqual(["Am", "8A"]);
-    expect([keyName({ tonic: 0, minor: false }), camelot({ tonic: 0, minor: false })]).toEqual(["C", "8B"]);
-    expect([keyName({ tonic: 8, minor: true }), camelot({ tonic: 8, minor: true })]).toEqual(["G#m", "1A"]);
-    expect([keyName({ tonic: 11, minor: false }), camelot({ tonic: 11, minor: false })]).toEqual(["B", "1B"]);
-    expect([keyName({ tonic: 6, minor: false }), camelot({ tonic: 6, minor: false })]).toEqual(["F#", "2B"]);
-    expect([keyName({ tonic: 1, minor: true }), camelot({ tonic: 1, minor: true })]).toEqual(["C#m", "12A"]);
-  });
+  expect(keyFullName({ tonic: 5, minor: true })).toBe("F minor");
+  expect(keyFullName({ tonic: 1, minor: true })).toBe("C# minor");
+  expect(keyFullName({ tonic: 10, minor: false })).toBe("Bb major");
 });

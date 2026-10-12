@@ -200,6 +200,11 @@ button, input, select { font: inherit; color: inherit; }
   border-left: 1px solid var(--line);
 }
 .brand .brand-sub { padding-left: 11px; }
+/* AGPL: the source of this build, always in sight; the full notices are in the footer. */
+.source-link { font-size: 11.5px; letter-spacing: 0.04em; color: var(--muted); text-decoration: underline; text-underline-offset: 2px; }
+.source-link:hover { color: var(--text-2); }
+.legal { padding: 4px 24px 18px; line-height: 1.6; }
+.legal a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 
 .conn { display: flex; align-items: center; gap: 6px; flex-shrink: 0; white-space: nowrap; font-size: 12px; font-weight: 600; color: var(--text-2); }
 /* Status LED: dark when idle, cyan when connected. */
@@ -1162,7 +1167,8 @@ button, input, select { font: inherit; color: inherit; }
 .sl-quiet { color: var(--warn); }
 .sl-key { padding: 3px 9px; border-radius: var(--r-ctl); border: 1px solid var(--line); background: var(--bg-sunk); white-space: nowrap; }
 .sl-key b { color: var(--selection-ink); font-weight: 700; }
-.sl-key .sl-mode { color: var(--text-2); font-weight: 600; }
+.sl-key.err { color: var(--danger); font-size: inherit; }
+.sl-key .btn { padding: 0 6px; min-height: 0; height: auto; font-size: inherit; color: inherit; text-decoration: underline; }
 .sl-gain { display: inline-flex; align-items: center; gap: 4px; padding: 0 4px; }
 .sl-gain input[type="range"] { width: 64px; accent-color: var(--neon); cursor: pointer; }
 .sl-gain-v { font-size: 11px; min-width: 44px; color: var(--muted); font-variant-numeric: tabular-nums; }

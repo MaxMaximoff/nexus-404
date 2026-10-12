@@ -9,12 +9,14 @@
     "preview": "vite preview",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "ship": "npm run build && git add dist"
+    "ship": "node scripts/check-source.mjs && npm run build && git add dist"
   },
+  "license": "AGPL-3.0-only",
   "dependencies": {
     "@fontsource-variable/inter": "^5.3.0",
     "@fontsource/ibm-plex-mono": "^5.3.0",
     "@preact/signals": "^2.11.3",
+    "essentia.js": "0.1.3",
     "preact": "^11.0.0"
   },
   "devDependencies": {

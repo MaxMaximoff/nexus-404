@@ -9,6 +9,7 @@ import { PatternsPane, mainView } from "./Patterns";
 import { SlicerPane } from "./Slicer";
 import { editingSlot } from "./patternDraft";
 import { TopBar } from "./TopBar";
+import { LegalFooter } from "./Legal";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import {
   dragCopy, draggedPad, groupDrop, clearPicked, confirmDelete, confirmGroupDelete, groupProgress, loadProgress, notice, pads, pickBank, pickedList, projectSwitching,
@@ -115,6 +116,7 @@ export function App() {
         <ImportPanel />
         <LogPanel />
       </div>
+      <LegalFooter />
     </div>
   );
 }

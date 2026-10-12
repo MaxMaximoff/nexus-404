@@ -2,12 +2,12 @@
 // to a new folder of IMPORT/ on the SD card (logic in slice.ts).
 
 import { useEffect, useRef, useState } from "preact/hooks";
-import { BPM_RANGES, MODE_NAMES, barEdge, barFrames, camelot, formatBpm, keyName, loopFileName, noteName, padName, parseBpmInput } from "../sp404";
+import { BPM_RANGES, barEdge, barFrames, camelot, formatBpm, keyFullName, keyName, loopFileName, padName, parseBpmInput } from "../sp404";
 import { AUDIO_RE } from "./card";
 import { mainView } from "./Patterns";
 import {
   OVERVIEW_COLS, addStems, analyze, cancelWrite, folderPreview, removeStem, setGridStem, slGridStem, slMuted, slSilent, slStemBlock, toggleMute,
-  outputOf, replay, resetLoopGain, setLoopGain, setStemGain, slGain, slLoopGain, slClean, slCleaning, slKey, slKeyStem, type Stem, cutEvery, joinNext, nudge, openTrack, play, playheadFrame, resetGrid, selLoop, selStep, setAllOff, setBar1, setPreRoll,
+  outputOf, replay, resetLoopGain, setLoopGain, setStemGain, slGain, slLoopGain, slClean, slCleaning, slKey, slKeyError, slKeyStem, findKey, type Stem, cutEvery, joinNext, nudge, openTrack, play, playheadFrame, resetGrid, selLoop, selStep, setAllOff, setBar1, setPreRoll,
   setTempo, slBars, slBusy, slChosen, slCuts, slDetected, slEvery, slFadeMs, slGrid, slLoops, slMetronome, slOff, slPickBar1, slPlay, slPreRollMs, slSel,
   slCardBlock, slState, slTrack, slWriteBlock, writeOne, splitSel, stopPlay, toggleCut, toggleOff, togglePlay, writeLoops, type Track,
   slRestored, startOver, writtenAs,
@@ -199,36 +199,34 @@ function GridBar() {
   );
 }
 
-/** The detected key: name and Camelot code; the next best when it is nearly as likely. */
+/**
+ * The track's key by Essentia: tonic, major or minor, Camelot code; with several stems, which one
+ * it is from. Finding it, no clear key and a failed analysis look different.
+ */
 function KeyChip() {
-  const k = slKey.value, t = slTrack.value;
-  if (k === undefined) return <span class="sl-key muted small">Key…</span>;
-  if (!k) return <span class="sl-key muted small" title="No held tones to go by (drums only, speech, noise)">No clear key</span>;
-  const close = k.altLead < KEY_CLOSE;
-  const from = t && t.stems.length > 1 ? ` from ${t.stems[slKeyStem.value]?.label}` : "";
-  // Plain major and minor go without a word; any other mode is named, with "?" when barely ahead.
-  const plain = k.mode === "ionian" || k.mode === "aeolian", unsure = k.modeLead < MODE_SURE;
+  const k = slKey.value, t = slTrack.value, err = slKeyError.value;
+  const stems = !!t && t.stems.length > 1, stem = t?.stems[slKeyStem.value];
+  const from = stems && stem ? <span class="muted"> · from {stem.label}</span> : null;
+  if (err)
+    return (
+      <span class="sl-key small err" title={`The key analysis failed: ${err}`}>
+        Key failed{from} <button type="button" class="btn btn-ghost" onClick={() => void findKey()}>Retry</button>
+      </span>
+    );
+  if (k === undefined) return <span class="sl-key muted small">Key…{from}</span>;
+  if (!k)
+    return (
+      <span class="sl-key muted small" title={stems && !stem ? "Drums only: no pitched stem to find the key from" : "Essentia found no clear major or minor key (drums only, speech, noise, silence)"}>
+        {stems && !stem ? "No key · drums only" : "No clear key"}{from}
+      </span>
+    );
   return (
-    <span class="sl-key small" title={`Key${from}: ${keyName(k)} ${MODE_NAMES[k.mode]} (Camelot ${camelot(k)}); next mode on this tonic: ${MODE_NAMES[k.modeAlt]}, ${k.modeLead.toFixed(3)} behind. Next home note: ${keyName(k.alt)} ${MODE_NAMES[k.alt.mode]}, ${k.altLead.toFixed(3)} behind. Tuning ${k.cents >= 0 ? "+" : ""}${k.cents} cents from A = 440.
-Notes from the tonic up, % of all: ${profile(k)}.
-A guess: relative keys (Am / C), keys a fifth apart and neighbouring modes are easy to mix up.`}>
-      <b>{keyName(k)}</b>
-      {(!plain || unsure) && <span class="sl-mode"> {plain ? "" : MODE_NAMES[k.mode]}{unsure ? (plain ? `${MODE_NAMES[k.mode]}?` : "?") : ""}</span>}
-      {" "}<span class="muted">{camelot(k)}</span>
-      {close && <span class="muted"> · or {keyName(k.alt)}{k.alt.mode === "ionian" || k.alt.mode === "aeolian" ? "" : ` ${MODE_NAMES[k.alt.mode]}`} {camelot(k.alt)}</span>}
+    <span class="sl-key small" title={`Key${stems && stem ? ` from the ${stem.label} stem (${stem.name})` : ""}: ${keyFullName(k)}, Camelot ${camelot(k)}. Found by Essentia (KeyExtractor, EDMA profile) over the whole track.
+Strength ${k.strength.toFixed(2)}: how well the notes match the key's profile, not the chance it is right. Relative keys (Am / C) and keys a fifth apart are easy to mix up; parts of a track may be in another key.`}>
+      <b>{keyName(k)}</b> <span class="muted">{camelot(k)}</span>{from}
     </span>
   );
 }
-
-/** How much each note sounds, from the tonic up: "F 23 · Gb 9 · G 2 …" (percent). */
-function profile(k: { tonic: number; minor: boolean; chroma: number[] }): string {
-  return Array.from({ length: 12 }, (_, i) => `${noteName(k.tonic + i, k.minor)} ${Math.round(k.chroma[(k.tonic + i) % 12]! * 100)}`).join(" · ");
-}
-
-/** The next best home note is shown when it is this close behind (joint search score). */
-const KEY_CLOSE = 0.08;
-/** A mode less than this ahead of the next one on the same tonic is shown with "?". */
-const MODE_SURE = 0.03;
 
 /** How the track is cut, and how the loops sound. */
 function CutBar() {

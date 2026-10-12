@@ -9,6 +9,26 @@
 с `Permissions-Policy: serial=(self), microphone=(self)` для Web Serial
 и записи звука. Для подключения к SP-404MKII нужен HTTPS и Chrome/Edge.
 
+## Лицензия и исходники (AGPL-3.0)
+
+В сборке Essentia.js (AGPL-3.0), поэтому Nexus-404 целиком под AGPL-3.0
+(`LICENSE`, `THIRD_PARTY.md`). Каждый, кто открывает сайт, должен иметь
+доступ к исходникам именно той версии, что на сервере. Как это устроено:
+
+- репозиторий `MaxMaximoff/nexus-404` на GitHub **публичный**;
+- в шапке приложения ссылка «Source», внизу страницы — уведомление о
+  лицензии, «Source code (коммит)» и «Third-party licenses»;
+- сборка вшивает коммит исходников (`__SOURCE_COMMIT__`, `vite.config.ts`),
+  ссылка ведёт на `github.com/MaxMaximoff/nexus-404/tree/<коммит>`;
+- `npm run ship` отказывается собирать, если исходники не закоммичены
+  (`app/scripts/check-source.mjs`; отличаться может только `app/dist`), —
+  иначе ссылка вела бы на код, отличный от собранного;
+- рядом со сборкой лежат `LICENSE.txt` и `THIRD-PARTY-LICENSES.txt`
+  (тексты лицензий всех рабочих зависимостей из `package-lock.json`).
+
+Не удаляйте с GitHub коммиты, на которые ссылаются выложенные сборки
+(не переписывайте историю `main` force-push'ем).
+
 ## Первая установка
 
 В SSH-консоли Timeweb:
@@ -18,8 +38,8 @@ cd ~/soundplayground/repos
 git clone https://github.com/MaxMaximoff/nexus-404.git nexus-404
 ```
 
-Репозиторий приватный. Если Git запросит авторизацию, используйте свой
-GitHub login и token с доступом к этому репозиторию, как при установке
+Репозиторий публичный, авторизация для клонирования не нужна. Если Git
+всё же её запросит, используйте GitHub login и token, как при установке
 `mutagen-lab`. Не записывайте token в документацию или команды с URL.
 
 После успешного клонирования:
@@ -40,20 +60,26 @@ ln -s ~/soundplayground/repos/nexus-404/app/dist ~/soundplayground/public_html/n
 
 ## Обновление
 
-Локально, из папки проекта:
+Локально, из папки проекта. Сначала исходники — отдельным коммитом, потом
+сборка из них (на этот коммит и ведёт ссылка «Source»):
 
 ```sh
 cd app
+git add -A ..
+git commit -m "feat: …"
 npm run ship
-git add -u
 git commit -m "Deploy Nexus-404 to Timeweb"
 git push origin main
 ```
 
-`npm run ship` собирает приложение и добавляет `dist` в индекс Git.
-`git add -u` добавляет изменения уже отслеживаемых исходников; новые
-исходные файлы добавляйте отдельно. После коммита и push сервер получает
-готовую сборку через Git, как `mutagen-lab`.
+Перед `git add -A` проверьте `git status`: в коммит попадут и новые файлы.
+`npm run ship` проверяет, что исходники закоммичены, собирает приложение и
+добавляет `dist` в индекс Git. После push сервер получает готовую сборку
+через Git, как `mutagen-lab`.
+
+Проверка после деплоя: ссылка «Source» на сайте открывает на GitHub коммит
+с исходниками, `/nexus-404/LICENSE.txt` и `/nexus-404/THIRD-PARTY-LICENSES.txt`
+открываются.
 
 На сервере:
 

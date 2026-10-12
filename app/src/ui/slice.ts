@@ -10,9 +10,10 @@
 import { batch, computed, effect, signal } from "@preact/signals";
 import {
   BPM_MAX_X100, BPM_MIN_X100, BPM_RANGES, CARD, barFrames, computePeaks, decodeAudio, encodeWav, evenCuts, extractLoop, formatBpm, gridStem, loopFileName, mixLoop,
-  MODE_NAMES, keyName, loopsFromCuts, type CleanLevel, type CleanRole, padName, stemBase, stemKinds, trackName, wholeBars, uniqueName, type BeatGrid, type KeyResult, type Loop,
+  keyFullName, keyName, loopsFromCuts, type CleanLevel, type CleanRole, padName, stemBase, stemKinds, trackName, wholeBars, uniqueName, type BeatGrid, type Loop,
 } from "../sp404";
-import type { GridRequest } from "./gridWorker";
+import type { EssentiaKey, EssentiaKeyAnalysis } from "../sp404/essentiaKey";
+import type { GridReply, GridRequest } from "./gridWorker";
 import { cardBusy, openCardDir, showSide, sideTab } from "./card";
 import { mainView, showView } from "./Patterns";
 import { bpmRange, conn, demo, log, notice, padPcm, pads, withDevice, writeBlockReason } from "./store";
@@ -68,9 +69,11 @@ export const slClean = signal<"off" | CleanLevel>("off");
 const slCleaned = signal<{ stems: Stem[]; level: CleanLevel; out: Int16Array[] } | null>(null);
 /** Cleaning is running. */
 export const slCleaning = signal(false);
-/** The track's key: undefined while it is being found, null when there is no clear one. */
-export const slKey = signal<KeyResult | null | undefined>(undefined);
-/** The stem the key was found from (index into the track's stems). */
+/** The track's key (Essentia): undefined while it is being found, null when there is no clear one (or no pitched stem). */
+export const slKey = signal<EssentiaKey | null | undefined>(undefined);
+/** Why the key could not be found (Essentia failed to load or run); null when it did not fail. */
+export const slKeyError = signal<string | null>(null);
+/** The stem the key is found from (index into the track's stems); -1 when no stem is pitched (drums only). */
 export const slKeyStem = signal(0);
 /** What the slicer is busy with before the grid is there. */
 export const slState = signal<"idle" | "decoding" | "analyzing" | "ready">("idle");
@@ -122,10 +125,11 @@ type Request = GridRequest extends infer R ? (R extends GridRequest ? Omit<R, "i
 function ask<T>(msg: Request): Promise<T> {
   if (!worker) {
     worker = new Worker(new URL("./gridWorker.ts", import.meta.url), { type: "module" });
-    worker.onmessage = (e: MessageEvent<{ id: number; result: unknown }>) => {
-      const p = pending.get(e.data.id);
-      pending.delete(e.data.id);
-      p?.resolve(e.data.result);
+    worker.onmessage = (e: MessageEvent<GridReply>) => {
+      const r = e.data, p = pending.get(r.id);
+      pending.delete(r.id);
+      if ("error" in r) p?.reject(new Error(r.error));
+      else p?.resolve(r.result);
     };
     worker.onerror = (e) => {
       for (const p of pending.values()) p.reject(new Error(e.message || "analysis failed"));
@@ -266,6 +270,7 @@ function setTrack(t: Omit<Track, "frames">): void {
     slWritten.value = new Map();
     slRestored.value = false;
     slKey.value = undefined;
+    slKeyError.value = null;
     slMuted.value = new Set();
     slGridStem.value = Math.max(0, gridStem(stemKinds(t.stems.map((x) => x.name))));
   }
@@ -281,23 +286,41 @@ function detect(stem: Stem): Promise<BeatGrid | null> {
 const KEY_RANK: Record<string, number> = { inst: 6, piano: 5, guitar: 5, other: 4, track: 3, bass: 2, vocals: 1, drums: 0 };
 const keyRank = (stem: Stem) => KEY_RANK[stem.label.replace(/_\d+$/, "").replace(/^track\d+$/, "track")] ?? 3;
 
-/** Find the open track's key from its most tonal stem (in the background; the grid does not wait for it). */
+let keyJob = 0;
+
+/**
+ * Find the open track's key from its most tonal stem (in the background; the grid does not wait
+ * for it). Only the latest request counts: an answer for another track, other stems or an earlier
+ * request is dropped.
+ */
 export async function findKey(): Promise<void> {
   const t = slTrack.value;
   if (!t) return;
-  const i = t.stems.length > 1 ? t.stems.reduce((b, x, j) => (keyRank(x) > keyRank(t.stems[b]!) ? j : b), 0) : 0;
+  const id = ++keyJob;
+  const i = t.stems.reduce((b, x, j) => (keyRank(x) > keyRank(t.stems[b]!) ? j : b), 0);
   const stem = t.stems[i]!;
   slKey.value = undefined;
+  slKeyError.value = null;
+  if (t.stems.length > 1 && keyRank(stem) === 0) {
+    slKeyStem.value = -1;
+    slKey.value = null;
+    return void log("info", "Slicer: no key: drums only, no pitched stem");
+  }
   slKeyStem.value = i;
+  const from = t.stems.length > 1 ? ` from ${stem.label}` : "";
+  const current = () => id === keyJob && slTrack.value?.id === t.id;
   try {
-    const k = await ask<KeyResult | null>({ kind: "key", samples: stem.samples, channels: stem.channels });
-    if (slTrack.value?.id !== t.id || slKeyStem.value !== i || slTrack.value.stems[i] !== stem) return; // the track or its stems changed meanwhile
-    slKey.value = k;
-    const from = t.stems.length > 1 ? ` (from ${stem.label})` : "";
-    log("info", k ? `Slicer: key ${keyName(k)} ${MODE_NAMES[k.mode]}${from} (next mode ${MODE_NAMES[k.modeAlt]}, ${k.modeLead.toFixed(3)} behind), next home ${keyName(k.alt)} ${MODE_NAMES[k.alt.mode]} (${k.altLead.toFixed(3)} behind), tuning ${k.cents >= 0 ? "+" : ""}${k.cents} cents` : `Slicer: no clear key${from}`);
+    const r = await ask<EssentiaKeyAnalysis>({ kind: "key", samples: stem.samples, channels: stem.channels, sampleRate: RATE });
+    if (!current()) return;
+    slKey.value = r.key;
+    const timing = `Essentia ${r.backend} EDMA, ${(r.analysisMs / 1000).toFixed(2)} s${r.coldStart ? `, loaded in ${(r.initMs / 1000).toFixed(2)} s` : ""}`;
+    log("info", r.key ? `Slicer: key ${keyName(r.key)} (${keyFullName(r.key)})${from}; strength ${r.key.strength.toFixed(2)} (profile match, not a probability); ${timing}`
+      : `Slicer: no clear key${from}; ${timing}`);
   } catch (e) {
-    if (slTrack.value?.id === t.id) slKey.value = null;
-    log("warn", `Slicer: key: ${(e as Error).message}`);
+    if (!current()) return;
+    slKey.value = null;
+    slKeyError.value = (e as Error).message || "analysis failed";
+    log("warn", `Slicer: key${from}: ${slKeyError.value}`);
   }
 }
 

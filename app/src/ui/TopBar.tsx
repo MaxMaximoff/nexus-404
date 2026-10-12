@@ -7,6 +7,7 @@ import {
 import { TempoField } from "./TempoField";
 import { CardToggle, PatternsToggle, SlicerToggle } from "./CardToggle";
 import { IconPlug, IconUnplug, Spinner } from "./icons";
+import { SourceLink } from "./Legal";
 
 const LABEL: Record<string, string> = {
   unsupported: "This browser does not support Web Serial",
@@ -81,6 +82,7 @@ export function TopBar() {
         <span class="brand-mark" aria-hidden="true"><i /><i /><i /><i /></span>
         <span class="brand-name">Nexus<b>-404</b></span>
         <span class="brand-sub">for SP-404MKII</span>
+        <SourceLink />
       </div>
 
       <div class={`conn conn-${c}`}>

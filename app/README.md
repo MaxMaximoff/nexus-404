@@ -18,6 +18,10 @@ https://soundplayground.twc1.net/nexus-404/.
 
 Close the official SP-404MKII App first: only one program can open the port.
 
+License: GNU AGPL-3.0 ([../LICENSE](../LICENSE)); third-party code: [../THIRD_PARTY.md](../THIRD_PARTY.md).
+The app links to the source of the very build it is (header "Source", page footer), so deploy
+only through `npm run ship` from committed source.
+
 `src/sp404/` is the protocol library (`SP404Device`, `WebSerialTransport`, `SampleUploader`, SMP and
 audio helpers). Every outgoing message passes `guard.ts`, which only lets through reads, preview,
 pad selection, set-BPM and the import sequence for the pad being imported; Init, delete, move and
