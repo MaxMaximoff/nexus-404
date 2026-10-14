@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
-  CH_CONTROL, CH_FILE, FileReq, FrameDecoder, O_CREAT_TRUNC_RDWR, SP404Device, assignSampleBlock, bpmFromFileName,
+  CH_CONTROL, CH_FILE, FileReq, FrameDecoder, O_CREAT_TRUNC_RDWR, SP404Device, assignSampleBlock, bpmFromFileName, loopPattern, patternDir, patternPath, writePattern,
   padSpeed, padFieldOf, bpmFromLength, trimAndNormalize, floatBlocksToPcm, encodeWav, decodeAudio, computePeaks, computeEnvelope, findSound, ENVELOPE_BLOCK, encodeLong, encodeShort, makeGuard, md5, parseBpmInput, parseFileReply, parsePadBlock, parseSmpHeader,
   samplePath, septDec, septEnc, smpHeader, buildSmp, SampleUploader, newJob, type ImportJob, padLayout, groupSampleName, smpToPcm, deviceErrorText, frameToByte, remotePath, type SP404Transport,
 } from "./index";
@@ -265,6 +265,7 @@ describe("guard", () => {
 describe("device against a scripted SP", () => {
   /** A fake SP that answers the import sequence the way the real one did (log 2026-10-06). */
   function fakeSp() {
+    let currentProject = 3;
     const files = new Map<string, Uint8Array>();
     let open: { path: string; pos: number } | null = null;
     const sent: string[] = [];
@@ -295,7 +296,7 @@ describe("device against a scripted SP", () => {
     function answer(ch: number, p: Uint8Array) {
       sent.push(`${ch}:${hex(p.subarray(0, 5))}`);
       if (ch === CH_CONTROL) {
-        if (p[0] === 0xfe) reply(ch, [0x7e, 3, 0, 2, 0, 1, 0, 0, 0xff, 0xff, 0xff, 0xff, 0, 2, 1, 0, 0, 0x0b, 0x33]);
+        if (p[0] === 0xfe) reply(ch, [0x7e, currentProject, 0, 2, 0, 1, 0, 0, 0xff, 0xff, 0xff, 0xff, 0, 2, 1, 0, 0, 0x0b, 0x33]);
         else if (p[0] === 0x9e) reply(ch, block(p[1]));
         else if (p[0] === 0xfd) {
           const s = new Uint8Array(147), dv = new DataView(s.buffer);
@@ -312,7 +313,7 @@ describe("device against a scripted SP", () => {
           reply(ch, [0x11, 0]); reply(ch, [0x11, 0]); reply(ch, [0x1a, 3]);
         }
         else if (p[0] === 0x91) reply(ch, [0x11, 0]);
-        else if (p[0] === 0x9a) reply(ch, [0x1a, 0]);
+        else if (p[0] === 0x9a) { currentProject = p[1]; reply(ch, [0x1a, 0]); }
         else if (p[0] === 0x95) {
           const src = p[1] | (p[2] << 8), dst = p[3] | (p[4] << 8), a = blocks.get(src), b = blocks.get(dst);
           const at = (blk: Uint8Array | undefined, pad: number) => { if (blk) { blk[1] = pad & 0xff; blk[2] = pad >> 8; blocks.set(pad, blk); } else blocks.delete(pad); };
@@ -539,6 +540,46 @@ describe("device against a scripted SP", () => {
     await dev.exclusive((d) => d.importSmp(4, 33, buildSmp(new Int16Array(48000 * 2), 2), "s"));
     return { sp, dev };
   }
+
+  it("applies loop playback defaults and preserves unrelated mode flags", async () => {
+    const { sp, dev } = await loaded();
+    sp.setField(33, 4, 1); sp.setField(33, 8, 0); sp.setField(33, 17, 1); sp.setField(33, 10, 0x23);
+    const b = await dev.exclusive((d) => d.setLoopPlayback(4, 33));
+    expect(b).toMatchObject({ gate: false, bpmSync: true, vinyl: false, vari: 2, flags: 0x25, oneShot: true, fixedVelocity: true });
+    expect(sp.params).toEqual([[0x6a, 33, 0], [0x6e, 33, 1], [0x77, 33, 0], [0x70, 33, 0x25]]);
+  });
+
+  function patternDevice() {
+    const sp = fakeSp(), dev = new SP404Device(sp.t), dir = patternDir(4);
+    sp.dirs.set(remotePath(dir.slice(0, dir.lastIndexOf("/"))), ["PTN/"]);
+    // Simulate the physical unit's project loading delay; file transfer/guard/readback remain real.
+    vi.spyOn(dev as unknown as { waitProject(p1: number): Promise<void> }, "waitProject").mockResolvedValue(undefined);
+    const items = [16, 17].map((slot, i) => ({ slot, bytes: writePattern(loopPattern(slot, i ? 64 : 8, 4)) }));
+    return { sp, dev, items };
+  }
+  it("writes long patterns as a batch, verifies files, and reloads the project once", async () => {
+    const { sp, dev, items } = patternDevice();
+    const r = await dev.exclusive((d) => d.writePatternsAndReload(4, items, 1));
+    expect(r).toEqual({ done: 2, kept: true, cancelled: false });
+    for (const { slot, bytes } of items) expect(sp.files.get(remotePath(patternPath(4, slot)))).toEqual(bytes);
+    expect(sp.sent.filter((s) => s.startsWith("5:9a"))).toHaveLength(2);
+    expect(dev.policy.patternWrite).toBeNull(); expect(dev.policy.writableHandles.size).toBe(0);
+  });
+  it("checks every pattern slot before writing and preserves an occupied slot", async () => {
+    const { sp, dev, items } = patternDevice(), existing = new Uint8Array([1, 2, 3]);
+    sp.files.set(remotePath(patternPath(4, 17)), existing);
+    await expect(dev.exclusive((d) => d.writePatternsAndReload(4, items, 1))).rejects.toThrow(/occupied/);
+    expect(sp.files.get(remotePath(patternPath(4, 17)))).toEqual(existing);
+    expect(sp.files.has(remotePath(patternPath(4, 16)))).toBe(false);
+    expect(sp.sent.filter((s) => s.startsWith("5:9a"))).toHaveLength(0);
+  });
+  it("stops between pattern writes and reloads the successfully written portion", async () => {
+    const { sp, dev, items } = patternDevice();
+    const r = await dev.exclusive((d) => d.writePatternsAndReload(4, items, 1, () => {}, () => sp.files.has(remotePath(patternPath(4, 16)))));
+    expect(r).toEqual({ done: 1, kept: true, cancelled: true });
+    expect(sp.files.has(remotePath(patternPath(4, 17)))).toBe(false);
+    expect(sp.sent.filter((s) => s.startsWith("5:9a"))).toHaveLength(2);
+  });
 
   it("sets Level, Gate, Loop and BPM Sync and returns the block as re-read", async () => {
     const { sp, dev } = await loaded();

@@ -3,23 +3,22 @@
 // files to a new folder of IMPORT/ on the SD card. From there they go onto pads like any card file
 // (drag from the card browser; the BPM is in each file name).
 // A track can come as several stems of the same length (voice and instrumental from UVR, Demucs'
-// four…): one grid (from the stem that carries the beat) and the same cuts. The ticked stems are
-// written: one as it is into its own subfolder (vocals/), several mixed into one file per loop
-// (mix/, or drums+bass/ for some of them), so the numbers match across subfolders.
+// four…): one grid (from the stem that carries the beat) and the same cuts. Audible grouped stems
+// are written separately into IMPORT/<group>/, named <group>_<stem>_<number>_<bpm>bpm.wav.
 // Or the stems go in groups (vocal, drums, bass, others), each mixed into one sound per loop and
 // laid out on pads, a group a column and a loop a row (sp404/groups.ts).
 
 import { batch, computed, effect, signal } from "@preact/signals";
 import {
   BPM_MAX_X100, BPM_MIN_X100, BPM_RANGES, CARD, barFrames, computePeaks, decodeAudio, encodeWav, evenCuts, extractLoop, formatBpm, gridStem, loopFileName, mixLoop,
-  keyFullName, keyName, loopsFromCuts, type CleanLevel, type CleanRole, padName, stemBase, stemKinds, trackName, wholeBars, uniqueName, type BeatGrid, type Loop,
-  BANKS, DEFAULT_GROUP_NAMES, GROUP_COUNT, banksFor, banksText, defaultGroups, groupSampleName, groupSlugs, padLayout, type Cell, type StemFamily,
+  keyFullName, keyName, loopsFromCuts, type CleanLevel, type CleanRole, padName, stemTrackName, stemKinds, trackName, wholeBars, uniqueName, type BeatGrid, type Loop,
+  BANKS, PAD_COUNT, DEFAULT_GROUP_NAMES, GROUP_COUNT, banksFor, banksText, defaultGroups, groupSampleName, groupSlugs, padLayout, type Cell, type StemFamily,
 } from "../sp404";
 import type { EssentiaKey, EssentiaKeyAnalysis } from "../sp404/essentiaKey";
 import type { GridReply, GridRequest } from "./gridWorker";
 import { cardBusy, openCardDir, showSide, sideTab } from "./card";
 import { mainView, showView } from "./Patterns";
-import { bpmRange, conn, demo, importToPads, importing, log, notice, padPcm, pads, placeDemoPad, project, selectedBank, withDevice, writeBlockReason } from "./store";
+import { bpmRange, configureLoopPad, conn, demo, importToPads, importing, log, notice, padPcm, pads, placeDemoPad, project, selectedBank, withDevice, writeBlockReason } from "./store";
 
 const RATE = 48000;
 const MAX_MINUTES = 15;
@@ -116,6 +115,9 @@ export const slStemGroup = signal<readonly number[]>([]);
 export const slGroupNames = signal<readonly string[]>(DEFAULT_GROUP_NAMES);
 /** The bank the groups' first loops go to; the fifth loop and on go on in the next banks. */
 export const slStartBank = signal(0);
+/** Bulk mixed-loop export: first pad to consider and the card folder name. */
+export const slMixStartPad = signal(0);
+export const slMixFolder = signal("Loops");
 
 /** Stems suppressed by either their own controls or their group's controls. Mute takes priority. */
 export const slInactive = computed<ReadonlySet<number>>(() => {
@@ -184,7 +186,7 @@ export async function openTrack(files: File | File[]): Promise<void> {
   try {
     const stems = await decodeStems(list, () => id !== job);
     if (!stems) return;
-    const name = stems.length > 1 ? `${list.map((f) => stemBase(f.name)).find(Boolean) ?? "track"}.wav` : list[0]!.name;
+    const name = stemTrackName(list.map((f) => f.name));
     setTrack({ id: nextTrack++, name, stems: labelled(stems) });
     if (recall()) void findKey();
     else await analyze(true);
@@ -204,8 +206,7 @@ export async function addStems(files: File[]): Promise<void> {
     const added = await decodeStems(files, () => slTrack.value?.id !== t.id);
     if (!added) return;
     const cur = slTrack.value!;
-    // A single track named after its file is named after the stems' track from now on.
-    const name = cur.stems.length > 1 || cur.pad !== undefined ? cur.name : `${[cur.stems[0]!, ...added].map((x) => stemBase(x.name)).find(Boolean) ?? "track"}.wav`;
+    const name = cur.pad !== undefined ? cur.name : stemTrackName([...cur.stems, ...added].map((x) => x.name));
     const groups = slStemGroup.value;
     setTrack({ ...cur, name, stems: labelled([...cur.stems, ...added]) });
     // A track of one stem had no kinds: then every stem gets its group from its kind now.
@@ -231,7 +232,8 @@ export function removeStem(i: number): void {
   slStemGroup.value = slStemGroup.value.filter((_, j) => j !== i);
   if (slGridStem.value === i) slGridStem.value = 0;
   else if (slGridStem.value > i) slGridStem.value--;
-  setTrack({ ...t, stems: labelled(t.stems.filter((_, j) => j !== i)) });
+  const stems = t.stems.filter((_, j) => j !== i);
+  setTrack({ ...t, name: t.pad !== undefined ? t.name : stemTrackName(stems.map((x) => x.name)), stems: labelled(stems) });
   void findKey();
 }
 
@@ -311,6 +313,8 @@ function setTrack(t: Omit<Track, "frames">): void {
     slStemGroup.value = defaultGroups(t.stems.map((x) => x.family));
     slGroupNames.value = DEFAULT_GROUP_NAMES;
     slStartBank.value = selectedBank.value;
+    slMixStartPad.value = selectedBank.value * 16;
+    slMixFolder.value = t.name === "Stems.wav" ? "Loops" : trackName(t.name);
   }
   slTrack.value = { ...t, frames };
 }
@@ -412,6 +416,7 @@ export function setGridStem(i: number): void {
 
 /** Stem `i`'s volume in dB for every loop; the loop playing is heard with it. */
 export function setStemGain(i: number, db: number): void {
+  if (slBusy.value) return;
   const next = new Map(slGain.value);
   if (db) next.set(i, db); else next.delete(i);
   slGain.value = next;
@@ -419,6 +424,7 @@ export function setStemGain(i: number, db: number): void {
 
 /** Stem `i`'s volume in the loop starting at `bar`, in dB on top of its own (0: none). */
 export function setLoopGain(bar: number, i: number, db: number): void {
+  if (slBusy.value) return;
   const next = new Map(slLoopGain.value), m = new Map(next.get(bar) ?? []);
   if (db) m.set(i, db); else m.delete(i);
   if (m.size) next.set(bar, m); else next.delete(bar);
@@ -427,6 +433,7 @@ export function setLoopGain(bar: number, i: number, db: number): void {
 
 /** The loop at `bar` back to the stems' own volumes. */
 export function resetLoopGain(bar: number): void {
+  if (slBusy.value) return;
   const next = new Map(slLoopGain.value);
   next.delete(bar);
   slLoopGain.value = next;
@@ -628,6 +635,7 @@ export function joinNext(): void {
 }
 
 export function toggleOff(bar: number): void {
+  if (slBusy.value) return;
   const next = new Set(slOff.value);
   if (!next.delete(bar)) next.add(bar);
   slOff.value = next;
@@ -682,7 +690,7 @@ export function play(bar: number, seam = false): void {
   for (const [s, stem] of t.stems.entries()) {
     if (slInactive.value.has(s)) continue;
     for (const [loop, at] of [[a, 0], ...(b ? [[b, a.frames]] : [])] as [Loop, number][]) {
-      const pcm = extractLoop(samplesOf(stem), stem.channels, loop, fade), k = (t.stems.length > 1 ? gainOf(s, loop.bar) : 1) / 32768;
+      const pcm = extractLoop(samplesOf(stem), stem.channels, loop, fade), k = gainOf(s, loop.bar) / 32768;
       for (let c = 0; c < outCh; c++) {
         const ch = buf.getChannelData(c), from = Math.min(c, stem.channels - 1);
         for (let f = 0; f < loop.frames; f++) ch[at + f] += pcm[f * stem.channels + from]! * k;
@@ -737,15 +745,19 @@ export const slCardBlock = computed<string | null>(() =>
     : writeBlockReason.value ?? (cardBusy.value || slBusy.value ? "Card is busy — wait for the operation to finish" : null)
     ?? (slCleaning.value ? "Cleaning the stems — a moment" : null));
 /** Why the chosen loops cannot be written now, or null. */
-export const slWriteBlock = computed<string | null>(() => slCardBlock.value ?? slStemBlock.value ?? (!slChosen.value.length ? "No loops chosen" : null));
+export const slWriteBlock = computed<string | null>(() => slCardBlock.value ?? slCardStemBlock.value ?? (!slChosen.value.length ? "No loops chosen" : null));
 /** Why no loop can be written for want of stems, or null. */
 export const slStemBlock = computed<string | null>(() => (slTrack.value && !writtenStems(slTrack.value).length ? "No stem is audible: check stem and group Mute / Solo" : null));
+export const slCardStemBlock = computed<string | null>(() => {
+  const t = slTrack.value;
+  return slStemBlock.value ?? (t && !cardOutputs(t).length ? "No audible stem has a group: choose a group in the stem dropdown" : null);
+});
 
-/** What the loops are written as: the ticked stems, one as it is, several mixed into one file. */
+/** An audio output: one stem for card export, several mixed for the pad groups. */
 export interface Output {
-  /** Subfolder in the track's folder ("" for a track of one stem): the stem's label, "mix" for all, "drums+bass" for some. */
+  /** Folder/group name; empty for a track of one stem. */
   label: string;
-  /** Tag in the file names ("vox", "mix"; "" for a track of one stem). */
+  /** Stem name for card export, group slug for pad groups. */
   tag: string;
   stems: Stem[];
   channels: 1 | 2;
@@ -760,153 +772,220 @@ export function outputOf(t: Track): Output | null {
   return { label: w.length === t.stems.length ? "mix" : w.map((x) => x.label).join("+"), tag: "mix", stems: w, channels: w.some((x) => x.channels === 2) ? 2 : 1 };
 }
 
-/** The card folder for the open track as it will be named, with the subfolder (before a `_2` for a taken name). */
-export const folderPreview = (t: Track) => { const out = outputOf(t); return `IMPORT/${trackName(t.name)}/${out?.label ? `${out.label}/` : ""}`; };
+/** Card export keeps each audible stem separate inside its group's folder. */
+export function cardOutputs(t: Track): Output[] {
+  if (t.stems.length < 2) {
+    const out = outputOf(t);
+    return out ? [out] : [];
+  }
+  return groupOutputs(t).flatMap((group) => group.stems.map((stem) => ({
+    label: group.label, tag: trackName(stem.label || stem.name, 48), stems: [stem], channels: stem.channels,
+  })));
+}
+
+/** Card filenames retain the whole group and stem name; pad name limits do not apply here. */
+export function cardFileName(t: Track, out: Output, x100: number, n: number, count: number): string {
+  if (t.stems.length < 2) return loopFileName(t.name, n, count, x100);
+  const number = String(n).padStart(Math.max(2, String(count).length), "0");
+  return `${out.label}_${out.tag}_${number}_${formatBpm(x100)}bpm.wav`;
+}
+
+export const folderPreview = (t: Track) => t.stems.length < 2 ? `IMPORT/${trackName(t.name)}/`
+  : [...new Set(cardOutputs(t).map((out) => `IMPORT/${out.label}/`))].join(", ");
 
 /** A loop of the output as 16-bit PCM: the stem as it is, or the stems summed. */
 function renderLoop(t: Track, out: Output, loop: Loop, fade: number): Int16Array {
-  const parts = out.stems.map((x) => ({ samples: samplesOf(x), channels: x.channels, gain: t.stems.length > 1 ? gainOf(t.stems.indexOf(x), loop.bar) : 1 }));
+  const parts = out.stems.map((x) => ({ samples: samplesOf(x), channels: x.channels, gain: gainOf(t.stems.indexOf(x), loop.bar) }));
   return parts.length === 1 && parts[0]!.gain === 1 ? extractLoop(parts[0]!.samples, parts[0]!.channels, loop, fade) : mixLoop(parts, loop, out.channels, fade);
 }
 
-/** Where files go on the card: IMPORT/<folder>/<sub>/ ("" sub: right in the folder). */
-interface Target { folder: string; sub: string }
-const targetPath = (tg: Target) => `IMPORT/${tg.folder}/${tg.sub ? `${tg.sub}/` : ""}`;
-/** The last place written to for a track in this session (by the track's id and the output's label); single loops go there too. */
-let lastTarget: { track: number; label: string; target: Target } | null = null;
+/** Group directories live directly under IMPORT; single tracks retain their own directory. */
+interface Target { folder: string }
+const targetPath = (tg: Target) => `IMPORT/${tg.folder}/`;
+let lastTarget: { track: number; name: string; target: Target } | null = null;
 
-/**
- * Where a write of the whole set goes. A track of several stems keeps one folder IMPORT/<track>/
- * (made when missing), and each write gets its own subfolder named after the output — `vocals`,
- * `mix`, `mix_2` when that one is taken — so a mix lands next to the stems written before. A track
- * of one stem gets a new folder each time (`_2`, `_3`…).
- */
-function batchTarget(t: Track, out: Output): Promise<Target> {
+function cardTarget(t: Track, out: Output, single: boolean): Promise<{ target: Target; taken: Set<string> }> {
   return withDevice(async (d) => {
-    const root = `${CARD}/IMPORT`, base = trackName(t.name), names = (await d.listDir(root)).map((e) => e.name);
-    if (!out.label) {
-      const folder = uniqueName(base, names);
-      await d.mkdirCard(`${root}/${folder}`);
-      return { folder, sub: "" };
-    }
-    const folder = names.find((n) => n.toLowerCase() === base.toLowerCase()) ?? base;
-    if (!(await d.stat(`${root}/${folder}`))) await d.mkdirCard(`${root}/${folder}`);
-    const sub = uniqueName(out.label, (await d.listDir(`${root}/${folder}`)).map((e) => e.name));
-    await d.mkdirCard(`${root}/${folder}/${sub}`);
-    return { folder, sub };
-  });
-}
-
-/**
- * Where a single loop goes, and the names already there: the last place this output of this track
- * was written to in this session, while it is on the card; else IMPORT/<track>/<output>/ for a
- * track of several stems (made when missing), or a new folder for a track of one stem.
- */
-function singleTarget(t: Track, out: Output): Promise<{ target: Target; taken: string[] }> {
-  return withDevice(async (d) => {
-    const root = `${CARD}/IMPORT`;
-    const names = async (tg: Target) => (await d.listDir(`${CARD}/${targetPath(tg)}`)).map((e) => e.name.toLowerCase());
-    const last = lastTarget?.track === t.id && lastTarget.label === out.label ? lastTarget.target : null;
-    if (last && (await d.stat(`${CARD}/${targetPath(last)}`))) return { target: last, taken: await names(last) };
-    if (!out.label) {
-      const folder = uniqueName(trackName(t.name), (await d.listDir(root)).map((e) => e.name));
-      await d.mkdirCard(`${root}/${folder}`);
-      return { target: { folder, sub: "" }, taken: [] };
-    }
-    const base = trackName(t.name);
-    const folder = (await d.listDir(root)).map((e) => e.name).find((n) => n.toLowerCase() === base.toLowerCase()) ?? base;
-    if (!(await d.stat(`${root}/${folder}`))) await d.mkdirCard(`${root}/${folder}`);
-    const target = { folder, sub: out.label };
-    if (!(await d.stat(`${root}/${folder}/${out.label}`))) await d.mkdirCard(`${root}/${folder}/${out.label}`);
-    return { target, taken: await names(target) };
+    const root = `${CARD}/IMPORT`, grouped = !!out.label, base = grouped ? out.label : trackName(t.name);
+    const names = async (target: Target) => new Set((await d.listDir(`${CARD}/${targetPath(target)}`)).map((e) => e.name.toLowerCase()));
+    if (!grouped && single && lastTarget?.track === t.id && lastTarget.name === base && (await d.stat(`${CARD}/${targetPath(lastTarget.target)}`)))
+      return { target: lastTarget.target, taken: await names(lastTarget.target) };
+    const entries = await d.listDir(root);
+    const existing = grouped ? entries.find((e) => e.dir && e.name.toLowerCase() === base.toLowerCase()) : undefined;
+    const target = { folder: existing?.name ?? uniqueName(base, entries.map((e) => e.name)) };
+    if (!existing) await d.mkdirCard(`${root}/${target.folder}`);
+    return { target, taken: existing ? await names(target) : new Set<string>() };
   });
 }
 
 interface CardFile { loop: Loop; name: string }
 
-/** The file of a loop numbered `n` of `count`, with the output's tag in its name. */
-function fileOf(t: Track, x100: number, loop: Loop, n: number, count: number): CardFile {
-  return { loop, name: loopFileName(t.name, n, count, x100, outputOf(t)?.tag ?? "") };
+function fileOf(t: Track, out: Output, x100: number, loop: Loop, n: number, count: number): CardFile {
+  return { loop, name: cardFileName(t, out, x100, n, count) };
 }
 
 /**
- * Write `files` of the output to where `place` says (asked once the progress shows), one by one;
- * "Stop" ends after the file being written. Then the card browser shows the folder. Returns the
- * target and how many were written.
+ * Write every stem to its group's directory, preserving existing files. Stop ends after the
+ * current file. The output list is captured before any asynchronous work.
  */
-async function writeFiles(files: CardFile[], place: (t: Track, out: Output) => Promise<Target>): Promise<{ target: Target | null; done: number }> {
-  const t = slTrack.value!, out = outputOf(t)!;
+export interface WriteResult { done: number; total: number; failed: boolean; cancelled: boolean }
+export async function writeFiles(t: Track, jobs: { out: Output; files: CardFile[]; writtenLabel?: string }[], single: boolean, keepBusy = false): Promise<WriteResult> {
   stopPlay();
   cancel = false;
   const fade = Math.round((slFadeMs.value * RATE) / 1000);
   const busy = (text: string, progress: number) => { slBusy.value = { text, progress }; cardBusy.value = { text, progress }; };
-  let target: Target | null = null, done = 0;
+  const total = jobs.reduce((n, job) => n + job.files.length, 0);
+  const targets = new Map<string, { target: Target; taken: Set<string> }>();
+  let done = 0, failed = false;
   try {
     busy("Preparing folder…", 0);
-    target = await place(t, out);
-    lastTarget = { track: t.id, label: out.label, target };
-    for (const [i, { loop, name }] of files.entries()) {
+    for (const { out, files, writtenLabel } of jobs) {
       if (cancel) break;
-      const text = files.length > 1 ? `Writing ${i + 1} of ${files.length}: ${name}` : `Writing ${name}`;
-      busy(text, i / files.length);
-      const data = new Uint8Array(encodeWav(renderLoop(t, out, loop, fade), out.channels));
-      await withDevice((d) => d.writeCardFile(`${CARD}/${targetPath(target!)}${name}`, data, (a, b) => busy(text, (i + a / b) / files.length)));
-      done++;
-      if (slTrack.value?.id === t.id) markWritten(out.label, loop);
+      let place = targets.get(out.label);
+      if (!place) { place = await cardTarget(t, out, single); targets.set(out.label, place); }
+      const { target, taken } = place;
+      if (t.stems.length < 2) lastTarget = { track: t.id, name: trackName(t.name), target };
+      for (const { loop, name: plain } of files) {
+        if (cancel) break;
+        let name = plain;
+        for (let k = 2; taken.has(name.toLowerCase()); k++) name = plain.replace(/\.wav$/, `_${k}.wav`);
+        const text = `Writing ${done + 1} of ${total}: ${name}`;
+        busy(text, done / total);
+        const data = new Uint8Array(encodeWav(renderLoop(t, out, loop, fade), out.channels));
+        await withDevice((d) => d.writeCardFile(`${CARD}/${targetPath(target)}${name}`, data, (a, b) => busy(text, (done + a / b) / total)));
+        taken.add(name.toLowerCase());
+        done++;
+        if (slTrack.value?.id === t.id) markWritten(writtenLabel ?? (out.label ? `${out.label}/${out.tag}` : ""), loop);
+      }
     }
   } catch (e) {
+    failed = true;
     notice.value = { kind: "error", text: `Write to card: ${(e as Error).message}` };
   } finally {
-    slBusy.value = null;
+    slBusy.value = keepBusy ? { text: "Refreshing card…", progress: 1 } : null;
     cardBusy.value = null;
   }
-  if (target) {
+  const dirs = [...targets.values()].map(({ target }) => target);
+  if (dirs.length) {
     showSide("card");
-    await openCardDir(["IMPORT", target.folder, ...(target.sub ? [target.sub] : [])]);
+    await openCardDir(dirs.length === 1 ? ["IMPORT", dirs[0]!.folder] : ["IMPORT"]);
   }
-  return { target, done };
+  if (done) {
+    const where = dirs.map(targetPath).join(", ");
+    log("info", `Slicer: ${done} of ${total} loop files → ${where}`);
+    if (!failed) notice.value = { kind: "info", text: `${done} loop file${done === 1 ? "" : "s"} written to ${where} on the card${cancel ? " (stopped)" : ""}. Drag them from the card onto pads.` };
+  }
+  return { done, total, failed, cancelled: cancel };
 }
 
-/** The chosen loops as WAV files on the card (see batchTarget for where); then the card browser shows them. */
+/** The chosen loops of every audible grouped stem, one WAV per stem and loop. */
 export async function writeLoops(): Promise<void> {
   const t = slTrack.value, g = slGrid.value, loops = slChosen.value;
   if (!t || !g || slWriteBlock.value) return;
-  const files = loops.map((l, i) => fileOf(t, g.x100, l, i + 1, loops.length));
-  const { target, done } = await writeFiles(files, batchTarget);
-  if (!target || !done) return;
-  log("info", `Slicer: ${done} of ${files.length} loops at ${formatBpm(g.x100)} BPM → ${targetPath(target)}`);
-  notice.value = { kind: "info", text: `${done} loop${done === 1 ? "" : "s"} written to ${targetPath(target)} on the card${done < files.length ? " (stopped)" : ""}. Drag them from the card onto pads.` };
+  await writeFiles(t, cardOutputs(t).map((out) => ({ out, files: loops.map((l, i) => fileOf(t, out, g.x100, l, i + 1, loops.length)) })), false);
 }
 
 /**
  * The loop's number in file names: its place among the chosen loops (as the list shows it), or
  * among all loops when it is not chosen; and how many that counts.
  */
-function loopNumber(bar: number): { n: number; count: number } {
+export function loopNumber(bar: number): { n: number; count: number } {
   const chosen = slChosen.value.findIndex((l) => l.bar === bar);
   return chosen >= 0 ? { n: chosen + 1, count: slChosen.value.length } : { n: slLoops.value.findIndex((l) => l.bar === bar) + 1, count: slLoops.value.length };
 }
 
-/** One loop to the card (see singleTarget for where); a name taken there gets `_2`, `_3`… */
+/** One loop of every audible grouped stem; existing filenames get `_2`, `_3`… */
 export async function writeOne(bar: number): Promise<void> {
   const t = slTrack.value, g = slGrid.value, loop = slLoops.value.find((l) => l.bar === bar);
-  if (!t || !g || !loop || slCardBlock.value || slStemBlock.value) return;
+  if (!t || !g || !loop || slCardBlock.value || slCardStemBlock.value) return;
   const { n, count } = loopNumber(bar);
-  const plain = fileOf(t, g.x100, loop, n, count);
-  let name = plain.name;
-  const { target, done } = await writeFiles([plain], async (tr, out) => {
-    const { target, taken } = await singleTarget(tr, out);
-    for (let k = 2; taken.includes(name.toLowerCase()); k++) name = plain.name.replace(/\.wav$/, `_${k}.wav`);
-    plain.name = name;
-    return target;
-  });
-  if (!target || !done) return;
-  log("info", `Slicer: bars ${loop.bar}–${loop.bar + loop.bars - 1} → ${targetPath(target)}${name}`);
-  notice.value = { kind: "info", text: `${name} written to ${targetPath(target)} on the card` };
+  await writeFiles(t, cardOutputs(t).map((out) => ({ out, files: [fileOf(t, out, g.x100, loop, n, count)] })), true);
 }
 
 export function cancelWrite(): void {
   cancel = true;
+}
+export const exportCancelled = (): boolean => cancel;
+
+// ---------- bulk mixed-loop export (independent of stem groups) ----------
+
+/** Free pads from the selected starting pad onward, skipping occupied and protected banks. */
+export const slMixPads = computed<readonly number[] | null>(() => {
+  const count = slChosen.value.length, start = slMixStartPad.value;
+  if (!Number.isInteger(start) || start < 0 || start >= PAD_COUNT) return null;
+  const free: number[] = [];
+  for (let pad = start; pad < PAD_COUNT && free.length < count; pad++)
+    if (!pads.value[pad]?.size && !project.value?.banks[pad >> 4]?.protected) free.push(pad);
+  return free.length === count ? free : null;
+});
+
+export const slMixPadBlock = computed<string | null>(() => {
+  if (!slTrack.value) return "Open a track first";
+  if (conn.value !== "ready") return "SP is not connected";
+  if (!demo.value && writeBlockReason.value) return writeBlockReason.value;
+  if (slBusy.value || importing.value) return "Writing — wait for it to finish";
+  if (slCleaning.value) return "Cleaning the stems — a moment";
+  if (slStemBlock.value) return slStemBlock.value;
+  if (!slChosen.value.length) return "No loops chosen";
+  if (!slMixPads.value) return `Not enough free pads from ${padName(slMixStartPad.value)}: choose an earlier pad or fewer loops`;
+  return null;
+});
+
+export const slMixCardBlock = computed<string | null>(() => slCardBlock.value ?? slStemBlock.value
+  ?? (!slChosen.value.length ? "No loops chosen" : !slMixFolder.value.trim() ? "Enter a folder name" : null));
+
+/** One mixed WAV per chosen loop on the card, including stems with No group. */
+export async function writeMixLoops(): Promise<void> {
+  const t = slTrack.value, g = slGrid.value, loops = slChosen.value;
+  if (!t || !g || slMixCardBlock.value) return;
+  const out = outputOf(t);
+  if (!out) return;
+  const folder = trackName(slMixFolder.value);
+  await writeFiles({ ...t, name: `${folder}.wav` }, [{
+    out: { ...out, label: "", tag: "" }, writtenLabel: "mix",
+    files: loops.map((loop, i) => ({ loop, name: loopFileName(`${folder}.wav`, i + 1, loops.length, g.x100) })),
+  }], false);
+}
+
+/** One mixed loop per free pad in the previewed order; existing samples are skipped. */
+export async function writeMixPads(): Promise<void> {
+  const t = slTrack.value, g = slGrid.value, loops = slChosen.value, layout = slMixPads.value;
+  if (!t || !g || !layout || slMixPadBlock.value) return;
+  const out = outputOf(t);
+  if (!out) return;
+  const base = t.name === "Stems.wav" ? "Loop.wav" : t.name;
+  await writePadFiles(t, loops.map((loop, i) => ({ loop, out, pad: layout[i]!, name: loopFileName(base, i + 1, loops.length, g.x100) })), g.x100);
+}
+
+/** Shared pad writer for mixes, groups and individual stems. */
+export async function writePadFiles(t: Track, files: { loop: Loop; out: Output; pad: number; name: string }[], x100: number,
+  options: { loopPlayback?: boolean; keepBusy?: boolean } = {}): Promise<WriteResult> {
+  if (!files.length) return { done: 0, total: 0, failed: false, cancelled: false };
+  stopPlay(); cancel = false;
+  const fade = Math.round(slFadeMs.value * RATE / 1000);
+  let done = 0, failed = false;
+  try {
+    for (const [i, { loop, out, pad, name }] of files.entries()) {
+      if (cancel) break;
+      slBusy.value = { text: `${i + 1} of ${files.length}: ${name} → ${padName(pad)}`, progress: i / files.length };
+      const pcm = renderLoop(t, out, loop, fade);
+      if (demo.value) await demoImport(pad, name.replace(/\.wav$/, ""), pcm, out.channels, x100);
+      else if (!(await importToPads([{ file: new File([encodeWav(pcm, out.channels)], name, { type: "audio/wav" }), pad, bpmX100: x100 }])))
+        throw new Error(`${padName(pad)}: the import failed — details in the log`);
+      if (options.loopPlayback && !(await configureLoopPad(pad))) throw new Error(`${padName(pad)}: could not apply loop playback settings`);
+      done++;
+    }
+  } catch (e) {
+    failed = true;
+    notice.value = { kind: "error", text: `Export to pads: ${(e as Error).message}` };
+  } finally { slBusy.value = options.keepBusy ? { text: "Preparing patterns…", progress: 1 } : null; }
+  if (done) {
+    const where = files.slice(0, done).map(({ pad }) => padName(pad)).join(", ");
+    log("info", `Slicer: ${done} of ${files.length} loop files → ${where}`);
+    if (!failed) notice.value = { kind: "info", text: `${done} loop file${done === 1 ? "" : "s"} written to ${where}${cancel ? " (stopped)" : ""}` };
+    selectedBank.value = files[0]!.pad >> 4;
+  }
+  return { done, total: files.length, failed, cancelled: cancel };
 }
 
 const loopKey = (l: Loop) => `${l.bar}:${l.bars}`;
@@ -1076,6 +1155,8 @@ interface Kept {
   groups?: [string, number][];
   groupNames?: string[];
   startBank?: number;
+  mixStartPad?: number;
+  mixFolder?: string;
 }
 
 const ids = new WeakMap<Stem, string>();
@@ -1130,6 +1211,8 @@ function recall(): boolean {
     slStemGroup.value = t.stems.map((x, i) => groups.get(now[i]!) ?? defaultGroups([x.family])[0]!);
     if (k.groupNames?.length === GROUP_COUNT) slGroupNames.value = k.groupNames;
     if (k.startBank !== undefined && k.startBank >= 0 && k.startBank < BANKS.length) slStartBank.value = k.startBank;
+    if (k.mixStartPad !== undefined && Number.isInteger(k.mixStartPad) && k.mixStartPad >= 0 && k.mixStartPad < PAD_COUNT) slMixStartPad.value = k.mixStartPad;
+    if (typeof k.mixFolder === "string") slMixFolder.value = k.mixFolder;
     slGrid.value = k.grid;
     slCuts.value = new Set(k.cuts);
     slOff.value = new Set(k.off ?? []);
@@ -1182,6 +1265,8 @@ effect(() => {
     groups: now.map((x, i) => [x, slStemGroup.value[i] ?? -1] as [string, number]),
     groupNames: [...slGroupNames.value],
     startBank: slStartBank.value,
+    mixStartPad: slMixStartPad.value,
+    mixFolder: slMixFolder.value,
   };
   try {
     const rest = loadKept().filter((x) => !x.stems.some((s) => now.includes(s)));

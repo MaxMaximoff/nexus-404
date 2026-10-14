@@ -1211,6 +1211,9 @@ button, input, select { font: inherit; color: inherit; }
 .sl-pads { color: var(--text-2); }
 .sl-groups { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg-sunk); }
 .sl-groups-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; font-size: 12.5px; }
+.sl-export-folder { width: 150px; text-align: left; }
+.sl-export-file-preview { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--text-2); font-size: 11px; }
+.sl-export-file-preview code { min-width: 0; overflow-wrap: anywhere; }
 .sl-groups-cols { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 .sl-group { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 6px 8px; border-radius: 8px; border: 1px solid hsl(var(--gh) 70% 55% / 0.4); background: hsl(var(--gh) 70% 50% / 0.07); }
 .sl-group.empty { opacity: 0.6; border-style: dashed; }
@@ -1227,3 +1230,6 @@ button, input, select { font: inherit; color: inherit; }
 .sl-map-grid i.full { background: #4a5663; }
 .sl-map-grid i.on { background: hsl(var(--gh) 70% 60%); }
 .sl-map-grid i.bad { background: var(--danger); box-shadow: 0 0 0 1px var(--danger); color: #fff; }
+.sl-export-pad-map .sl-map-grid i.on { background: var(--neon); }
+.sl-export-pad-map .sl-map-grid i.on[class*="sl-g"] { background: hsl(var(--gh) 70% 60%); }
+.sl-export-pad-map .sl-map-grid i.on.bad { background: var(--danger); }

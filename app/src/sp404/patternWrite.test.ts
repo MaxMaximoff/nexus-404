@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parsePattern, rebuildDiff, writePattern, type Pattern } from "./pattern";
+import { loopPattern, parsePattern, rebuildDiff, writePattern, type Pattern } from "./pattern";
 import { addNote, moveNote, removeNote, setBars, setVelocity } from "./patternEdit";
 
 const file = (...recs: number[][]) => Uint8Array.from(recs.flat());
@@ -31,6 +31,19 @@ const SP_LIKE = file(
 );
 
 describe("writing a pattern file", () => {
+  it.each([1, 8, 16, 32, 64])("writes a %i-bar loop with one full-velocity trigger in its matching slot", (bars) => {
+    const p = loopPattern(159, bars, 4), bytes = writePattern(p, SP_LIKE, { fresh: true }), back = parsePattern(bytes);
+    expect(back).toMatchObject({ bars, length: bars * 1920, beatsPerBar: 4, controls: [], unknown: 0 });
+    expect(notes(back)).toEqual([[0, 159, 127, 64, 119, 0x8d]]);
+    expect(bytes.length).toBeLessThan(0x10000);
+    expect(writePattern(back, bytes)).toEqual(bytes);
+  });
+  it("uses the loop's time signature when its reference is in 3/4", () => {
+    const original = SP_LIKE.slice(); original[original.length - 4] = 3;
+    const back = parsePattern(writePattern(loopPattern(16, 8, 4), original, { fresh: true }));
+    expect(back).toMatchObject({ bars: 8, beatsPerBar: 4, length: 8 * 1920 });
+    expect(() => loopPattern(0, 65, 4)).toThrow(/1–64/);
+  });
   it("writes an unedited pattern back byte for byte", () => {
     const p = parsePattern(SP_LIKE);
     expect(notes(p)).toEqual([[0, 0, 100, 64, 59, 0], [120, 2, 90, 64, 119, 0x8d], [420, 81, 90, 64, 119, 0x8d]]);

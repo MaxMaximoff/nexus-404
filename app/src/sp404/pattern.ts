@@ -64,6 +64,15 @@ export interface Pattern {
 
 export class PatternError extends Error {}
 
+/** A complete loop plays once from the first step; Gate is off on its sample. */
+export function loopPattern(pad: number, bars: number, beatsPerBar: number): Pattern {
+  if (!Number.isInteger(pad) || pad < 0 || pad >= PAD_COUNT) throw new PatternError(`No pad ${pad}`);
+  if (!Number.isInteger(bars) || bars < 1 || bars > 64) throw new PatternError("Loop patterns must be 1–64 bars");
+  if (!BEATS.includes(beatsPerBar)) throw new PatternError(`Unsupported time signature ${beatsPerBar}/4`);
+  return { bars, beatsPerBar, length: bars * beatsPerBar * PPQ, controls: [], unknown: 0,
+    notes: [{ tick: 0, seq: 0, pad, velocity: 127, offVelocity: 64, gate: PPQ / 4 - 1, pitch: 0x8d }] };
+}
+
 export function parsePattern(bytes: Uint8Array): Pattern {
   if (bytes.length < 2 * REC || bytes.length % REC) throw new PatternError(`Pattern file ${bytes.length} bytes — not a multiple of 8`);
   const notes: PatternNote[] = [], controls: PatternControl[] = [];
@@ -204,7 +213,7 @@ function noteRecord(n: PatternNote, base?: Uint8Array): Uint8Array {
  * with the length in bars (bytes 0 and 6) changed only when the bars changed.
  * With `fresh`, the original is only a template for a new pattern: of its records only the
  * time-only ones stay (fillers and the `…FF` one), not its notes, control changes, erased events or
- * unknown records; its trailer gives the time signature, with this pattern's bars.
+ * unknown records; its trailer is kept with this pattern's time signature and bars.
  * Without an original (a diagnostic of how we lay a file out), notes and control changes are
  * written in tick order with `trailer` (or the one SP files have) and no extra records.
  */
@@ -254,6 +263,11 @@ export function writePattern(p: Pattern, original?: Uint8Array | null, opts: { t
 
   const t = parts ? parts.trailer.slice() : trailer ? trailer.slice() : Uint8Array.of(p.bars, 0, 0, 0, Math.max(0, BEATS.indexOf(p.beatsPerBar)), 0x80, p.bars, 1);
   if (parts) {
+    if (p.beatsPerBar !== (BEATS[parts.trailer[4]] ?? 4)) {
+      const code = BEATS.indexOf(p.beatsPerBar);
+      if (code < 0) throw new PatternError(`Unsupported time signature ${p.beatsPerBar}/4`);
+      t[4] = code;
+    }
     const was = parts.trailer[0] || Math.round(parts.length / ((BEATS[parts.trailer[4]] ?? 4) * PPQ));
     if (p.bars !== was) {
       if (parts.trailer[6] === parts.trailer[0]) t[6] = p.bars;

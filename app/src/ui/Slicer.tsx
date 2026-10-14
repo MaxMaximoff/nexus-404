@@ -2,22 +2,23 @@
 // to a new folder of IMPORT/ on the SD card (logic in slice.ts).
 
 import { useEffect, useRef, useState } from "preact/hooks";
-import { BANKS, BPM_RANGES, GROUP_COUNT, ROWS, barEdge, barFrames, banksFor, banksText, camelot, formatBpm, groupSampleName, groupSlugs, keyFullName, keyName, loopFileName, padName, parseBpmInput } from "../sp404";
+import { BPM_RANGES, barEdge, barFrames, camelot, formatBpm, keyFullName, keyName, padName, parseBpmInput } from "../sp404";
 import { AUDIO_RE } from "./card";
 import { mainView } from "./Patterns";
 import {
-  OVERVIEW_COLS, addStems, analyze, cancelWrite, folderPreview, removeStem, setGridStem, slGridStem, slMuted, slSilent, slStemBlock, toggleMute,
-  outputOf, replay, resetLoopGain, setLoopGain, setStemGain, slGain, slLoopGain, slClean, slCleaning, slKey, slKeyError, slKeyStem, findKey, type Stem, cutEvery, joinNext, nudge, openTrack, play, playheadFrame, resetGrid, selLoop, selStep, setAllOff, setBar1, setPreRoll,
-  setTempo, slBars, slBusy, slChosen, slCuts, slDetected, slEvery, slFadeMs, slGrid, slLoops, slMetronome, slOff, slPickBar1, slPlay, slPreRollMs, slSel,
-  slCardBlock, slState, slTrack, slWriteBlock, writeOne, splitSel, stopPlay, toggleCut, toggleOff, togglePlay, writeLoops, type Track,
+  OVERVIEW_COLS, addStems, analyze, removeStem, setGridStem, slGridStem, slMuted, slSilent, toggleMute,
+  outputOf, replay, resetLoopGain, setLoopGain, setStemGain, slGain, slLoopGain, slClean, slCleaning, slKey, slKeyError, slKeyStem, findKey, type Stem, cutEvery, joinNext, nudge, openTrack, play, playheadFrame, resetGrid, selLoop, selStep, setBar1, setPreRoll,
+  setTempo, slBars, slBusy, slCuts, slDetected, slEvery, slFadeMs, slGrid, slLoops, slMetronome, slOff, slPickBar1, slPlay, slPreRollMs, slSel,
+  slState, slTrack, splitSel, stopPlay, toggleCut, toggleOff, togglePlay, type Track,
   slRestored, startOver, writtenAs,
-  setStemGroup, groupOutputs, renameGroup, slFreeStart, slGroupBlock, slGroupNames, slLayout, slPadConflicts, slStartBank, slStemGroup, writeGroups,
-  slSolo, slGroupMuted, slGroupSolo, slInactive, toggleSolo, toggleGroupMute, toggleGroupSolo,
+  setStemGroup, slGroupNames, slStemGroup, slSolo, slGroupMuted, slGroupSolo, slInactive, toggleSolo, toggleGroupMute, toggleGroupSolo,
 } from "./slice";
+import { ExportPanel } from "./SliceExportPanel";
+import { exportLoops, exportPadCells, exportRunning, exportTarget } from "./sliceExport";
 import { stemLanes, type StemLane } from "./sliceLanes";
-import { bpmRange, pads } from "./store";
+import { bpmRange } from "./store";
 import { columns } from "./Waveform";
-import { IconPlay, IconPlus, IconScissors, IconStop, IconUpload, IconX } from "./icons";
+import { IconPlay, IconPlus, IconScissors, IconStop, IconX } from "./icons";
 
 const RATE = 48000;
 const fmtTime = (frames: number) => { const s = frames / RATE; return `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, "0")}`; };
@@ -39,7 +40,6 @@ export function SlicerPane() {
         if (slPlay.value && slSel.value !== null) play(slSel.value);
       } else if (k.toLowerCase() === "s") splitSel();
       else if (k.toLowerCase() === "j") joinNext();
-      else if (k === "Enter" && slSel.value !== null) toggleOff(slSel.value);
       else if (k === "Escape") { slPickBar1.value = false; stopPlay(); }
       else return;
       e.preventDefault();
@@ -73,7 +73,7 @@ export function SlicerPane() {
             <IconScissors />
             <b>Drop a long track or its stems here, or open them</b>
             <span class="muted">WAV, AIFF, FLAC, MP3… up to 15 minutes. Tempo and bars are found here; the loops are written to a new folder of IMPORT on the SD card, and from there you put them on pads.</span>
-            <span class="muted">Stems of one track (vocals and instrumental from UVR, the four of Demucs…): drop them together. They share one grid and the same cuts; each stem's loops go to its own subfolder with matching numbers.</span>
+            <span class="muted">Stems of one track (vocals and instrumental from UVR, the four of Demucs…): drop them together. They share one grid and the same cuts; each stem's loops go to its group's folder with matching numbers.</span>
           </div>
         ) : (
           <>
@@ -81,7 +81,7 @@ export function SlicerPane() {
             <CutBar />
             <StemBar track={t} />
             {st === "analyzing" ? <div class="sl-wave sl-wave-wait muted">Finding tempo and bars…</div> : slGrid.value && <SliceWave track={t} />}
-            {slGrid.value && st === "ready" && <><LoopMix track={t} /><LoopList />{t.stems.length > 1 && <GroupPanel track={t} />}<WriteBar track={t} /></>}
+            {slGrid.value && st === "ready" && <><LoopMix track={t} /><LoopList /><ExportPanel /></>}
           </>
         )}
     </section>
@@ -95,8 +95,9 @@ function Gain({ value, min, max, label, onSet }: { value: number; min: number; m
   return (
     <span class="sl-gain" title={`${label}: ${fmtDb(value)} (double-click: 0 dB)`}>
       <input type="range" min={min} max={max} step={0.5} value={value} aria-label={label}
+        disabled={!!slBusy.value}
         onInput={(e) => onSet(+(e.target as HTMLInputElement).value)} onChange={replay}
-        onDblClick={() => { onSet(0); replay(); }} />
+        onDblClick={() => { if (!slBusy.value) { onSet(0); replay(); } }} />
       <span class={`sl-gain-v ${value ? "set" : ""}`}>{fmtDb(value)}</span>
     </span>
   );
@@ -106,7 +107,7 @@ function Gain({ value, min, max, label, onSet }: { value: number; min: number; m
 function LoopMix({ track }: { track: Track }) {
   const l = selLoop();
   if (!l || track.stems.length < 2) return null;
-  const m = slLoopGain.value.get(l.bar), n = slChosen.value.findIndex((x) => x.bar === l.bar);
+  const m = slLoopGain.value.get(l.bar), n = slLoops.value.findIndex((x) => x.bar === l.bar);
   return (
     <div class="sl-bar sl-loopmix">
       <span class="muted">Loop {n >= 0 ? String(n + 1).padStart(2, "0") : "—"} · bars {l.bar}–{l.bar + l.bars - 1} · volume</span>
@@ -116,7 +117,7 @@ function LoopMix({ track }: { track: Track }) {
           <Gain value={m?.get(i) ?? 0} min={-12} max={12} label={`${x.label} in this loop, on top of its own volume`} onSet={(v) => setLoopGain(l.bar, i, v)} />
         </span>
       ))}
-      {m ? <button type="button" class="btn btn-ghost" onClick={() => { resetLoopGain(l.bar); replay(); }} title="This loop back to the stems' own volumes">Reset</button>
+      {m ? <button type="button" class="btn btn-ghost" disabled={!!slBusy.value} onClick={() => { resetLoopGain(l.bar); replay(); }} title="This loop back to the stems' own volumes">Reset</button>
         : <span class="muted small">on top of each stem's own volume</span>}
     </div>
   );
@@ -140,7 +141,7 @@ function StemBar({ track }: { track: Track }) {
         </label>
       )}
       <button type="button" class="btn" disabled={busy} onClick={() => input.current?.click()}
-        title="Add stems of this track (the same length): each gets its own subfolder on the card"><IconPlus /> Add stem…</button>
+        title="Add stems of this track (the same length): each is exported separately into its group's folder on the card"><IconPlus /> Add stem…</button>
       <input ref={input} type="file" accept="audio/*,.wav,.aif,.aiff,.flac,.mp3,.ogg,.m4a" multiple hidden
         onChange={(e) => { void addStems([...((e.target as HTMLInputElement).files ?? [])]); (e.target as HTMLInputElement).value = ""; }} />
     </div>
@@ -372,7 +373,7 @@ function SliceWave({ track }: { track: Track }) {
     return next;
   });
   const drag = useRef<{ x: number; view: View; moved: boolean } | null>(null);
-  const g = slGrid.value!, bars = slBars.value, loops = slLoops.value, cuts = slCuts.value, off = slOff.value, sel = slSel.value;
+  const g = slGrid.value!, bars = slBars.value, loops = slLoops.value, cuts = slCuts.value, sel = slSel.value;
   const pre = Math.round((slPreRollMs.value * RATE) / 1000);
   const span = view.to - view.from;
   const X = (f: number) => ((f - view.from) / span) * size.w;
@@ -495,13 +496,12 @@ function SliceWave({ track }: { track: Track }) {
       cursor = Math.max(cursor, l.start + l.frames);
     }
     if (cursor < view.to) x.fillRect(X(cursor), 0, w - X(cursor), h);
-    // The loops: alternate washes, left-out ones dimmed, the picked one outlined.
+    // The loops: alternate washes, the picked one outlined.
     x.font = "600 11px 'Inter Variable', system-ui, sans-serif";
     loops.forEach((l, i) => {
-      const on = !off.has(l.bar);
       const x0 = X(l.start), x1 = X(l.start + l.frames);
       if (x1 < 0 || x0 > w) return;
-      x.fillStyle = !on ? "rgba(6, 10, 14, 0.62)" : `hsl(${ah} 90% 50% / ${l.bar === sel ? 0.16 : i % 2 ? 0.03 : 0.08})`;
+      x.fillStyle = `hsl(${ah} 90% 50% / ${l.bar === sel ? 0.16 : i % 2 ? 0.03 : 0.08})`;
       x.fillRect(x0, 18, x1 - x0, h - 18);
       if (l.bar === sel) {
         x.strokeStyle = `hsl(${ah} 90% 62%)`;
@@ -545,7 +545,7 @@ function SliceWave({ track }: { track: Track }) {
       x.beginPath(); x.moveTo(hx, 0); x.lineTo(hx, h); x.stroke();
       x.setLineDash([]);
     }
-  }, [g, loops, cuts, off, sel, bars, view.from, view.to, size.w, size.h, slPickBar1.value, hover, pre]);
+  }, [g, loops, cuts, sel, bars, view.from, view.to, size.w, size.h, slPickBar1.value, hover, pre]);
 
   // The playhead follows the sound.
   useEffect(() => {
@@ -590,12 +590,12 @@ function SliceWave({ track }: { track: Track }) {
   const l = selLoop();
   let loopNumber = 0;
   const loopLabels = loops.flatMap((loop) => {
-    const on = !off.has(loop.bar), number = on ? ++loopNumber : null;
+    const number = ++loopNumber;
     const left = Math.max(0, (loop.start - view.from) / span);
     const right = Math.min(1, (loop.start + loop.frames - view.from) / span);
     if (right <= left) return [];
-    const label = `${number === null ? "off" : String(number).padStart(2, "0")} · ${loop.bars} bar${loop.bars === 1 ? "" : "s"}`;
-    return [{ loop, on, left, width: right - left, label }];
+    const label = `${String(number).padStart(2, "0")} · ${loop.bars} bar${loop.bars === 1 ? "" : "s"}`;
+    return [{ loop, left, width: right - left, label }];
   });
 
   return (
@@ -644,8 +644,8 @@ function SliceWave({ track }: { track: Track }) {
       <div class="sl-loop-ruler" aria-label="Loop numbers and lengths in bars">
         {multi && <div class="sl-loop-ruler-head">Loops</div>}
         <div class="sl-loop-ruler-area">
-          {loopLabels.map(({ loop, on, left, width, label }) => (
-            <span key={loop.bar} class={`sl-loop-label ${on ? "" : "off"} ${loop.bar === sel ? "sel" : ""}`}
+          {loopLabels.map(({ loop, left, width, label }) => (
+            <span key={loop.bar} class={`sl-loop-label ${loop.bar === sel ? "sel" : ""}`}
               style={{ left: `${left * 100}%`, width: `${width * 100}%` }}
               title={`${label} · bars ${loop.bar}–${loop.bar + loop.bars - 1}`}>
               {label}
@@ -661,7 +661,7 @@ function SliceWave({ track }: { track: Track }) {
         <button class="btn btn-ghost" disabled={!l} title="Zoom to the picked loop"
           onClick={() => l && setView(clamp(l.start - l.frames * 0.1, l.frames * 1.2))}>Loop</button>
         <span class="wave-view">
-          {slPickBar1.value ? "Click the beat where a bar starts" : "Click a bar line to cut · click a loop to hear it · Space, ←/→, S, J, Enter"}
+          {slPickBar1.value ? "Click the beat where a bar starts" : "Click a bar line to cut · click a loop to hear it · Space, ←/→, S, J"}
           {" · "}{fmtTime(Math.max(0, view.from))}–{fmtTime(Math.min(track.frames, view.to))}
         </span>
       </div>
@@ -669,44 +669,41 @@ function SliceWave({ track }: { track: Track }) {
   );
 }
 
-/** Every loop: in or out of the write, listen, the joint with the next one. */
+/** Loop checkboxes control inclusion in export; numbering stays tied to the original list. */
 function LoopList() {
   const loops = slLoops.value, off = slOff.value, sel = slSel.value, t = slTrack.value!, playing = slPlay.value;
-  const chosen = slChosen.value;
+  const chosen = exportLoops.value;
   const out = outputOf(t);
   const bytes = out ? chosen.reduce((s, l) => s + l.frames * out.channels * 2 + 44, 0) : 0;
   const silent = slSilent.value, multi = t.stems.length > 1;
   const onCard = loops.filter((l) => writtenAs(l).length).length;
-  // The pads each chosen loop's groups go to (a row of a bank).
+  // The destinations in the active unified export preview.
   const rowPads = new Map<number, number[]>();
-  for (const c of slLayout.value ?? []) {
-    const bar = chosen[c.loop]?.bar;
+  for (const c of exportTarget.value !== "card" ? exportPadCells.value ?? [] : []) {
+    const bar = exportLoops.value[c.loop]?.bar;
     if (bar !== undefined) rowPads.set(bar, [...(rowPads.get(bar) ?? []), c.pad]);
   }
-  let n = 0;
   return (
     <div class="sl-list-wrap">
       <div class="sl-list-head">
         <span>
-          <b>{chosen.length}</b> of {loops.length} loops chosen
-          {multi && !out ? " · no audible stems" : <>{multi ? ` · ${outputText(out!)}` : ""} · {mb(bytes)}</>}
+          <b>{chosen.length}</b> of {loops.length} loops selected
+          {multi && !out ? " · no audible stems" : <>{multi ? ` · ${out?.stems.length ?? 0} audible stems` : ""} · {mb(bytes)} mixed</>}
           {onCard > 0 && <span class="sl-done"> · {onCard} already on card</span>}
         </span>
-        <button class="btn btn-ghost" disabled={!!slBusy.value || chosen.length === loops.length} onClick={() => setAllOff(false)}>All</button>
-        <button class="btn btn-ghost" disabled={!!slBusy.value || !chosen.length} onClick={() => setAllOff(true)}>None</button>
       </div>
       {!loops.length ? <p class="muted ptn-empty">No whole loops: add cuts on the bar lines, or cut every fewer bars.</p> : (
         <ol class="sl-list">
           {loops.map((l, i) => {
-            const on = !off.has(l.bar);
-            if (on) n++;
+            const included = !off.has(l.bar);
             const next = loops[i + 1];
             const joint = !!next && next.start === l.start + l.frames;
             return (
-              <li key={l.bar} class={`sl-row ${l.bar === sel ? "sel" : ""} ${on ? "" : "off"}`} onClick={() => (slSel.value = l.bar)}>
-                <input type="checkbox" checked={on} disabled={!!slBusy.value} aria-label={`Write loop of bars ${l.bar}–${l.bar + l.bars - 1}`}
+              <li key={l.bar} class={`sl-row ${l.bar === sel ? "sel" : ""} ${included ? "" : "off"}`} onClick={() => (slSel.value = l.bar)}>
+                <input type="checkbox" checked={included} disabled={exportRunning.value || !!slBusy.value}
+                  aria-label={`Include loop ${i + 1} in export`} title={included ? "Included in export" : "Excluded from export"}
                   onClick={(e) => e.stopPropagation()} onChange={() => toggleOff(l.bar)} />
-                <span class="sl-num">{on ? String(n).padStart(2, "0") : "—"}</span>
+                <span class="sl-num">{String(i + 1).padStart(2, "0")}</span>
                 <span>bars {l.bar}–{l.bar + l.bars - 1}</span>
                 <span class="muted">
                   {l.bars} bar{l.bars > 1 ? "s" : ""} · {(l.frames / RATE).toFixed(2)} s
@@ -715,7 +712,7 @@ function LoopList() {
                   )}
                   {rowPads.has(l.bar) && (() => {
                     const p = rowPads.get(l.bar)!;
-                    return <span class="sl-pads" title={`Groups → pads ${p.map(padName).join(", ")}`}> · → {padName(p[0]!)}{p.length > 1 ? `–${padName(p.at(-1)!)}` : ""}</span>;
+                    return <span class="sl-pads" title={`Export → pads ${p.map(padName).join(", ")}`}> · → {padName(p[0]!)}{p.length > 1 ? `–${padName(p.at(-1)!)}` : ""}</span>;
                   })()}
                   {silent.has(l.bar) && <span class="sl-quiet" title="These stems are silent in this loop (their files are written anyway)"> · silent: {silent.get(l.bar)!.join(", ")}</span>}
                   {(() => {
@@ -728,11 +725,6 @@ function LoopList() {
                     onClick={(e) => { e.stopPropagation(); slSel.value = l.bar; if (playing?.bar === l.bar && playing.loop) stopPlay(); else play(l.bar); }}>
                     {playing?.bar === l.bar && playing.loop ? <IconStop /> : <IconPlay />}
                   </button>
-                  <button class="icon-btn" disabled={!!(slCardBlock.value ?? slStemBlock.value)} aria-label="Write this loop to the SD card"
-                    title={slCardBlock.value ?? slStemBlock.value ?? `Write only this loop${multi && out ? ` (${outputText(out)})` : ""} to the SD card, into this track's folder`}
-                    onClick={(e) => { e.stopPropagation(); slSel.value = l.bar; void writeOne(l.bar); }}>
-                    <IconUpload />
-                  </button>
                   <button class="btn btn-ghost sl-joint" disabled={!joint} title="This loop and the next one once, to hear the joint"
                     onClick={(e) => { e.stopPropagation(); slSel.value = l.bar; if (playing?.bar === l.bar && !playing.loop) stopPlay(); else play(l.bar, true); }}>
                     {playing?.bar === l.bar && !playing.loop ? "■" : "→ next"}
@@ -742,124 +734,6 @@ function LoopList() {
             );
           })}
         </ol>
-      )}
-    </div>
-  );
-}
-
-/**
- * The stems in groups, a group a column of pads and a loop a row (four loops a bank, then the
- * next bank): the groups' names, where they start, the pads they take, and the write.
- */
-function GroupPanel({ track }: { track: Track }) {
-  const names = slGroupNames.value, slugs = groupSlugs(names), outs = groupOutputs(track), cells = slLayout.value ?? [];
-  const n = slChosen.value.length, start = slStartBank.value, free = slFreeStart.value, block = slGroupBlock.value, busy = !!slBusy.value;
-  const conflicts = new Set(slPadConflicts.value);
-  const at = new Map(cells.map((c) => [c.pad, c]));
-  const banks = Array.from({ length: Math.max(1, banksFor(n)) }, (_, k) => start + k).filter((b) => b < BANKS.length);
-  const example = outs[0] && cells[0] ? groupSampleName(outs[0].tag, cells.find((c) => c.group === outs[0]!.col)?.pad ?? cells[0].pad) : "";
-  return (
-    <div class="sl-groups">
-      <div class="sl-groups-head">
-        <b>Groups → pads</b>
-        <span class="muted small">a group a column, a loop a row; {ROWS} loops a bank, then the next bank · named after the pad</span>
-      </div>
-      <div class="sl-groups-cols">
-        {Array.from({ length: GROUP_COUNT }, (_, g) => {
-          const stems = track.stems.map((x, i) => ({ x, i })).filter(({ i }) => slStemGroup.value[i] === g);
-          const col = cells.filter((c) => c.group === g).slice(0, ROWS).map((c) => padName(c.pad));
-          return (
-            <div key={g} class={`sl-group sl-g${g} ${outs.some((o) => o.col === g) ? "" : "empty"}`}>
-              <input class="value-field" type="text" spellcheck={false} maxLength={19} value={names[g]} disabled={busy} aria-label={`Name of group ${g + 1}`}
-                title={`Group ${g + 1}: column ${g + 1} of every bank; its loops are named ${slugs[g]}_A${g + 1}…`}
-                onInput={(e) => renameGroup(g, (e.target as HTMLInputElement).value)} />
-              <span class="small sl-group-stems">
-                {stems.length ? stems.map(({ x, i }, k) => <span key={i} class={slInactive.value.has(i) ? "muted-stem" : ""}>{k ? ", " : ""}{x.label}</span>)
-                  : <span class="muted">no stems: choose this group in a stem's dropdown</span>}
-              </span>
-              <span class="muted small">{col.length ? `${col.join(" ")}${n > ROWS ? " …" : ""}` : "—"}</span>
-            </div>
-          );
-        })}
-      </div>
-      <div class="sl-bar sl-groups-row">
-        <label class="sl-field">
-          <span class="muted">From bank</span>
-          <select value={start} disabled={busy} onChange={(e) => (slStartBank.value = +(e.target as HTMLSelectElement).value)}>
-            {[...BANKS].map((b, i) => <option key={b} value={i}>{b}</option>)}
-          </select>
-        </label>
-        {free !== null && free !== start && (conflicts.size > 0 || !slLayout.value) && (
-          <button type="button" class="btn btn-ghost" disabled={busy} onClick={() => (slStartBank.value = free)}
-            title="Start from the first bank where every pad the loops take is free">First free: {BANKS[free]}</button>
-        )}
-      </div>
-      {n > 0 && slLayout.value && (
-        <div class="sl-maps">
-          {banks.map((b) => (
-            <div key={b} class="sl-map">
-              <span class="sl-map-bank">{BANKS[b]}</span>
-              <div class="sl-map-grid">
-                {Array.from({ length: 16 }, (_, k) => {
-                  const pad = b * 16 + k, c = at.get(pad), p = pads.value[pad], bad = conflicts.has(pad);
-                  const title = `${padName(pad)}: ${c ? `${slugs[c.group]} · loop ${String(c.loop + 1).padStart(2, "0")}` : "stays as it is"}${p?.size ? ` · now “${p.name}”` : ""}${bad ? " — not free" : ""}`;
-                  return <i key={k} class={`${c ? `sl-g${c.group} on` : ""} ${p?.size ? "full" : ""} ${bad ? "bad" : ""}`} title={title}>{c ? c.loop + 1 : ""}</i>;
-                })}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-      <div class="sl-write">
-        <span class={`small sl-write-text ${block ? "muted" : ""}`}>
-          {block ?? <>
-            <b>{n}</b> loop{n === 1 ? "" : "s"} × <b>{outs.length}</b> group{outs.length === 1 ? "" : "s"}
-            <> → pads <b>{banksText(start, n)}</b></>
-            {example && <> · names like {example}</>}
-          </>}
-        </span>
-        <button class="btn btn-primary" disabled={!!block} title={block ?? "Write every group's chosen loops"} onClick={() => void writeGroups()}>
-          <IconUpload /> Write {cells.length} loop{cells.length === 1 ? "" : "s"}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/** What is written: "inst only", "vocals + inst mixed". */
-function outputText(out: { stems: Stem[] }): string {
-  return out.stems.length === 1 ? `${out.stems[0]!.label} only` : `${out.stems.map((x) => x.label).join(" + ")} mixed`;
-}
-
-/** " (inst)", " (mix)" or nothing: what the write button writes. */
-function stemsNote(t: Track): string {
-  const out = outputOf(t);
-  return t.stems.length < 2 || !out ? "" : ` (${out.stems.length === 1 ? out.label : "mix"})`;
-}
-
-/** Where the loops go, the write button and its progress. */
-function WriteBar({ track }: { track: Track }) {
-  const busy = slBusy.value, block = slWriteBlock.value, n = slChosen.value.length;
-  return (
-    <div class="sl-write">
-      {busy ? (
-        <>
-          <div class="sl-progress" role="progressbar" aria-valuenow={Math.round(busy.progress * 100)} aria-valuemin={0} aria-valuemax={100}>
-            <span style={{ width: `${busy.progress * 100}%` }} />
-          </div>
-          <span class="small sl-write-text">{busy.text}</span>
-          <button class="btn btn-stop" onClick={cancelWrite} title="Stop after the file being written">Stop</button>
-        </>
-      ) : (
-        <>
-          <span class="muted small sl-write-text">
-            {slStemBlock.value ? slStemBlock.value
-              : <>To the SD card, {track.stems.length > 1 ? "the track's folder, a new subfolder" : "a new folder"} <b>{folderPreview(track)}</b> · files like {loopFileName(track.name, 1, Math.max(n, 1), slGrid.value!.x100, outputOf(track)?.tag ?? "")}</>}
-          </span>
-          <button class="btn btn-primary" disabled={!!block} title={block ?? "Write the chosen loops to the card"} onClick={() => void writeLoops()}>
-            <IconUpload /> Write {n} loop{n === 1 ? "" : "s"}{stemsNote(track)} to SD card
-          </button>
-        </>
       )}
     </div>
   );

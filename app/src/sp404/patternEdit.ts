@@ -14,8 +14,8 @@ export const DEFAULT_OFF_VELOCITY = 64;
 export const PITCH_ORIGINAL = 0x8d;
 /** How far the editor transposes a note, either way. */
 export const MAX_SEMITONES = 12;
-/** Longest pattern the editor makes. The SP's own limit is not known: this is a guess to be checked before writing to the unit. */
-export const MAX_BARS = 16;
+/** SP-404MKII pattern length: 1–64 bars (Roland reference manual). */
+export const MAX_BARS = 64;
 
 /** A note's length for a step of `grid` ticks: one tick short, so it ends before the next step starts. */
 export const gateFor = (grid: number): number => Math.max(1, Math.round(grid) - 1);

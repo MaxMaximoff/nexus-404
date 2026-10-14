@@ -326,6 +326,16 @@ export class SP404Device {
     return this.editPad(project1, pad, () => this.setParam(pad, PARAM_GATE, on ? 1 : 0));
   }
 
+  /** Playback defaults for exported loop mixes; retain unrelated mode flags. */
+  setLoopPlayback(project1: number, pad: number): Promise<PadBlock> {
+    return this.editPad(project1, pad, async (b) => {
+      await this.setParam(pad, PARAM_GATE, 0);
+      await this.setParam(pad, PARAM_BPM_SYNC, 1);
+      await this.setParam(pad, PARAM_VINYL, 0);
+      await this.setParam(pad, PARAM_FLAGS, (b.flags & ~VARI_MASK) | (2 << 1)); // Ensemble
+    });
+  }
+
   setLoop(project1: number, pad: number, on: boolean): Promise<PadBlock> {
     return this.editPad(project1, pad, () => this.setParam(pad, PARAM_LOOP, on ? 1 : 0));
   }
@@ -622,6 +632,44 @@ export class SP404Device {
     await this.waitProject(project1);
     const after = await this.readFile(patternPath(project1, slot));
     return { kept: !!after && after.length === bytes.length && after.every((b, i) => b === bytes[i]) };
+  }
+
+  /** New loop patterns only: preflight all slots, write the batch, reload the project once. */
+  async writePatternsAndReload(project1: number, items: readonly { slot: number; bytes: Uint8Array }[], via: number,
+    onStep: (what: string) => void = () => {}, shouldStop: () => boolean = () => false): Promise<{ done: number; kept: boolean; cancelled: boolean }> {
+    if (via === project1) throw new DeviceError("Reloading requires a different project");
+    const st = await this.requireCurrent(project1), slots = new Set<number>();
+    for (const { slot, bytes } of items) {
+      if (!Number.isInteger(slot) || slot < 0 || slot >= PAD_COUNT || slots.has(slot)) throw new DeviceError(`Invalid or duplicate pattern slot ${slot}`);
+      slots.add(slot);
+      const p = parsePattern(bytes);
+      if (p.bars < 1 || p.bars > 64 || bytes.length > 0x10000) throw new DeviceError("Loop patterns must be 1–64 bars and at most 64 KiB");
+      if (await this.stat(patternPath(project1, slot))) throw new DeviceError(`Pattern ${padName(slot)} is occupied — refresh the project`);
+    }
+    let done = 0, attempted = false, error: unknown;
+    try {
+      for (const { slot, bytes } of items) {
+        if (shouldStop()) break;
+        // Check again immediately before opening a new file with truncation.
+        if (await this.stat(patternPath(project1, slot))) throw new DeviceError(`Pattern ${padName(slot)} is occupied`);
+        onStep(`Pattern ${padName(slot)} (${done + 1}/${items.length})`);
+        attempted = true;
+        await this.putPatternFile(st, project1, slot, bytes);
+        done++;
+      }
+    } catch (e) { error = e; }
+    if (attempted) {
+      onStep(`Reloading project ${project1}`);
+      await this.selectProject(via); await this.waitProject(via);
+      await this.selectProject(project1); await this.waitProject(project1);
+    }
+    if (error) throw error;
+    let kept = true;
+    for (const { slot, bytes } of items.slice(0, done)) {
+      const after = await this.readFile(patternPath(project1, slot));
+      if (!after || after.length !== bytes.length || after.some((b, i) => b !== bytes[i])) kept = false;
+    }
+    return { done, kept, cancelled: shouldStop() };
   }
 
   /** Until the SP reports project `project1` open, then the moment it needs to load it (report §0). */

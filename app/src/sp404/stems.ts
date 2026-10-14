@@ -69,6 +69,13 @@ export function stemBase(fileName: string): string {
     .replace(/^[_ -]+|[_ -]+$/g, "");
 }
 
+/** Only a name shared by every stem identifies the track; an instrument name does not. */
+export function stemTrackName(fileNames: string[]): string {
+  if (fileNames.length === 1) return fileNames[0]!;
+  const bases = fileNames.map(stemBase), first = bases[0];
+  return first && bases.every((base) => base.toLowerCase() === first.toLowerCase()) ? `${first}.wav` : "Stems.wav";
+}
+
 /**
  * Kinds for a set of stems, each label used once (a second "vocals" becomes "vocals_2", tag "vox2");
  * a name that does not say gets "track1", "track2"… by its place.

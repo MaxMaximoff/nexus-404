@@ -135,7 +135,7 @@ describe("length and bars", () => {
     expect([q.bars, q.length, q.notes]).toEqual([4, 7680, p.notes]);
     expect(setBars({ ...empty(1), beatsPerBar: 3 }, 2).length).toBe(2 * 3 * PPQ);
     expect(setBars(p, 0).bars).toBe(1);
-    expect(setBars(p, 99).bars).toBe(16);
+    expect(setBars(p, 99).bars).toBe(64);
     expect(setBars(p, 1)).toBe(p);
   });
 
@@ -207,7 +207,7 @@ describe("rows and bars", () => {
     const q = doublePattern(p);
     expect([q.bars, q.length]).toEqual([2, 3840]);
     expect([ticks(q), ticks(q, 2)]).toEqual([[0, 1920], [960, 2880]]);
-    expect(doublePattern(setBars(p, 16))).toEqual(setBars(p, 16));
+    expect(doublePattern(setBars(p, 64))).toEqual(setBars(p, 64));
   });
 });
 

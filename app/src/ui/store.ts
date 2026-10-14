@@ -5,7 +5,7 @@ import { batch, computed, effect, signal } from "@preact/signals";
 import { safeFileName, saveFile } from "./download";
 import {
   PAD_COUNT, SP404Device, SampleUploader, WebSerialTransport, bpmFromFileName, computeEnvelope, computePeaks, isSp404Port,
-  BANKS, PPQ, encodeWav, BPM_MAX_X100, BPM_MIN_X100, BPM_RANGES, VARI_MODES, bpmFromLength, byteToFrame, detectBpm, formatBpm, newJob, padName, padSpeed, samplePath, smpToPcm,
+  BANKS, PPQ, MAX_BARS, encodeWav, BPM_MAX_X100, BPM_MIN_X100, BPM_RANGES, VARI_MODES, bpmFromLength, byteToFrame, detectBpm, formatBpm, newJob, padName, padSpeed, parsePadBlock, samplePath, smpToPcm,
   parsePattern, patternDir, patternMidiName, patternPads, patternPath, patternToMidi, rebuildDiff, slotOfFileName, writePattern,
   type BpmResult, type DeviceStatus, type ImportJob, type LogLevel, type PadBlock, type Pattern, type ProjectSettings,
 } from "../sp404";
@@ -273,7 +273,8 @@ export function scheduleReload(ms: number): void {
   if (reloadTimer) clearTimeout(reloadTimer);
   reloadTimer = setTimeout(() => {
     reloadTimer = null;
-    if (device && !importing.value) loadAll();
+    // Pattern writers reload explicitly after the entire batch, including partial writes.
+    if (device && !importing.value && !patternWriting.value) loadAll();
   }, ms);
 }
 
@@ -375,11 +376,8 @@ function reportPatternFiles(files: ReadonlyMap<number, { bytes: Uint8Array; exac
 /** A pattern being saved (what and at which stage), for the buttons. */
 export const patternWriting = signal<string | null>(null);
 
-/**
- * Longest pattern we write: the SP's own files seen so far have 1–4 bars. A pattern already longer
- * on the SP may keep its length.
- */
-export const SAVE_MAX_BARS = 4;
+/** Same 64-bar limit as the device and the pattern editor. */
+export const SAVE_MAX_BARS = MAX_BARS;
 /** Projects saved into in this session after the user confirmed it once: no question again. */
 const trustedProjects = new Set<number>();
 /** The slot whose first save into this project waits for the user's yes. */
@@ -463,7 +461,7 @@ export function saveBlockReason(slot: number): string | null {
     if (!f.exact) return "Our encoder does not reproduce this SP file: saving it would be unsafe";
   }
   const was = base && typeof base !== "string" ? base.bars : 0;
-  if (draft.p.bars > Math.max(SAVE_MAX_BARS, was)) return `Patterns longer than ${Math.max(SAVE_MAX_BARS, was)} bars have not been tested on SP`;
+  if (draft.p.bars > Math.max(SAVE_MAX_BARS, was)) return `Pattern length exceeds ${Math.max(SAVE_MAX_BARS, was)} bars`;
   return writeBlockReason.value;
 }
 
@@ -518,6 +516,38 @@ async function savePattern(slot: number): Promise<boolean> {
   } finally {
     patternWriting.value = null;
   }
+}
+
+/** Export has already been requested by the user; create only unoccupied pattern slots. */
+export async function createLoopPatterns(items: readonly { slot: number; bytes: Uint8Array }[], onStep: (what: string) => void,
+  shouldStop: () => boolean): Promise<{ done: number; kept: boolean; cancelled: boolean }> {
+  if (patterns.value === null || items.some(({ slot }) => patterns.value!.has(slot) || drafts.value.has(slot)))
+    throw new Error("Pattern slots changed — refresh the export layout");
+  const p1 = project1.value;
+  patternWriting.value = "Creating loop patterns";
+  try {
+    if (demo.value) {
+      const next = new Map(patterns.value), files = new Map(patternFiles.value);
+      let done = 0;
+      for (const { slot, bytes } of items) {
+        if (shouldStop()) break;
+        next.set(slot, parsePattern(bytes)); files.set(slot, { bytes, exact: true }); done++;
+      }
+      patterns.value = next; patternFiles.value = files;
+      return { done, kept: true, cancelled: shouldStop() };
+    }
+    const result = await withDevice((d) => d.writePatternsAndReload(p1, items, reloadVia(), (what) => {
+      patternWriting.value = what; onStep(what);
+    }, shouldStop));
+    onStep("Reading the project back");
+    await loadAll();
+    if (!result.kept) throw new Error("SP changed the pattern files while reloading the project");
+    return result;
+  } catch (e) {
+    // Show partial writes too, so the next export cannot reuse those slots.
+    if (!demo.value) await loadAll().catch(() => {});
+    throw e;
+  } finally { patternWriting.value = null; }
 }
 
 /** Read the patterns again (they change when one is recorded on the SP). */
@@ -989,6 +1019,15 @@ const onOff = (on: boolean) => (on ? "on" : "off");
 export const setBpm = (pad: number, x100: number) => editPad(pad, `BPM ${(x100 / 100).toFixed(2)}`, (d, p1) => d.setBpm(p1, pad, x100));
 export const setLevel = (pad: number, level: number) => editPad(pad, `Level ${level}`, (d, p1) => d.setLevel(p1, pad, level));
 export const setGate = (pad: number, on: boolean) => editPad(pad, `Gate ${onOff(on)}`, (d, p1) => d.setGate(p1, pad, on));
+export async function configureLoopPad(pad: number): Promise<boolean> {
+  if (!demo.value) return editPad(pad, "Loop playback: Gate off, BPM Sync on, Vinyl off, Ensemble", (d, p1) => d.setLoopPlayback(p1, pad));
+  const b = pads.value[pad];
+  if (!b?.size) return false;
+  const raw = b.raw.slice(), view = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
+  for (const [field, value] of [[4, 0], [8, 1], [17, 0], [10, (b.flags & ~0x06) | 4]]) view.setUint32(3 + field * 4, value, true);
+  setPad(parsePadBlock(raw));
+  return true;
+}
 export const setLoop = (pad: number, on: boolean) => editPad(pad, `Loop ${onOff(on)}`, (d, p1) => d.setLoop(p1, pad, on));
 export const setBpmSync = (pad: number, on: boolean) => editPad(pad, `BPM Sync ${onOff(on)}`, (d, p1) => d.setBpmSync(p1, pad, on));
 export const setPadParam = (pad: number, id: number, value: number, what: string) => editPad(pad, what, (d, p1) => d.setPadParam(p1, pad, id, value));
