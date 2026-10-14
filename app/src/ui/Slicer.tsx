@@ -11,8 +11,10 @@ import {
   setTempo, slBars, slBusy, slChosen, slCuts, slDetected, slEvery, slFadeMs, slGrid, slLoops, slMetronome, slOff, slPickBar1, slPlay, slPreRollMs, slSel,
   slCardBlock, slState, slTrack, slWriteBlock, writeOne, splitSel, stopPlay, toggleCut, toggleOff, togglePlay, writeLoops, type Track,
   slRestored, startOver, writtenAs,
-  cycleStemGroup, groupOutputs, renameGroup, slFreeStart, slGroupBlock, slGroupNames, slLayout, slPadConflicts, slStartBank, slStemGroup, writeGroups,
+  setStemGroup, groupOutputs, renameGroup, slFreeStart, slGroupBlock, slGroupNames, slLayout, slPadConflicts, slStartBank, slStemGroup, writeGroups,
+  slSolo, slGroupMuted, slGroupSolo, slInactive, toggleSolo, toggleGroupMute, toggleGroupSolo,
 } from "./slice";
+import { stemLanes, type StemLane } from "./sliceLanes";
 import { bpmRange, pads } from "./store";
 import { columns } from "./Waveform";
 import { IconPlay, IconPlus, IconScissors, IconStop, IconUpload, IconX } from "./icons";
@@ -109,7 +111,7 @@ function LoopMix({ track }: { track: Track }) {
     <div class="sl-bar sl-loopmix">
       <span class="muted">Loop {n >= 0 ? String(n + 1).padStart(2, "0") : "—"} · bars {l.bar}–{l.bar + l.bars - 1} · volume</span>
       {track.stems.map((x, i) => (
-        <span key={`${i}:${x.name}`} class={`sl-loopmix-stem ${slMuted.value.has(i) ? "muted" : ""}`}>
+        <span key={`${i}:${x.name}`} class={`sl-loopmix-stem ${slInactive.value.has(i) ? "muted" : ""}`}>
           {x.label}
           <Gain value={m?.get(i) ?? 0} min={-12} max={12} label={`${x.label} in this loop, on top of its own volume`} onSet={(v) => setLoopGain(l.bar, i, v)} />
         </span>
@@ -300,29 +302,50 @@ function mergeChannels(chans: Float32Array[]): Float32Array {
   return out;
 }
 
-/** The column at the left of the wave, a header per stem lane: mute, the grid's stem, volume, take it out. */
-function StemLanes({ track }: { track: Track }) {
+/** Group buses and indented stem headers, with shared Mute / Solo and a group selector. */
+function StemLanes({ track, rows, collapsed, toggleCollapse }: { track: Track; rows: StemLane[]; collapsed: ReadonlySet<number>; toggleCollapse: (g: number) => void }) {
   const busy = slState.value !== "ready" || !!slBusy.value;
   return (
     <div class="sl-lanes">
       <div class="sl-lanes-top" />
-      {track.stems.map((x, i) => {
-        const muted = slMuted.value.has(i), grid = slGridStem.value === i, g = slStemGroup.value[i] ?? -1;
-        const gName = g >= 0 ? groupSlugs(slGroupNames.value)[g]! : "";
+      {rows.map((row) => {
+        if (row.kind === "group") {
+          const g = row.group, name = slGroupNames.value[g] || `Group ${g + 1}`;
+          const muted = slGroupMuted.value.has(g), solo = slGroupSolo.value.has(g), empty = !row.stems.length;
+          const inactive = empty || row.stems.every((i) => slInactive.value.has(i));
+          return (
+            <div key={`group:${g}`} class={`sl-lane sl-group-lane sl-g${g} ${inactive ? "inactive" : ""}`} style={{ height: `${row.height}px` }}>
+              <button type="button" class="sl-group-fold" aria-label={`${collapsed.has(g) ? "Expand" : "Collapse"} ${name}`} aria-expanded={!collapsed.has(g)}
+                onClick={() => toggleCollapse(g)} title={`${collapsed.has(g) ? "Expand" : "Collapse"} group`}>{collapsed.has(g) ? "▸" : "▾"}</button>
+              <span class="sl-group-title"><b title={name}>{name}</b><small>{row.stems.length} stem{row.stems.length === 1 ? "" : "s"}</small></span>
+              <button type="button" class={`sl-lane-mute ${muted ? "on" : ""}`} disabled={!!slBusy.value || (empty && !muted)} aria-pressed={muted} aria-label={`Mute group ${name}`}
+                onClick={() => toggleGroupMute(g)} title={`Mute ${name}: silence every stem in this group for listening and export`}>M</button>
+              <button type="button" class={`sl-lane-solo ${solo ? "on" : ""}`} disabled={!!slBusy.value || (empty && !solo)} aria-pressed={solo} aria-label={`Solo group ${name}`}
+                onClick={() => toggleGroupSolo(g)} title={`Solo ${name}: hear and export this group's unmuted stems; multiple solos can be active`}>S</button>
+            </div>
+          );
+        }
+        const i = row.stem, x = track.stems[i]!, g = row.group, label = x.label || x.name.replace(/\.[^.]+$/, "");
+        const muted = slMuted.value.has(i), solo = slSolo.value.has(i), inactive = slInactive.value.has(i), grid = slGridStem.value === i;
         return (
-          <div key={`${i}:${x.name}`} class={`sl-lane ${muted ? "muted" : ""} ${g >= 0 ? `sl-g${g}` : ""}`}>
+          <div key={`${i}:${x.name}`} class={`sl-lane sl-stem-lane ${inactive ? "inactive" : ""} ${muted ? "muted" : ""} ${g >= 0 ? `sl-g${g}` : ""}`} style={{ height: `${row.height}px` }}>
             <div class="sl-lane-row">
-              <span class="sl-lane-name" title={x.name}>{x.label}</span>
-              <button type="button" class={`sl-lane-group ${g >= 0 ? "on" : ""}`} disabled={!!slBusy.value} onClick={() => cycleStemGroup(i)}
-                title={`${g >= 0 ? `Group ${gName}: column ${g + 1} on pads` : "In no group: not written by groups"}. Click: the next group`}>{g >= 0 ? gName : "—"}</button>
+              <span class="sl-lane-name" title={x.name}>{label}</span>
+              <select class={`sl-lane-group ${g >= 0 ? "on" : ""}`} disabled={!!slBusy.value} value={g} aria-label={`Group for ${label}`}
+                onChange={(e) => setStemGroup(i, +(e.target as HTMLSelectElement).value)} title="Choose this stem's group (a column on pads)">
+                <option value={-1}>No group</option>
+                {slGroupNames.value.map((name, group) => <option key={group} value={group}>{name || `Group ${group + 1}`}</option>)}
+              </select>
               <button type="button" class={`sl-lane-grid ${grid ? "on" : ""}`} aria-pressed={grid} disabled={busy || grid}
                 onClick={() => setGridStem(i)} title={grid ? "The grid is built from this stem" : "Build the grid from this stem"}>◆</button>
-              <button type="button" class="sl-lane-x" disabled={busy} onClick={() => removeStem(i)} aria-label={`Remove ${x.label}`} title="Take this stem out"><IconX /></button>
+              <button type="button" class="sl-lane-x" disabled={busy || track.stems.length < 2} onClick={() => removeStem(i)} aria-label={`Remove ${label}`} title="Take this stem out"><IconX /></button>
             </div>
             <div class="sl-lane-row">
-              <button type="button" class={`sl-lane-mute ${muted ? "on" : ""}`} aria-pressed={muted} onClick={() => toggleMute(i)}
-                title={muted ? `${x.label} is muted: not heard, not written; click to bring it back` : `Mute ${x.label} (several heard: written as one mix)`}>M</button>
-              <Gain value={slGain.value.get(i) ?? 0} min={-24} max={6} label={`${x.label} volume, every loop`} onSet={(v) => setStemGain(i, v)} />
+              <button type="button" class={`sl-lane-mute ${muted ? "on" : ""}`} disabled={!!slBusy.value} aria-label={`Mute ${label}`} aria-pressed={muted} onClick={() => toggleMute(i)}
+                title={muted ? `${label} is muted: not heard, not written; click to bring it back` : `Mute ${label} (several heard: written as one mix)`}>M</button>
+              <button type="button" class={`sl-lane-solo ${solo ? "on" : ""}`} disabled={!!slBusy.value} aria-label={`Solo ${label}`} aria-pressed={solo} onClick={() => toggleSolo(i)}
+                title={`Solo ${label} for listening and export; multiple solos can be active`}>S</button>
+              <Gain value={slGain.value.get(i) ?? 0} min={-24} max={6} label={`${label} volume, every loop`} onSet={(v) => setStemGain(i, v)} />
             </div>
           </div>
         );
@@ -339,6 +362,15 @@ function SliceWave({ track }: { track: Track }) {
   const [view, setView] = useState<View>({ from: 0, to: track.frames });
   const [size, setSize] = useState({ w: 600, h: 200 });
   const [hover, setHover] = useState<{ frame: number; x: number } | null>(null);
+  const [collapsed, setCollapsed] = useState<ReadonlySet<number>>(new Set());
+  const groups = slStemGroup.value;
+  const rows = stemLanes(groups, track.stems.length, collapsed);
+  const waveHeight = 18 + rows.reduce((h, row) => h + row.height, 0);
+  const toggleCollapse = (group: number) => setCollapsed((prev) => {
+    const next = new Set(prev);
+    if (!next.delete(group)) next.add(group);
+    return next;
+  });
   const drag = useRef<{ x: number; view: View; moved: boolean } | null>(null);
   const g = slGrid.value!, bars = slBars.value, loops = slLoops.value, cuts = slCuts.value, off = slOff.value, sel = slSel.value;
   const pre = Math.round((slPreRollMs.value * RATE) / 1000);
@@ -380,9 +412,54 @@ function SliceWave({ track }: { track: Track }) {
 
   // The wave: only when the view, the size or the stems change. One stem: a lane per channel;
   // several: a lane per stem (channels together), dimmer when muted; its header is in the column at the left.
-  const muted = slMuted.value, multi = track.stems.length > 1;
+  const muted = slInactive.value;
+  // Keep mixer controls reachable if removing stems leaves one stem suppressed by a group.
+  const multi = track.stems.length > 1 || muted.size > 0 || slSolo.value.size > 0 || slGroupMuted.value.size > 0 || slGroupSolo.value.size > 0;
   useEffect(() => {
     const x = prep(base.current!), ah = hue(), h = size.h;
+    if (multi) {
+      const peaks = new Map<number, { p: Float32Array; x0: number; cols: number }>();
+      track.stems.forEach((stem, si) => {
+        const a = Math.max(0, view.from), b = Math.min(stem.frames, view.to);
+        if (b <= a) return;
+        const x0 = Math.round(X(a)), cols = Math.max(1, Math.round(X(b)) - x0);
+        peaks.set(si, { p: mergeChannels(stemColumns(stem, a, b, cols)), x0, cols });
+      });
+      const hues = [330, 32, 268, 135];
+      for (const row of rows) {
+        const gh = hues[row.group] ?? ah, isGroup = row.kind === "group";
+        if (isGroup) {
+          x.fillStyle = `hsl(${gh} 60% 50% / 0.09)`;
+          x.fillRect(0, row.top, size.w, row.height);
+        }
+        const indices = isGroup ? row.stems : [row.stem];
+        const dim = indices.every((i) => muted.has(i));
+        const visible = indices.map((i) => peaks.get(i)).filter((p) => p !== undefined);
+        const mid = row.top + row.height / 2, amp = row.height * (isGroup ? 0.34 : 0.46);
+        // The group bus shows the envelope of its children, including while folded.
+        x.fillStyle = `hsl(${gh} 85% 55% / ${dim ? 0.08 : isGroup ? 0.24 : 0.36})`;
+        x.strokeStyle = `hsl(${gh} 85% 65% / ${dim ? 0.22 : 0.85})`;
+        x.lineWidth = 1;
+        if (visible.length) {
+          const from = Math.min(...visible.map((p) => p.x0)), to = Math.max(...visible.map((p) => p.x0 + p.cols));
+          const edge = (px: number, hi: boolean) => {
+            let v = hi ? 0.004 : -0.004;
+            for (const { p, x0, cols } of visible) {
+              const i = px - x0;
+              if (i >= 0 && i < cols) v = hi ? Math.max(v, p[i * 2 + 1]!) : Math.min(v, p[i * 2]!);
+            }
+            return mid - v * amp;
+          };
+          x.beginPath();
+          for (let px = from; px < to; px++) x.lineTo(px, edge(px, true));
+          for (let px = to - 1; px >= from; px--) x.lineTo(px, edge(px, false));
+          x.closePath(); x.fill(); x.stroke();
+        }
+        x.fillStyle = "rgba(255, 255, 255, 0.08)";
+        x.fillRect(0, row.top, size.w, 1);
+      }
+      return;
+    }
     const lanes: { p: Float32Array; x0: number; cols: number; stem: number }[] = [];
     track.stems.forEach((stem, si) => {
       // Only the part of the view that has audio (the view may reach past the stem's ends).
@@ -390,12 +467,11 @@ function SliceWave({ track }: { track: Track }) {
       if (b <= a) return;
       const x0 = Math.round(X(a)), cols = Math.max(1, Math.round(X(b)) - x0);
       const chans = stemColumns(stem, a, b, cols);
-      if (multi) lanes.push({ p: mergeChannels(chans), x0, cols, stem: si });
-      else chans.forEach((p) => lanes.push({ p, x0, cols, stem: si }));
+      chans.forEach((p) => lanes.push({ p, x0, cols, stem: si }));
     });
-    const n = multi ? track.stems.length : lanes.length, laneH = (h - 18) / Math.max(1, n);
+    const laneH = (h - 18) / Math.max(1, lanes.length);
     lanes.forEach(({ p, x0, cols, stem }, li) => {
-      const lane = multi ? stem : li, mid = 18 + laneH * lane + laneH / 2, amp = laneH * 0.46, dim = muted.has(stem);
+      const mid = 18 + laneH * li + laneH / 2, amp = laneH * 0.46, dim = muted.has(stem);
       x.fillStyle = `hsl(${ah} 90% 55% / ${dim ? 0.12 : 0.42})`;
       x.strokeStyle = `hsl(${ah} 85% 56% / ${dim ? 0.3 : 0.9})`;
       x.lineWidth = 1;
@@ -404,10 +480,7 @@ function SliceWave({ track }: { track: Track }) {
       for (let i = cols - 1; i >= 0; i--) x.lineTo(x0 + i, mid - Math.min(p[i * 2]!, -0.004) * amp);
       x.closePath(); x.fill(); x.stroke();
     });
-    if (!multi) return;
-    x.fillStyle = "rgba(255, 255, 255, 0.08)";
-    for (let i = 1; i < track.stems.length; i++) x.fillRect(0, Math.round(18 + laneH * i), size.w, 1);
-  }, [track, view.from, view.to, size.w, size.h, muted]);
+  }, [track, view.from, view.to, size.w, size.h, muted, groups, collapsed, multi]);
 
   // The grid, the cuts and the loops on top.
   useEffect(() => {
@@ -422,12 +495,10 @@ function SliceWave({ track }: { track: Track }) {
       cursor = Math.max(cursor, l.start + l.frames);
     }
     if (cursor < view.to) x.fillRect(X(cursor), 0, w - X(cursor), h);
-    // The loops: alternate washes, left-out ones dimmed, the picked one outlined; their numbers.
-    let n = 0;
+    // The loops: alternate washes, left-out ones dimmed, the picked one outlined.
     x.font = "600 11px 'Inter Variable', system-ui, sans-serif";
     loops.forEach((l, i) => {
       const on = !off.has(l.bar);
-      if (on) n++;
       const x0 = X(l.start), x1 = X(l.start + l.frames);
       if (x1 < 0 || x0 > w) return;
       x.fillStyle = !on ? "rgba(6, 10, 14, 0.62)" : `hsl(${ah} 90% 50% / ${l.bar === sel ? 0.16 : i % 2 ? 0.03 : 0.08})`;
@@ -436,11 +507,6 @@ function SliceWave({ track }: { track: Track }) {
         x.strokeStyle = `hsl(${ah} 90% 62%)`;
         x.lineWidth = 1.5;
         x.strokeRect(x0 + 0.75, 18.75, x1 - x0 - 1.5, h - 19.5);
-      }
-      const label = on ? `${String(n).padStart(2, "0")}${x1 - x0 > 60 ? ` · ${l.bars} bar${l.bars > 1 ? "s" : ""}` : ""}` : x1 - x0 > 40 ? "off" : "";
-      if (x1 - x0 > 26 && label) {
-        x.fillStyle = on ? `hsl(${ah} 90% 78%)` : "rgba(160, 175, 190, 0.6)";
-        x.fillText(label, Math.max(x0, 0) + 5, h - 7);
       }
     });
     if (!bars) return;
@@ -522,11 +588,21 @@ function SliceWave({ track }: { track: Track }) {
   };
   const cursor = drag.current?.moved ? "grabbing" : slPickBar1.value ? "crosshair" : hover && lineAt(hover.x) !== null ? "col-resize" : "pointer";
   const l = selLoop();
+  let loopNumber = 0;
+  const loopLabels = loops.flatMap((loop) => {
+    const on = !off.has(loop.bar), number = on ? ++loopNumber : null;
+    const left = Math.max(0, (loop.start - view.from) / span);
+    const right = Math.min(1, (loop.start + loop.frames - view.from) / span);
+    if (right <= left) return [];
+    const label = `${number === null ? "off" : String(number).padStart(2, "0")} · ${loop.bars} bar${loop.bars === 1 ? "" : "s"}`;
+    return [{ loop, on, left, width: right - left, label }];
+  });
 
   return (
     <div class="wave sl-wave-wrap">
-      <div class="sl-wave" style={multi ? { height: `${Math.max(210, 18 + track.stems.length * 64)}px` } : undefined}>
-        {multi && <StemLanes track={track} />}
+      <div class="sl-timeline">
+      <div class="sl-wave" style={multi ? { height: `${waveHeight}px` } : undefined}>
+        {multi && <StemLanes track={track} rows={rows} collapsed={collapsed} toggleCollapse={toggleCollapse} />}
         <div class="sl-wave-area">
           <canvas ref={base} class="sl-canvas" />
           <canvas ref={top} class="sl-canvas" style={{ cursor }} role="img"
@@ -565,6 +641,19 @@ function SliceWave({ track }: { track: Track }) {
           <div ref={head} class="sl-head" />
         </div>
       </div>
+      <div class="sl-loop-ruler" aria-label="Loop numbers and lengths in bars">
+        {multi && <div class="sl-loop-ruler-head">Loops</div>}
+        <div class="sl-loop-ruler-area">
+          {loopLabels.map(({ loop, on, left, width, label }) => (
+            <span key={loop.bar} class={`sl-loop-label ${on ? "" : "off"} ${loop.bar === sel ? "sel" : ""}`}
+              style={{ left: `${left * 100}%`, width: `${width * 100}%` }}
+              title={`${label} · bars ${loop.bar}–${loop.bar + loop.bars - 1}`}>
+              {label}
+            </span>
+          ))}
+        </div>
+      </div>
+      </div>
       <div class="wave-tools">
         <button class="btn btn-ghost" title="Zoom out" disabled={span >= track.frames} onClick={() => zoom(view.from + span / 2, 2)}>−</button>
         <button class="btn btn-ghost" title="Zoom in (or the mouse wheel over the wave)" disabled={span <= size.w} onClick={() => zoom(view.from + span / 2, 0.5)}>+</button>
@@ -600,7 +689,7 @@ function LoopList() {
       <div class="sl-list-head">
         <span>
           <b>{chosen.length}</b> of {loops.length} loops chosen
-          {multi && !out ? " · every stem muted" : <>{multi ? ` · ${outputText(out!)}` : ""} · {mb(bytes)}</>}
+          {multi && !out ? " · no audible stems" : <>{multi ? ` · ${outputText(out!)}` : ""} · {mb(bytes)}</>}
           {onCard > 0 && <span class="sl-done"> · {onCard} already on card</span>}
         </span>
         <button class="btn btn-ghost" disabled={!!slBusy.value || chosen.length === loops.length} onClick={() => setAllOff(false)}>All</button>
@@ -685,8 +774,8 @@ function GroupPanel({ track }: { track: Track }) {
                 title={`Group ${g + 1}: column ${g + 1} of every bank; its loops are named ${slugs[g]}_A${g + 1}…`}
                 onInput={(e) => renameGroup(g, (e.target as HTMLInputElement).value)} />
               <span class="small sl-group-stems">
-                {stems.length ? stems.map(({ x, i }, k) => <span key={i} class={slMuted.value.has(i) ? "muted-stem" : ""}>{k ? ", " : ""}{x.label}</span>)
-                  : <span class="muted">no stems: click a stem's group chip</span>}
+                {stems.length ? stems.map(({ x, i }, k) => <span key={i} class={slInactive.value.has(i) ? "muted-stem" : ""}>{k ? ", " : ""}{x.label}</span>)
+                  : <span class="muted">no stems: choose this group in a stem's dropdown</span>}
               </span>
               <span class="muted small">{col.length ? `${col.join(" ")}${n > ROWS ? " …" : ""}` : "—"}</span>
             </div>
@@ -764,7 +853,7 @@ function WriteBar({ track }: { track: Track }) {
       ) : (
         <>
           <span class="muted small sl-write-text">
-            {slStemBlock.value ? "Every stem is muted: unmute one to write its loops"
+            {slStemBlock.value ? slStemBlock.value
               : <>To the SD card, {track.stems.length > 1 ? "the track's folder, a new subfolder" : "a new folder"} <b>{folderPreview(track)}</b> · files like {loopFileName(track.name, 1, Math.max(n, 1), slGrid.value!.x100, outputOf(track)?.tag ?? "")}</>}
           </span>
           <button class="btn btn-primary" disabled={!!block} title={block ?? "Write the chosen loops to the card"} onClick={() => void writeLoops()}>

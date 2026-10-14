@@ -1119,6 +1119,14 @@ button, input, select { font: inherit; color: inherit; }
 .sl-sep { width: 1px; height: 20px; background: var(--line); margin: 0 4px; }
 .sl-detected { margin-left: auto; font-variant-numeric: tabular-nums; }
 .sl-wave-wrap { gap: 6px; }
+.sl-timeline { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--bg-sunk); }
+.sl-timeline .sl-wave { border: 0; border-radius: 0; }
+.sl-loop-ruler { display: flex; height: 24px; border-top: 1px solid var(--line); background: var(--bg-panel-raised); font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.sl-loop-ruler-head { flex: none; width: 248px; border-right: 1px solid var(--line); padding: 0 10px; line-height: 23px; color: var(--muted); }
+.sl-loop-ruler-area { position: relative; flex: 1; min-width: 0; overflow: hidden; }
+.sl-loop-label { position: absolute; top: 0; bottom: 0; padding: 0 5px; border-left: 1px solid hsl(var(--ah) 85% 55% / 0.65); line-height: 23px; color: var(--selection-ink); background: var(--a-wash); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sl-loop-label.off { background: var(--bg-sunk); color: var(--muted); border-left-color: var(--line); }
+.sl-loop-label.sel { background: hsl(var(--ah) 90% 50% / 0.2); box-shadow: inset 0 2px 0 var(--selection-edge); }
 .sl-wave { display: flex; height: 210px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg-sunk); overflow: hidden; }
 .sl-wave-area { position: relative; flex: 1; min-width: 0; }
 .sl-wave-wait { display: flex; align-items: center; justify-content: center; }
@@ -1145,9 +1153,18 @@ button, input, select { font: inherit; color: inherit; }
 .sl-progress > span { display: block; height: 100%; background: var(--neon); transition: width 0.2s; }
 .sl-stems { gap: 6px; }
 /* The stem lanes' headers, a column at the left of the wave, row for row with the lanes. */
-.sl-lanes { flex: none; width: 196px; display: flex; flex-direction: column; border-right: 1px solid var(--line); background: var(--bg-panel-raised); }
+.sl-lanes { flex: none; width: 248px; display: flex; flex-direction: column; border-right: 1px solid var(--line); background: var(--bg-panel-raised); }
 .sl-lanes-top { flex: none; height: 18px; }
-.sl-lane { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; justify-content: center; gap: 4px; padding: 0 6px 0 10px; border-top: 1px solid var(--line-soft); }
+.sl-lane { flex: none; min-height: 0; display: flex; flex-direction: column; justify-content: center; gap: 4px; padding: 0 6px 0 10px; border-top: 1px solid var(--line-soft); }
+.sl-stem-lane { padding-left: 24px; position: relative; }
+.sl-stem-lane[class*="sl-g"]::before { content: ""; position: absolute; left: 13px; top: 0; bottom: 0; width: 1px; background: hsl(var(--gh) 70% 55% / 0.35); }
+.sl-lane.inactive .sl-lane-name, .sl-lane.inactive .sl-gain { opacity: 0.45; }
+.sl-group-lane { flex-direction: row; align-items: center; justify-content: flex-start; gap: 5px; padding-left: 7px; background: hsl(var(--gh) 65% 50% / 0.13); border-top-color: hsl(var(--gh) 70% 55% / 0.4); }
+.sl-group-title { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.sl-group-title b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: hsl(var(--gh) 90% 76%); font-size: 12px; }
+.sl-group-title small { color: var(--muted); font-size: 10px; }
+.sl-group-lane.inactive .sl-group-title { opacity: 0.5; }
+.sl-lane .sl-group-fold { width: 22px; justify-content: center; color: hsl(var(--gh) 90% 76%); }
 .sl-lane-row { display: flex; align-items: center; gap: 2px; min-width: 0; }
 .sl-lane-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 650; color: var(--selection-ink); }
 .sl-lane.muted .sl-lane-name { color: var(--muted); font-weight: 400; text-decoration: line-through; }
@@ -1156,9 +1173,11 @@ button, input, select { font: inherit; color: inherit; }
 .sl-lane button:disabled:not(.on) { opacity: 0.5; cursor: default; }
 .sl-lane .sl-lane-grid { font-size: 10px; }
 .sl-lane .sl-lane-grid.on { color: var(--neon-hi); cursor: default; }
-.sl-lane .sl-lane-mute { font-size: 10.5px; font-weight: 700; width: 20px; height: 18px; justify-content: center; padding: 0; border: 1px solid var(--line); }
+.sl-lane .sl-lane-mute, .sl-lane .sl-lane-solo { flex: none; font-size: 10.5px; font-weight: 700; width: 20px; height: 18px; justify-content: center; padding: 0; border: 1px solid var(--line); }
 .sl-lane .sl-lane-mute.on { background: var(--warn); border-color: var(--warn); color: #10141a; }
 .sl-lane .sl-lane-mute.on:hover { background: var(--warn); color: #10141a; filter: brightness(1.1); }
+.sl-lane .sl-lane-solo.on { background: var(--neon); border-color: var(--neon); color: #10141a; }
+.sl-lane .sl-lane-solo.on:hover { background: var(--neon); color: #10141a; filter: brightness(1.1); }
 .sl-lane .sl-gain { flex: 1; min-width: 0; padding: 0 0 0 4px; }
 .sl-lane .sl-gain input[type="range"] { flex: 1; min-width: 0; width: auto; }
 .sl-lane .sl-gain-v { min-width: 40px; text-align: right; }
@@ -1186,7 +1205,7 @@ button, input, select { font: inherit; color: inherit; }
 .sl-g2 { --gh: 268; }
 .sl-g3 { --gh: 135; }
 .sl-lane[class*="sl-g"] { box-shadow: inset 3px 0 0 hsl(var(--gh) 75% 58% / 0.85); }
-.sl-lane .sl-lane-group { max-width: 64px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; font-size: 10.5px; padding: 1px 6px; border: 1px dashed var(--line); }
+.sl-lane .sl-lane-group { width: 83px; min-width: 0; min-height: 22px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10.5px; padding: 1px 5px; border: 1px dashed var(--line); }
 .sl-lane .sl-lane-group.on { border: 1px solid hsl(var(--gh) 70% 55% / 0.55); background: hsl(var(--gh) 70% 50% / 0.16); color: hsl(var(--gh) 90% 74%); font-weight: 600; }
 .sl-lane .sl-lane-group.on:hover:not(:disabled) { background: hsl(var(--gh) 70% 50% / 0.28); color: hsl(var(--gh) 95% 82%); }
 .sl-pads { color: var(--text-2); }

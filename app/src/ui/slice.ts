@@ -64,6 +64,10 @@ export const slTrack = signal<Track | null>(null);
 export const slGridStem = signal(0);
 /** Stems muted (indices): not heard, and not written to the card. */
 export const slMuted = signal<ReadonlySet<number>>(new Set());
+/** Soloed stems and group bus controls, shared by listening and export. */
+export const slSolo = signal<ReadonlySet<number>>(new Set());
+export const slGroupMuted = signal<ReadonlySet<number>>(new Set());
+export const slGroupSolo = signal<ReadonlySet<number>>(new Set());
 /** Volume of each stem in dB (stem index → dB; 0 when left out), for every loop. */
 export const slGain = signal<ReadonlyMap<number, number>>(new Map());
 /** A loop's own balance: its first bar → (stem index → dB on top of the stem's volume). */
@@ -112,6 +116,17 @@ export const slStemGroup = signal<readonly number[]>([]);
 export const slGroupNames = signal<readonly string[]>(DEFAULT_GROUP_NAMES);
 /** The bank the groups' first loops go to; the fifth loop and on go on in the next banks. */
 export const slStartBank = signal(0);
+
+/** Stems suppressed by either their own controls or their group's controls. Mute takes priority. */
+export const slInactive = computed<ReadonlySet<number>>(() => {
+  const out = new Set<number>(), groups = slStemGroup.value;
+  const solo = slSolo.value, groupSolo = slGroupSolo.value, hasSolo = solo.size > 0 || groupSolo.size > 0;
+  slTrack.value?.stems.forEach((_, i) => {
+    const g = groups[i] ?? -1;
+    if (slMuted.value.has(i) || slGroupMuted.value.has(g) || (hasSolo && !solo.has(i) && !groupSolo.has(g))) out.add(i);
+  });
+  return out;
+});
 
 const preRoll = () => Math.round((slPreRollMs.value * RATE) / 1000);
 
@@ -209,6 +224,7 @@ export function removeStem(i: number): void {
   stopPlay();
   const without = (set: ReadonlySet<number>) => new Set([...set].filter((j) => j !== i).map((j) => (j > i ? j - 1 : j)));
   slMuted.value = without(slMuted.value);
+  slSolo.value = without(slSolo.value);
   const shift = (m: ReadonlyMap<number, number>) => new Map([...m].filter(([j]) => j !== i).map(([j, v]) => [j > i ? j - 1 : j, v] as [number, number]));
   slGain.value = shift(slGain.value);
   slLoopGain.value = new Map([...slLoopGain.value].map(([bar, m]) => [bar, shift(m)] as [number, ReadonlyMap<number, number>]));
@@ -288,6 +304,9 @@ function setTrack(t: Omit<Track, "frames">): void {
     slKey.value = undefined;
     slKeyError.value = null;
     slMuted.value = new Set();
+    slSolo.value = new Set();
+    slGroupMuted.value = new Set();
+    slGroupSolo.value = new Set();
     slGridStem.value = Math.max(0, gridStem(stemKinds(t.stems.map((x) => x.name))));
     slStemGroup.value = defaultGroups(t.stems.map((x) => x.family));
     slGroupNames.value = DEFAULT_GROUP_NAMES;
@@ -424,6 +443,7 @@ export function replay(): void {
 
 /** A stem in or out of listening — and of the write. */
 export function toggleMute(i: number): void {
+  if (slBusy.value) return;
   const next = new Set(slMuted.value);
   if (!next.delete(i)) next.add(i);
   slMuted.value = next;
@@ -431,8 +451,32 @@ export function toggleMute(i: number): void {
   if (p) play(p.bar, !p.loop);
 }
 
+export function toggleSolo(i: number): void {
+  if (slBusy.value) return;
+  const next = new Set(slSolo.value);
+  if (!next.delete(i)) next.add(i);
+  slSolo.value = next;
+  replay();
+}
+
+export function toggleGroupMute(g: number): void {
+  if (slBusy.value) return;
+  const next = new Set(slGroupMuted.value);
+  if (!next.delete(g)) next.add(g);
+  slGroupMuted.value = next;
+  replay();
+}
+
+export function toggleGroupSolo(g: number): void {
+  if (slBusy.value) return;
+  const next = new Set(slGroupSolo.value);
+  if (!next.delete(g)) next.add(g);
+  slGroupSolo.value = next;
+  replay();
+}
+
 /** The stems written to the card: the ones heard (not muted) — what you hear is what you get. */
-export const writtenStems = (t: Track): Stem[] => t.stems.filter((_, i) => !slMuted.value.has(i));
+export const writtenStems = (t: Track): Stem[] => t.stems.filter((_, i) => !slInactive.value.has(i));
 
 /** Per loop (by its first bar), the labels of stems that are silent there; only with several stems. */
 export const slSilent = computed<Map<number, string[]>>(() => {
@@ -636,7 +680,7 @@ export function play(bar: number, seam = false): void {
   const buf = ctx.createBuffer(outCh, frames, RATE);
   const fade = Math.round((slFadeMs.value * RATE) / 1000);
   for (const [s, stem] of t.stems.entries()) {
-    if (slMuted.value.has(s)) continue;
+    if (slInactive.value.has(s)) continue;
     for (const [loop, at] of [[a, 0], ...(b ? [[b, a.frames]] : [])] as [Loop, number][]) {
       const pcm = extractLoop(samplesOf(stem), stem.channels, loop, fade), k = (t.stems.length > 1 ? gainOf(s, loop.bar) : 1) / 32768;
       for (let c = 0; c < outCh; c++) {
@@ -695,7 +739,7 @@ export const slCardBlock = computed<string | null>(() =>
 /** Why the chosen loops cannot be written now, or null. */
 export const slWriteBlock = computed<string | null>(() => slCardBlock.value ?? slStemBlock.value ?? (!slChosen.value.length ? "No loops chosen" : null));
 /** Why no loop can be written for want of stems, or null. */
-export const slStemBlock = computed<string | null>(() => (slTrack.value && slTrack.value.stems.length > 1 && !writtenStems(slTrack.value).length ? "Every stem is muted: unmute one to write it" : null));
+export const slStemBlock = computed<string | null>(() => (slTrack.value && !writtenStems(slTrack.value).length ? "No stem is audible: check stem and group Mute / Solo" : null));
 
 /** What the loops are written as: the ticked stems, one as it is, several mixed into one file. */
 export interface Output {
@@ -880,9 +924,11 @@ export const writtenAs = (l: Loop): string[] => [...slWritten.value].filter(([, 
 
 /** Stem `i` into group `g` (a column, 0–3), or out of every group (-1). */
 export function setStemGroup(i: number, g: number): void {
+  if (slBusy.value || !Number.isInteger(g) || g < -1 || g >= GROUP_COUNT) return;
   const next = [...slStemGroup.value];
   next[i] = g;
   slStemGroup.value = next;
+  replay();
 }
 
 /** Stem `i` into the next group: vocal → drums → bass → others → none → vocal. */
@@ -900,11 +946,11 @@ export function renameGroup(g: number, name: string): void {
 /** A group as written: its column, its name in file names (`tag` = `label`), its stems mixed. */
 export interface GroupOutput extends Output { col: number }
 
-/** The groups that have a stem heard (muted stems are left out, as everywhere), by column. */
+/** The groups that have an audible stem after Mute / Solo, by column. */
 export function groupOutputs(t: Track): GroupOutput[] {
   const slugs = groupSlugs(slGroupNames.value), out: GroupOutput[] = [];
   for (let col = 0; col < GROUP_COUNT; col++) {
-    const stems = t.stems.filter((_, i) => slStemGroup.value[i] === col && !slMuted.value.has(i));
+    const stems = t.stems.filter((_, i) => slStemGroup.value[i] === col && !slInactive.value.has(i));
     if (stems.length) out.push({ col, label: slugs[col]!, tag: slugs[col]!, stems, channels: stems.some((x) => x.channels === 2) ? 2 : 1 });
   }
   return out;
@@ -941,7 +987,7 @@ export const slGroupBlock = computed<string | null>(() => {
   if (slBusy.value) return "Writing — wait for it to finish";
   if (importing.value) return "Imports are running — wait for them to finish";
   if (slCleaning.value) return "Cleaning the stems — a moment";
-  if (!groupOutputs(t).length) return "No stem in a group is heard: put stems in groups, or unmute them";
+  if (!groupOutputs(t).length) return "No grouped stem is audible: assign a group or check stem and group Mute / Solo";
   const n = slChosen.value.length, start = slStartBank.value;
   if (!n) return "No loops chosen";
   if (!slLayout.value) return `${n} loops take ${banksFor(n)} banks: from bank ${BANKS[start]} there ${BANKS.length - start === 1 ? "is 1" : `are ${BANKS.length - start}`} — start earlier or choose fewer loops`;
@@ -1020,6 +1066,9 @@ interface Kept {
   clean: "off" | CleanLevel;
   gridStem: string;
   muted: string[];
+  solo?: string[];
+  groupMuted?: number[];
+  groupSolo?: number[];
   gain: [string, number][];
   loopGain: [number, [string, number][]][];
   written: [string, string[]][];
@@ -1070,6 +1119,10 @@ function recall(): boolean {
     if (t.stems.length > 1) slClean.value = k.clean ?? "off";
     if (at(k.gridStem) >= 0) slGridStem.value = at(k.gridStem);
     slMuted.value = new Set((k.muted ?? []).map(at).filter((i) => i >= 0));
+    slSolo.value = new Set((k.solo ?? []).map(at).filter((i) => i >= 0));
+    const validGroups = (gs: number[]) => new Set(gs.filter((g) => Number.isInteger(g) && g >= 0 && g < GROUP_COUNT));
+    slGroupMuted.value = validGroups(k.groupMuted ?? []);
+    slGroupSolo.value = validGroups(k.groupSolo ?? []);
     slGain.value = byStem(k.gain ?? []);
     slLoopGain.value = new Map((k.loopGain ?? []).map(([bar, m]) => [bar, byStem(m)] as [number, ReadonlyMap<number, number>]).filter(([, m]) => m.size));
     slWritten.value = new Map((k.written ?? []).map(([label, s]) => [label, new Set(s)]));
@@ -1099,6 +1152,9 @@ export function startOver(): void {
   slGain.value = new Map();
   slLoopGain.value = new Map();
   slMuted.value = new Set();
+  slSolo.value = new Set();
+  slGroupMuted.value = new Set();
+  slGroupSolo.value = new Set();
   slGridStem.value = Math.max(0, gridStem(stemKinds(t.stems.map((x) => x.name))));
   slStemGroup.value = defaultGroups(t.stems.map((x) => x.family));
   slGroupNames.value = DEFAULT_GROUP_NAMES;
@@ -1117,6 +1173,9 @@ effect(() => {
     preRoll: slPreRollMs.value, fade: slFadeMs.value, clean: slClean.value,
     gridStem: id(Math.min(slGridStem.value, now.length - 1)),
     muted: [...slMuted.value].filter((i) => i < now.length).map(id),
+    solo: [...slSolo.value].filter((i) => i < now.length).map(id),
+    groupMuted: [...slGroupMuted.value],
+    groupSolo: [...slGroupSolo.value],
     gain: pairs(slGain.value),
     loopGain: [...slLoopGain.value].map(([bar, m]) => [bar, pairs(m)] as [number, [string, number][]]),
     written: [...slWritten.value].map(([label, s]) => [label, [...s]] as [string, string[]]),
