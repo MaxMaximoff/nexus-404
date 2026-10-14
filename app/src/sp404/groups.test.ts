@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { banksText, cellPad, defaultGroups, groupFolders, groupSampleName, groupSlugs, padLayout } from "./groups";
+import { banksText, cellPad, defaultGroups, groupSampleName, groupSlugs, padLayout } from "./groups";
 import { padName } from "./control";
 import { stemKind, stemKinds } from "./stems";
 
@@ -51,9 +51,4 @@ describe("stem groups on pads", () => {
     expect(groupSlugs(["Вокал"])).toEqual(["group1"]); // no Latin letters: the column's name
   });
 
-  it("gives the group folders of one write one suffix", () => {
-    expect(groupFolders(["vocal", "drums"], ["vocals", "mix"])).toEqual(["vocal", "drums"]);
-    expect(groupFolders(["vocal", "drums"], ["Drums"])).toEqual(["vocal_2", "drums_2"]);
-    expect(groupFolders(["vocal", "drums"], ["drums", "vocal_2"])).toEqual(["vocal_3", "drums_3"]);
-  });
 });

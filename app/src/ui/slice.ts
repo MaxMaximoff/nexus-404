@@ -7,14 +7,13 @@
 // written: one as it is into its own subfolder (vocals/), several mixed into one file per loop
 // (mix/, or drums+bass/ for some of them), so the numbers match across subfolders.
 // Or the stems go in groups (vocal, drums, bass, others), each mixed into one sound per loop and
-// laid out on pads, a group a column and a loop a row (sp404/groups.ts), and/or written to the
-// card, a subfolder per group, with the pads' names (drums/drums_A2.wav).
+// laid out on pads, a group a column and a loop a row (sp404/groups.ts).
 
 import { batch, computed, effect, signal } from "@preact/signals";
 import {
   BPM_MAX_X100, BPM_MIN_X100, BPM_RANGES, CARD, barFrames, computePeaks, decodeAudio, encodeWav, evenCuts, extractLoop, formatBpm, gridStem, loopFileName, mixLoop,
   keyFullName, keyName, loopsFromCuts, type CleanLevel, type CleanRole, padName, stemBase, stemKinds, trackName, wholeBars, uniqueName, type BeatGrid, type Loop,
-  BANKS, DEFAULT_GROUP_NAMES, GROUP_COUNT, banksFor, banksText, defaultGroups, groupFolders, groupSampleName, groupSlugs, padLayout, type Cell, type StemFamily,
+  BANKS, DEFAULT_GROUP_NAMES, GROUP_COUNT, banksFor, banksText, defaultGroups, groupSampleName, groupSlugs, padLayout, type Cell, type StemFamily,
 } from "../sp404";
 import type { EssentiaKey, EssentiaKeyAnalysis } from "../sp404/essentiaKey";
 import type { GridReply, GridRequest } from "./gridWorker";
@@ -111,9 +110,6 @@ export const slRestored = signal(false);
 export const slStemGroup = signal<readonly number[]>([]);
 /** The groups' names, a column each. */
 export const slGroupNames = signal<readonly string[]>(DEFAULT_GROUP_NAMES);
-/** Where the groups' loops go: onto pads, into the track's folder on the card, or both. */
-export const slToPads = signal(true);
-export const slToCard = signal(true);
 /** The bank the groups' first loops go to; the fifth loop and on go on in the next banks. */
 export const slStartBank = signal(0);
 
@@ -938,39 +934,21 @@ export const slFreeStart = computed<number | null>(() => {
 
 /** Why the groups cannot be written now, or null. */
 export const slGroupBlock = computed<string | null>(() => {
-  const t = slTrack.value, toPads = slToPads.value, toCard = slToCard.value;
+  const t = slTrack.value;
   if (!t || t.stems.length < 2) return "Groups are for a track of several stems";
-  if (!toPads && !toCard) return "Tick pads, the SD card or both";
   if (conn.value !== "ready") return "SP is not connected";
-  if (demo.value && toCard) return "Demo: no SD card to write to — untick SD card";
   if (!demo.value && writeBlockReason.value) return writeBlockReason.value;
   if (slBusy.value) return "Writing — wait for it to finish";
-  if (toCard && cardBusy.value) return "Card is busy — wait for the operation to finish";
-  if (toPads && importing.value) return "Imports are running — wait for them to finish";
+  if (importing.value) return "Imports are running — wait for them to finish";
   if (slCleaning.value) return "Cleaning the stems — a moment";
   if (!groupOutputs(t).length) return "No stem in a group is heard: put stems in groups, or unmute them";
   const n = slChosen.value.length, start = slStartBank.value;
   if (!n) return "No loops chosen";
   if (!slLayout.value) return `${n} loops take ${banksFor(n)} banks: from bank ${BANKS[start]} there ${BANKS.length - start === 1 ? "is 1" : `are ${BANKS.length - start}`} — start earlier or choose fewer loops`;
-  const busy = toPads ? slPadConflicts.value : [];
+  const busy = slPadConflicts.value;
   if (busy.length) return `Not free: ${busy.slice(0, 6).map(padName).join(", ")}${busy.length > 6 ? ` and ${busy.length - 6} more` : ""} — clear them or start from another bank`;
   return null;
 });
-
-/**
- * The track's folder on the card (made when missing) and a subfolder per group in it, made; one
- * `_2`, `_3`… for all of them when any is taken.
- */
-function groupTargets(t: Track, outs: GroupOutput[]): Promise<{ folder: string; subs: string[] }> {
-  return withDevice(async (d) => {
-    const root = `${CARD}/IMPORT`, base = trackName(t.name);
-    const folder = (await d.listDir(root)).map((e) => e.name).find((n) => n.toLowerCase() === base.toLowerCase()) ?? base;
-    if (!(await d.stat(`${root}/${folder}`))) await d.mkdirCard(`${root}/${folder}`);
-    const subs = groupFolders(outs.map((o) => o.tag), (await d.listDir(`${root}/${folder}`)).map((e) => e.name));
-    for (const s of subs) await d.mkdirCard(`${root}/${folder}/${s}`);
-    return { folder, subs };
-  });
-}
 
 /** Demo mode: the loop on its pad as the SP would show it after the import. */
 async function demoImport(pad: number, name: string, pcm: Int16Array, channels: 1 | 2, x100: number): Promise<void> {
@@ -980,64 +958,43 @@ async function demoImport(pad: number, name: string, pcm: Int16Array, channels: 
 }
 
 /**
- * The chosen loops of every group onto their pads (slLayout) with the track's BPM, and/or as WAV
- * files into the track's folder on the card, a subfolder per group; named after the pad
- * (`drums_A2`). Row by row: "Stop" ends after the file being written and leaves whole rows.
+ * The chosen loops of every group onto their pads (slLayout) with the track's BPM,
+ * named after the pad (`drums_A2`). "Stop" ends after the current import.
  */
 export async function writeGroups(): Promise<void> {
   const t = slTrack.value, g = slGrid.value, loops = slChosen.value, cells = slLayout.value;
   if (!t || !g || !cells || slGroupBlock.value) return;
-  const outs = groupOutputs(t), toPads = slToPads.value, toCard = slToCard.value, start = slStartBank.value;
+  const outs = groupOutputs(t), start = slStartBank.value;
   stopPlay();
   cancel = false;
   const fade = Math.round((slFadeMs.value * RATE) / 1000);
   const busy = (text: string, progress: number) => {
     slBusy.value = { text, progress };
-    if (toCard) cardBusy.value = { text, progress };
   };
-  let target: { folder: string; subs: string[] } | null = null, done = 0;
+  let done = 0;
   try {
-    if (toCard) {
-      busy("Preparing folders…", 0);
-      target = await groupTargets(t, outs);
-    }
     for (const [i, cell] of cells.entries()) {
       if (cancel) break;
       const k = outs.findIndex((o) => o.col === cell.group), out = outs[k]!, loop = loops[cell.loop]!;
       const name = groupSampleName(out.tag, cell.pad), text = `${i + 1} of ${cells.length}: ${name}`;
       busy(text, i / cells.length);
       const pcm = renderLoop(t, out, loop, fade), wav = encodeWav(pcm, out.channels);
-      if (toPads) {
-        if (demo.value) await demoImport(cell.pad, name, pcm, out.channels, g.x100);
-        else if (!(await importToPads([{ file: new File([wav], `${name}.wav`, { type: "audio/wav" }), pad: cell.pad, bpmX100: g.x100 }])))
-          throw new Error(`${padName(cell.pad)}: the import failed — details in the log`);
-      }
-      if (target) {
-        const path = `${CARD}/IMPORT/${target.folder}/${target.subs[k]}/${name}.wav`;
-        await withDevice((d) => d.writeCardFile(path, new Uint8Array(wav), (a, b) => busy(text, (i + a / b) / cells.length)));
-        if (slTrack.value?.id === t.id) markWritten(target.subs[k]!, loop);
-      }
+      if (demo.value) await demoImport(cell.pad, name, pcm, out.channels, g.x100);
+      else if (!(await importToPads([{ file: new File([wav], `${name}.wav`, { type: "audio/wav" }), pad: cell.pad, bpmX100: g.x100 }])))
+        throw new Error(`${padName(cell.pad)}: the import failed — details in the log`);
       done++;
     }
   } catch (e) {
     notice.value = { kind: "error", text: `Groups: ${(e as Error).message}` };
   } finally {
     slBusy.value = null;
-    if (toCard) cardBusy.value = null;
   }
   if (!done) return;
-  const where = [
-    toPads ? `pads of bank${banksFor(loops.length) > 1 ? "s" : ""} ${banksText(start, loops.length)}` : "",
-    target ? `IMPORT/${target.folder}/ (${target.subs.join(", ")})` : "",
-  ].filter(Boolean).join(" and ");
+  const where = `pads of bank${banksFor(loops.length) > 1 ? "s" : ""} ${banksText(start, loops.length)}`;
   log("info", `Slicer: ${done} of ${cells.length} loops of ${outs.map((o) => o.tag).join(", ")} at ${formatBpm(g.x100)} BPM → ${where}`);
   if (done === cells.length) notice.value = { kind: "info", text: `${done} loop${done === 1 ? "" : "s"} written to ${where}` };
   else if (cancel) notice.value = { kind: "info", text: `Stopped: ${done} of ${cells.length} loops written to ${where}` };
-  if (toPads) selectedBank.value = start;
-  if (target) {
-    showSide("card");
-    await openCardDir(["IMPORT", target.folder]);
-  }
+  selectedBank.value = start;
 }
 
 // ---------- kept in the browser ----------

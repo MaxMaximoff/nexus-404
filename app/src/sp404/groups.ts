@@ -69,15 +69,3 @@ export function groupSlugs(names: readonly string[]): string[] {
 
 /** A loop's sample name on the pad (and its file name without ".wav"): "drums_A1". */
 export const groupSampleName = (slug: string, pad: number): string => `${slug}_${padName(pad)}`;
-
-/**
- * The groups' subfolders in the track's folder: their names, all with the same `_2`, `_3`… when
- * any of them is `taken`, so the folders of one write stay together.
- */
-export function groupFolders(slugs: string[], taken: Iterable<string>): string[] {
-  const have = new Set([...taken].map((t) => t.toLowerCase()));
-  for (let k = 1; ; k++) {
-    const names = slugs.map((s) => (k === 1 ? s : `${s}_${k}`));
-    if (names.every((n) => !have.has(n.toLowerCase()))) return names;
-  }
-}

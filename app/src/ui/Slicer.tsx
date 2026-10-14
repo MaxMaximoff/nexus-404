@@ -2,7 +2,7 @@
 // to a new folder of IMPORT/ on the SD card (logic in slice.ts).
 
 import { useEffect, useRef, useState } from "preact/hooks";
-import { BANKS, BPM_RANGES, GROUP_COUNT, ROWS, barEdge, barFrames, banksFor, banksText, camelot, formatBpm, groupSampleName, groupSlugs, keyFullName, keyName, loopFileName, padName, parseBpmInput, trackName } from "../sp404";
+import { BANKS, BPM_RANGES, GROUP_COUNT, ROWS, barEdge, barFrames, banksFor, banksText, camelot, formatBpm, groupSampleName, groupSlugs, keyFullName, keyName, loopFileName, padName, parseBpmInput } from "../sp404";
 import { AUDIO_RE } from "./card";
 import { mainView } from "./Patterns";
 import {
@@ -11,9 +11,9 @@ import {
   setTempo, slBars, slBusy, slChosen, slCuts, slDetected, slEvery, slFadeMs, slGrid, slLoops, slMetronome, slOff, slPickBar1, slPlay, slPreRollMs, slSel,
   slCardBlock, slState, slTrack, slWriteBlock, writeOne, splitSel, stopPlay, toggleCut, toggleOff, togglePlay, writeLoops, type Track,
   slRestored, startOver, writtenAs,
-  cycleStemGroup, groupOutputs, renameGroup, slFreeStart, slGroupBlock, slGroupNames, slLayout, slPadConflicts, slStartBank, slStemGroup, slToCard, slToPads, writeGroups,
+  cycleStemGroup, groupOutputs, renameGroup, slFreeStart, slGroupBlock, slGroupNames, slLayout, slPadConflicts, slStartBank, slStemGroup, writeGroups,
 } from "./slice";
-import { bpmRange, demo, pads } from "./store";
+import { bpmRange, pads } from "./store";
 import { columns } from "./Waveform";
 import { IconPlay, IconPlus, IconScissors, IconStop, IconUpload, IconX } from "./icons";
 
@@ -665,7 +665,7 @@ function LoopList() {
 function GroupPanel({ track }: { track: Track }) {
   const names = slGroupNames.value, slugs = groupSlugs(names), outs = groupOutputs(track), cells = slLayout.value ?? [];
   const n = slChosen.value.length, start = slStartBank.value, free = slFreeStart.value, block = slGroupBlock.value, busy = !!slBusy.value;
-  const toPads = slToPads.value, toCard = slToCard.value, conflicts = new Set(toPads ? slPadConflicts.value : []);
+  const conflicts = new Set(slPadConflicts.value);
   const at = new Map(cells.map((c) => [c.pad, c]));
   const banks = Array.from({ length: Math.max(1, banksFor(n)) }, (_, k) => start + k).filter((b) => b < BANKS.length);
   const example = outs[0] && cells[0] ? groupSampleName(outs[0].tag, cells.find((c) => c.group === outs[0]!.col)?.pad ?? cells[0].pad) : "";
@@ -700,17 +700,10 @@ function GroupPanel({ track }: { track: Track }) {
             {[...BANKS].map((b, i) => <option key={b} value={i}>{b}</option>)}
           </select>
         </label>
-        {toPads && free !== null && free !== start && (conflicts.size > 0 || !slLayout.value) && (
+        {free !== null && free !== start && (conflicts.size > 0 || !slLayout.value) && (
           <button type="button" class="btn btn-ghost" disabled={busy} onClick={() => (slStartBank.value = free)}
             title="Start from the first bank where every pad the loops take is free">First free: {BANKS[free]}</button>
         )}
-        <span class="sl-sep" />
-        <label class="sl-check" title="Import the loops onto the pads (only empty pads; nothing is overwritten)">
-          <input type="checkbox" checked={toPads} disabled={busy} onChange={() => (slToPads.value = !toPads)} /> Pads
-        </label>
-        <label class="sl-check" title={demo.value ? "Demo: there is no SD card" : `Also as WAV files on the SD card: IMPORT/${trackName(track.name)}/<group>/`}>
-          <input type="checkbox" checked={toCard} disabled={busy} onChange={() => (slToCard.value = !toCard)} /> SD card
-        </label>
       </div>
       {n > 0 && slLayout.value && (
         <div class="sl-maps">
@@ -732,8 +725,7 @@ function GroupPanel({ track }: { track: Track }) {
         <span class={`small sl-write-text ${block ? "muted" : ""}`}>
           {block ?? <>
             <b>{n}</b> loop{n === 1 ? "" : "s"} × <b>{outs.length}</b> group{outs.length === 1 ? "" : "s"}
-            {toPads && <> → pads <b>{banksText(start, n)}</b></>}
-            {toCard && <>{toPads ? " and" : " →"} <b>IMPORT/{trackName(track.name)}/</b>{outs.map((o) => o.tag).join(", ")}</>}
+            <> → pads <b>{banksText(start, n)}</b></>
             {example && <> · names like {example}</>}
           </>}
         </span>
